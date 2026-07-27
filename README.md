@@ -438,6 +438,14 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.4.8 (2026-07-27)**:
+        -   **[问题修复] 用户 Token 永不过期校验逻辑修复 (Fix Never Expire Token Validation)**:
+            -   当 User Token 的 `expires_type` 设置为 `"never"`（永不过期）且 `expires_at` 为 `0` 时，不再误判为已过期（`403 Forbidden`）。
+            -   修复测试套件中 `claude.rs` 的重复测试模块命名冲突问题。
+            -   *相关 PR*: 详见 [PR #3266](https://github.com/lbjlaq/Antigravity-Manager/pull/3266)。
+        -   **[问题修复] 配额恢复后及时清理限流锁定状态 (Clear Stale Live Limit Locks on Quota Recovery)**:
+            -   账号刷新配额恢复（配额比率 `percentage > 0%`）后，自动清除内存中 `RateLimitTracker` 的限流锁，并从本地账号 JSON 数据中移除过期的 `live_limited_models` 标记，避免前端误显锁定状态。
+            -   *相关 PR*: 详见 [PR #3267](https://github.com/lbjlaq/Antigravity-Manager/pull/3267)。
     *   **v4.4.7 (2026-07-19)**:
         -   **[问题修复] 修复 Linux 平台上的自动更新与进程关闭问题 (Fix Linux Auto-Update & Process Close Bugs)**:
             -   **免杀家族树修正**: 修复了获取家族进程树时误将子孙进程纳入豁免名单的问题。现在可以正确识别并关闭由 Manager 调起的 `antigravity-ide` 进程。
