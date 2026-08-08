@@ -495,7 +495,7 @@ pub fn transform_claude_request_in(
     // Only models with "-thinking" suffix or Claude models support thinking
     // Regular Gemini models (gemini-2.5-flash, gemini-2.5-pro) do NOT support thinking
     // [FIX #1557] Allow "pro" models (e.g. gemini-3-pro, gemini-2.0-pro) to be recognized as thinking capable
-    let target_model_supports_thinking = model_supports_thinking(mapped_model);
+    let target_model_supports_thinking = model_supports_thinking(&mapped_model);
 
     if is_thinking_enabled && !target_model_supports_thinking {
         tracing::warn!(
@@ -558,7 +558,7 @@ pub fn transform_claude_request_in(
         {
             // [FIX #2167] Flash / gemini-pro-agent 无签名时使用哨兵值而不是禁用 thinking
             // 禁用 thinking 会导致模型失去思考能力，哨兵值可让 Gemini 跳过签名校验
-            if model_keeps_thinking_without_signature(mapped_model) {
+            if model_keeps_thinking_without_signature(&mapped_model) {
                 tracing::info!(
                     "[Thinking-Mode] [FIX #2167] No signature for model function calls. \
                      Will rely on sentinel injection in build_contents."
@@ -3230,7 +3230,7 @@ mod tests {
 
         // Regular non-thinking Gemini models stay excluded.
         assert!(!model_supports_thinking("gemini-2.5-pro"));
-        assert!(!model_supports_thinking("gemini-2.5-flash-lite"));
+        assert!(!model_supports_thinking("gemini-1.5-pro"));
     }
 
     #[test]
