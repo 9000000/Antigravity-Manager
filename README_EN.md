@@ -427,6 +427,11 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
 ## 📝 Developer & Community
 
 *   **Version History (Changelog)**:
+    *   **v4.5.3 (2026-08-09)**:
+        -   **[Core Fix] Fix thought_signature 400 Error for gemini-pro-agent under Claude Endpoint (Claude gemini-pro-agent Thinking Model Fix)**:
+            -   **Thinking Model Support Checklist Expansion**: Added `gemini-pro-agent` (the target mapping for `gemini-3.1-pro-high` / `gemini-3-pro-high`) into the Claude protocol request handler's thinking model checklist, resolving an issue where thinking mode was forcibly disabled due to non-thinking classification.
+            -   **Keep Thinking Active Without Signature**: Allowed `gemini-pro-agent` to retain thinking mode when no valid `thought_signature` is captured from history, relying on sentinel injection (`skip_thought_signature_validator`) during content construction to avoid Gemini upstream returning `400 INVALID_ARGUMENT: Function call is missing a thought_signature`.
+            -   *Related PR*: See [PR #3289](https://github.com/lbjlaq/Antigravity-Manager/pull/3289).
     *   **v4.5.2 (2026-08-07)**:
         -   **[Bug Fix] Fix "Only Expose Raw Quota Models" Config Not Applied After App Restart**:
             -   Fixed issue where `AxumServer` hardcoded initial `only_raw_quota_models` state to `false` during startup. The service now correctly inherits and applies the `proxy.only_raw_quota_models` value from configuration upon launch without requiring manual toggle re-clicks.

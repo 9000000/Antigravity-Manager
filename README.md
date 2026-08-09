@@ -438,6 +438,11 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.5.3 (2026-08-09)**:
+        -   **[核心修复] 解决 Claude 协议接口下使用 gemini-pro-agent 触发 thought_signature 400 报错的 Bug (Claude gemini-pro-agent Thinking Model Fix)**:
+            -   **思维模型判定范围补全**: 将 `gemini-pro-agent`（对应 `gemini-3.1-pro-high` / `gemini-3-pro-high` 等模型的映射目标）纳入 Claude 协议请求处理器的 Thinking 支持清单，解决此前因误判为非 Thinking 模型导致 `is_thinking_enabled` 被强制关闭的问题。
+            -   **签名缺失自动补全保持**: 允许 `gemini-pro-agent` 模型在未捕获到合法 `thought_signature` 时维持 Thinking 状态，自动依赖请求构造阶段注入哨兵签名（`skip_thought_signature_validator`），避免由于无签名历史导致 Gemini 上游拒绝并返回 `400 INVALID_ARGUMENT: Function call is missing a thought_signature`。
+            -   *相关 PR*: 详见 [PR #3289](https://github.com/lbjlaq/Antigravity-Manager/pull/3289)。
     *   **v4.5.2 (2026-08-07)**:
         -   **[问题修复] 修复“仅暴露真实模型”配置重启后未自动生效缺陷**:
             -   修复 `AxumServer` 启动时硬编码 `only_raw_quota_models` 初始状态为 `false` 的问题。服务启动时正确继承并应用配置文件中的 `proxy.only_raw_quota_models` 设置，无需在界面重新手动点击开关即可自动保持生效。
