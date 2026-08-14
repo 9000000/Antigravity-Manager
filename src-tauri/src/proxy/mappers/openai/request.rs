@@ -1093,7 +1093,12 @@ pub fn transform_openai_request(
         }
 
         inner_request["toolConfig"] = json!({
-            "functionCallingConfig": { "mode": mode }
+            "functionCallingConfig": { "mode": mode },
+            "includeServerSideToolInvocations": true
+        });
+        inner_request["tool_config"] = json!({
+            "function_calling_config": { "mode": mode },
+            "include_server_side_tool_invocations": true
         });
     }
 
