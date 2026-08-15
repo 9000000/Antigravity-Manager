@@ -9,7 +9,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.5.5-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.5.6-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -144,7 +144,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **Supported formats**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **Advanced usage**: Install a specific version `curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.sh | bash -s -- --version 4.5.5`, dry-run mode `curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.sh | bash -s -- --dry-run`
+> **Advanced usage**: Install a specific version `curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.sh | bash -s -- --version 4.5.6`, dry-run mode `curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.sh | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 If you have [Homebrew](https://brew.sh/) installed, you can also install via:
