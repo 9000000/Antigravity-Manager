@@ -452,6 +452,9 @@ response = client.chat.completions.create(
             -   **对齐 Google 工具配置规范**: 在 Claude、Gemini、OpenAI 适配器中统一补齐 `includeServerSideToolInvocations` (camelCase) 与 `include_server_side_tool_invocations` (snake_case)。
             -   **避免工具混合调用 400 异常**: 针对受限的 `v1internal` 架构禁用自定义 Function Calling 与 Google Search 联网搜索的混合调用，避免上游抛出 `400 Bad Request`。
             -   *相关 PR*: 详见 [PR #3306](https://github.com/lbjlaq/Antigravity-Manager/pull/3306)。
+        -   **[问题修复] 修复 Linux/Windows 托盘图标显示为纯黑方块缺陷 (Tray Icon Platform Isolation)**:
+            -   **平台图标加载隔离**: macOS 环境加载 `tray-icon.png` 并启用 `icon_as_template(true)` 适配暗黑/明亮菜单栏自适应；Windows / Linux 环境加载原生彩色 `icon.png` 并禁用 Template 模式，彻底解决任务栏渲染为纯黑色方块的问题。
+            -   *相关 Issue*: 详见 [Issue #3286](https://github.com/lbjlaq/Antigravity-Manager/issues/3286), [Issue #3310](https://github.com/lbjlaq/Antigravity-Manager/issues/3310)。
     *   **v4.5.5 (2026-08-12)**:
         -   **[核心功能] 支持 Gemini countTokens 端点透明代理到真实上游 (Gemini countTokens Upstream Proxy)**:
             -   **全面代理真实 Token 计数**: 将原本硬编码返回 `{"totalTokens": 0}` 的 `/countTokens`（斜杠语法）以及直接拒绝返回 400 的 `:countTokens`（冒号语法）统一代理到上游 `v1internal:countTokens` 端点，返回真实的 Token 统计数据。

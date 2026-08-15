@@ -441,6 +441,9 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
             -   **Google ToolConfig Schema Alignment**: Injects both `includeServerSideToolInvocations` (camelCase) and `include_server_side_tool_invocations` (snake_case) across Claude, Gemini, and OpenAI adapter layers.
             -   **Prevent Mixed-Tool 400 Rejections**: Disables simultaneous Function Calling and Google Search under the restricted `v1internal` architecture to prevent upstream `400 Bad Request`.
             -   *Related PR*: See [PR #3306](https://github.com/lbjlaq/Antigravity-Manager/pull/3306).
+        -   **[Bug Fix] Fix Linux/Windows Solid Black Tray Icon Display Issue (Tray Icon Platform Isolation)**:
+            -   **Platform Icon Loading Isolation**: Loads `tray-icon.png` with `icon_as_template(true)` exclusively on macOS for dark/light menubar adaptive coloring; loads full-color `icon.png` without template mode on Windows / Linux, resolving solid black icon square artifacts in system taskbars.
+            -   *Related Issue*: See [Issue #3286](https://github.com/lbjlaq/Antigravity-Manager/issues/3286), [Issue #3310](https://github.com/lbjlaq/Antigravity-Manager/issues/3310)。
     *   **v4.5.5 (2026-08-12)**:
         -   **[Core Feature] Proxy Gemini countTokens Requests to Real Upstream (Gemini countTokens Upstream Proxy)**:
             -   **Real Token Count Proxying**: Refactored `/countTokens` (slash syntax, which previously returned hardcoded `{"totalTokens": 0}`) and `:countTokens` (colon syntax, which returned 400 rejection) to proxy requests to upstream `v1internal:countTokens`, returning real token usage statistics.
