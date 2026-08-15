@@ -3153,13 +3153,15 @@ mod tests {
             .iter()
             .any(|t| t.get("functionDeclarations").is_some());
 
+        // 在 v1internal 接口受限环境下，强制禁用混合工具调用以避免 400 报错
+        // 存在自定义工具时，优先使用 functionDeclarations，不注入 googleSearch
         assert!(
-            has_google_search,
-            "Gemini 2.0 should support mixed Google Search"
+            !has_google_search,
+            "v1internal should avoid mixed Google Search when functionDeclarations present"
         );
         assert!(
             has_functions,
-            "Gemini 2.0 should support mixed function declarations"
+            "Should have function declarations"
         );
     }
 

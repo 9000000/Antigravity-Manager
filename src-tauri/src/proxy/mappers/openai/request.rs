@@ -1796,9 +1796,10 @@ mod tests {
             .any(|t: &serde_json::Value| t.get("googleSearch").is_some());
 
         assert!(has_functions, "Should contain functionDeclarations");
+        // 在 v1internal 架构下，不开启混合调用以避免 400 报错
         assert!(
-            has_google_search,
-            "Should contain googleSearch (Gemini 2.0+ supports mixed tools)"
+            !has_google_search,
+            "v1internal should avoid mixed Google Search when functionDeclarations present"
         );
     }
 }

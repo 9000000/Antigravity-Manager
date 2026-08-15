@@ -508,7 +508,6 @@ fn write_to_file_credentials(account: &crate::models::Account) -> Result<(), Str
 
     Ok(())
 }
-}
 
 /// 辅助方法：从宿主操作系统的 Keychain/Credentials Manager 读取 Token
 pub fn read_from_system_keyring() -> Result<crate::modules::migration::ImportedOAuthState, String> {
