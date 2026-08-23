@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.5.8)
+> 专业级 AI 账号管理与协议代理系统 (v4.5.9)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.5.8-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.5.9-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -142,7 +142,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **支持的格式**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **高级用法**: 安装指定版本 `curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.sh | bash -s -- --version 4.5.8`，预览模式 `curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.sh | bash -s -- --dry-run`
+> **高级用法**: 安装指定版本 `curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.sh | bash -s -- --version 4.5.9`，预览模式 `curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.sh | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 如果您已安装 [Homebrew](https://brew.sh/)，也可以通过以下命令安装：
@@ -438,6 +438,12 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.5.9 (2026-08-23)**:
+        -   **[核心功能] OpenAI 兼容端点支持多模态音频输入 (OpenAI Audio Input Support)**:
+            -   **支持标准音频格式与多来源映射**: 支持 OpenAI 官方 `input_audio`（Base64 编码 + 格式标识）及 `audio_url`，无缝转换为 Gemini 的 `inlineData` / `fileData` 格式。
+            -   **多数据源与格式自动归一化**: 完整兼容 `data:` URL、`http(s)://` 远程链接、`file://` 本地文件及裸 Base64 编码，自动将 `wav`, `mp3`, `m4a`, `ogg`, `flac`, `aiff` 等格式归一化为标准 MIME 类型。
+            -   **全链路与上下文 Token 评估**: 在 Responses API 转换及 `ContextManager` Token 估算中完整接入音频内容块，保障音频理解请求稳定交互。
+            -   *相关 PR*: 详见 [PR #3321](https://github.com/lbjlaq/Antigravity-Manager/pull/3321)。
     *   **v4.5.8 (2026-08-22)**:
         -   **[核心修复] 归一化 Claude Agent SDK / CC GUI 身份标识 (Claude Agent SDK Identity Normalization)**:
             -   **身份声明精准归一**: 自动将 Claude Agent SDK 客户端（如 CC GUI 等）注入的独立身份声明 (`"You are a Claude agent, built on Anthropic's Claude Agent SDK."`) 精确归一化为 Claude Code CLI 官方身份 (`"You are Claude Code, Anthropic's official CLI for Claude."`)。

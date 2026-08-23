@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> Professional AI Account Management & Protocol Proxy System (v4.5.8)
+> Professional AI Account Management & Protocol Proxy System (v4.5.9)
 
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
@@ -9,7 +9,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.5.8-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.5.9-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -144,7 +144,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **Supported formats**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **Advanced usage**: Install a specific version `curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.sh | bash -s -- --version 4.5.8`, dry-run mode `curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.sh | bash -s -- --dry-run`
+> **Advanced usage**: Install a specific version `curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.sh | bash -s -- --version 4.5.9`, dry-run mode `curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.sh | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 If you have [Homebrew](https://brew.sh/) installed, you can also install via:
@@ -427,6 +427,12 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
 ## 📝 Developer & Community
 
 *   **Version History (Changelog)**:
+    *   **v4.5.9 (2026-08-23)**:
+        -   **[Core Feature] Multimodal Audio Input Support on OpenAI-Compatible Endpoint (OpenAI Audio Input Support)**:
+            -   **Standard Audio Input & Multi-Source Mapping**: Fully supports standard OpenAI `input_audio` (Base64 data + format specifier) and `audio_url` fields, seamlessly transforming them into Gemini `inlineData` / `fileData` parts.
+            -   **Multi-Source Audio & Automatic MIME Normalization**: Supports `data:` URLs, remote `http(s)://` URLs, local `file://` / filesystem paths, and raw Base64 inputs with unified MIME normalization for formats including `wav`, `mp3`, `m4a`, `ogg`, `flac`, and `aiff`.
+            -   **End-to-End Pipeline & Context Token Estimation**: Integrated into Responses API mapping and `ContextManager` token estimation for reliable, stateful multimodal interactions.
+            -   *Related PR*: See [PR #3321](https://github.com/lbjlaq/Antigravity-Manager/pull/3321).
     *   **v4.5.8 (2026-08-22)**:
         -   **[Core Fix] Normalize Claude Agent SDK / CC GUI Identity (Claude Agent SDK Identity Normalization)**:
             -   **Identity Declaration Normalization**: Automatically normalizes standalone identity declarations injected by Claude Agent SDK clients (e.g., CC GUI) (`"You are a Claude agent, built on Anthropic's Claude Agent SDK."`) to the official Claude Code CLI identity (`"You are Claude Code, Anthropic's official CLI for Claude."`).
