@@ -433,6 +433,10 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
             -   **Multi-Source Audio & Automatic MIME Normalization**: Supports `data:` URLs, remote `http(s)://` URLs, local `file://` / filesystem paths, and raw Base64 inputs with unified MIME normalization for formats including `wav`, `mp3`, `m4a`, `ogg`, `flac`, and `aiff`.
             -   **End-to-End Pipeline & Context Token Estimation**: Integrated into Responses API mapping and `ContextManager` token estimation for reliable, stateful multimodal interactions.
             -   *Related PR*: See [PR #3321](https://github.com/lbjlaq/Antigravity-Manager/pull/3321).
+        -   **[Core Fix] OAuth Token Refresh Resilience & invalid_grant Backoff Confirmation (OAuth Token Refresh Resilience & Backoff)**:
+            -   **Proactive Buffer Window (5-Minute Buffer)**: Extended proactive token refresh window from 90s to 300s (5 minutes before expiry), effectively preventing high-latency network drops and critical token expiration.
+            -   **In-Place Backoff Confirmation (Backoff Retry)**: Added 500ms backoff retry on initial `invalid_grant` or transient proxy errors during OAuth refresh to avoid false positives caused by proxy node jitters.
+            -   **Consecutive Failure Threshold**: Introduced consecutive failure tracking that only disables an account after 2+ confirmed `invalid_grant` errors across cycles, resetting on success to eliminate accidental account deactivations.
     *   **v4.5.8 (2026-08-22)**:
         -   **[Core Fix] Normalize Claude Agent SDK / CC GUI Identity (Claude Agent SDK Identity Normalization)**:
             -   **Identity Declaration Normalization**: Automatically normalizes standalone identity declarations injected by Claude Agent SDK clients (e.g., CC GUI) (`"You are a Claude agent, built on Anthropic's Claude Agent SDK."`) to the official Claude Code CLI identity (`"You are Claude Code, Anthropic's official CLI for Claude."`).
