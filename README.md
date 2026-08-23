@@ -449,6 +449,9 @@ response = client.chat.completions.create(
             -   **身份声明精准归一**: 自动将 Claude Agent SDK 客户端（如 CC GUI 等）注入的独立身份声明 (`"You are a Claude agent, built on Anthropic's Claude Agent SDK."`) 精确归一化为 Claude Code CLI 官方身份 (`"You are Claude Code, Anthropic's official CLI for Claude."`)。
             -   **修复 503 拒答异常**: 彻底解决因上游服务对 Agent SDK 身份分类差异导致的 `RESOURCE_EXHAUSTED` / 503 异常中断，同时严格保留用户自定义 Prompt 内容不受影响。
             -   *相关 PR*: 详见 [PR #3316](https://github.com/lbjlaq/Antigravity-Manager/pull/3316)。
+    <details>
+    <summary>显示历史版本演进 (v4.5.7 及更早)</summary>
+
     *   **v4.5.7 (2026-08-20)**:
         -   **[核心功能] 账号列表支持 5小时 / 7天周配额全局视图无缝切换 (5H/Weekly Quota Switcher)**:
             -   **双周期视图切换**: 在账号主管理页面顶部提供 `5小时滚动配额` 与 `7天周配额` 分段切换器（并持久化保存至本地存储）。
@@ -1313,8 +1316,6 @@ response = client.chat.completions.create(
         -   **[核心修复] Web Mode 登录验证修复 & 登出按钮 (PR #1603)**:
             -   **登录验证**: 修复了 Web 模式下登录验证逻辑的异常，确保用户身份验证的稳定性。
             -   **登出功能**: 在界面中新增/修复了登出按钮，完善了 Web 模式下的账户管理闭环。
-    <details>
-    <summary>显示旧版本日志 (v4.1.5 及更早)</summary>
 
     *   **v4.1.5 (2026-02-05)**:
         -   **[安全修复] 前端 API Key 存储迁移 (LocalStorage -> SessionStorage)**:

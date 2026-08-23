@@ -438,6 +438,9 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
             -   **Identity Declaration Normalization**: Automatically normalizes standalone identity declarations injected by Claude Agent SDK clients (e.g., CC GUI) (`"You are a Claude agent, built on Anthropic's Claude Agent SDK."`) to the official Claude Code CLI identity (`"You are Claude Code, Anthropic's official CLI for Claude."`).
             -   **Resolve 503 Rejection Errors**: Eliminates `RESOURCE_EXHAUSTED` / 503 errors caused by upstream Antigravity classifying Agent SDK identity differently from Claude Code CLI, while strictly keeping user-authored prompt contents intact.
             -   *Related PR*: See [PR #3316](https://github.com/lbjlaq/Antigravity-Manager/pull/3316).
+    <details>
+    <summary>Show older changelog (v4.5.7 and earlier)</summary>
+
     *   **v4.5.7 (2026-08-20)**:
         -   **[Core Feature] 5H / Weekly Quota View Switcher for Accounts (5H/Weekly Quota Switcher)**:
             -   **Dual-Window Segmented Toggle**: Adds a segmented toggle on the Accounts page to switch between real-time 5-hour rolling quotas and 7-day weekly quota buckets (persisted to `localStorage`).
@@ -1274,8 +1277,6 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
         -   **[Core Fix] Web Mode Login Validation Fix & Logout Button (PR #1603)**:
             -   **Login Validation**: Fixed exceptions in the Web mode login validation logic, ensuring stability of user authentication.
             -   **Logout Support**: Added/fixed the logout button in the UI, completing the account management loop for Web mode.
-    <details>
-    <summary>Show older changelog (v4.1.5 and earlier)</summary>
 
     *   **v4.1.5 (2026-02-05)**:
         -   **[Security Fix] Frontend API Key Storage Migration (LocalStorage -> SessionStorage)**:
