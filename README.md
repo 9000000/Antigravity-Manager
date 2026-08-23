@@ -448,13 +448,18 @@ response = client.chat.completions.create(
             -   **提前平滑刷新 (5分钟缓冲)**: 将 Token 主动刷新时机由临界 90 秒扩充至 300 秒（提前 5 分钟），有效防范网络高延迟击穿与临界过期掉登录态。
             -   **原地退避确认 (Backoff Retry)**: OAuth 刷新层首次收到 `invalid_grant` 或中间层临时错误时自动执行 500ms 短暂退避并进行二次确认，杜绝代理节点抖动导致的误判。
             -   **连续失败门禁机制**: 引入连续失败计数器，仅在连续 2 次以上独立确认为 `invalid_grant` 时才执行账号停用，成功时自动重置计数，彻底解决偶发网络抖动导致账号误停用的问题。
+        -   **[核心修复] 修复 403 / VALIDATION_REQUIRED 识别时序与死代码，支持动态提取验证链接 (403 Validation Block & URL Parsing Fix)**:
+            -   **执行时序重构**: 修复代理处理链中因重试策略提早 continue 导致 403 阻断处理逻辑被短路的缺陷，在遇到 403 阻断的瞬间即刻触发 `VALIDATION_REQUIRED` 判定与账号池剔除保护。
+            -   **链接自动提取与 UI 状态同步**: 深度解析 Google RPC 响应中的 `validation_url` / `appeal_url` 验证链接并持久化至本地索引，实时触发前端事件刷新，为故障账号打上 403 标签并提供快捷验证跳转入口。
+            -   **状态码精准回退**: 修正代理池账号全部轮换尝试完毕后一律写死 429 的问题，当上游为 403 / 401 权限问题时精准回传真实 HTTP 状态码。
+    <details>
+    <summary>显示历史版本演进 (v4.5.8 及更早)</summary>
+
     *   **v4.5.8 (2026-08-22)**:
         -   **[核心修复] 归一化 Claude Agent SDK / CC GUI 身份标识 (Claude Agent SDK Identity Normalization)**:
             -   **身份声明精准归一**: 自动将 Claude Agent SDK 客户端（如 CC GUI 等）注入的独立身份声明 (`"You are a Claude agent, built on Anthropic's Claude Agent SDK."`) 精确归一化为 Claude Code CLI 官方身份 (`"You are Claude Code, Anthropic's official CLI for Claude."`)。
             -   **修复 503 拒答异常**: 彻底解决因上游服务对 Agent SDK 身份分类差异导致的 `RESOURCE_EXHAUSTED` / 503 异常中断，同时严格保留用户自定义 Prompt 内容不受影响。
             -   *相关 PR*: 详见 [PR #3316](https://github.com/lbjlaq/Antigravity-Manager/pull/3316)。
-    <details>
-    <summary>显示历史版本演进 (v4.5.7 及更早)</summary>
 
     *   **v4.5.7 (2026-08-20)**:
         -   **[核心功能] 账号列表支持 5小时 / 7天周配额全局视图无缝切换 (5H/Weekly Quota Switcher)**:

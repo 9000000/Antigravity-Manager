@@ -437,13 +437,18 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
             -   **Proactive Buffer Window (5-Minute Buffer)**: Extended proactive token refresh window from 90s to 300s (5 minutes before expiry), effectively preventing high-latency network drops and critical token expiration.
             -   **In-Place Backoff Confirmation (Backoff Retry)**: Added 500ms backoff retry on initial `invalid_grant` or transient proxy errors during OAuth refresh to avoid false positives caused by proxy node jitters.
             -   **Consecutive Failure Threshold**: Introduced consecutive failure tracking that only disables an account after 2+ confirmed `invalid_grant` errors across cycles, resetting on success to eliminate accidental account deactivations.
+        -   **[Core Fix] 403 / VALIDATION_REQUIRED Processing Order & URL Extraction (403 Validation Block & URL Parsing Fix)**:
+            -   **Execution Timing Refactoring**: Fixed an issue where the 403 validation blocking logic was bypassed by early `continue` in retry backoff loops, ensuring `VALIDATION_REQUIRED` detection and account exclusion occur immediately upon receiving 403.
+            -   **Automatic URL Extraction & UI Sync**: Deeply parses `validation_url` / `appeal_url` links from Google RPC responses, persists them to local index, and emits real-time refresh events to display the 403 badge and quick validation button on affected accounts.
+            -   **Accurate Status Code Propagation**: Fixed the fallback status code which previously hardcoded `429` when all accounts were exhausted, correctly propagating `403 FORBIDDEN` and `401 UNAUTHORIZED`.
+    <details>
+    <summary>Show older changelog (v4.5.8 and earlier)</summary>
+
     *   **v4.5.8 (2026-08-22)**:
         -   **[Core Fix] Normalize Claude Agent SDK / CC GUI Identity (Claude Agent SDK Identity Normalization)**:
             -   **Identity Declaration Normalization**: Automatically normalizes standalone identity declarations injected by Claude Agent SDK clients (e.g., CC GUI) (`"You are a Claude agent, built on Anthropic's Claude Agent SDK."`) to the official Claude Code CLI identity (`"You are Claude Code, Anthropic's official CLI for Claude."`).
             -   **Resolve 503 Rejection Errors**: Eliminates `RESOURCE_EXHAUSTED` / 503 errors caused by upstream Antigravity classifying Agent SDK identity differently from Claude Code CLI, while strictly keeping user-authored prompt contents intact.
             -   *Related PR*: See [PR #3316](https://github.com/lbjlaq/Antigravity-Manager/pull/3316).
-    <details>
-    <summary>Show older changelog (v4.5.7 and earlier)</summary>
 
     *   **v4.5.7 (2026-08-20)**:
         -   **[Core Feature] 5H / Weekly Quota View Switcher for Accounts (5H/Weekly Quota Switcher)**:
