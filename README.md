@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.5.9)
+> 专业级 AI 账号管理与协议代理系统 (v4.6.0)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.5.9-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.6.0-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -438,6 +438,12 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.6.0 (2026-08-24)**:
+        -   **[核心功能] OpenAI 兼容端点支持 response_format.json_schema 结构化输出 (Structured Outputs Support)**:
+            -   **支持 JSON Schema 规范定义**: 完整支持 OpenAI 规范中的 `response_format: { type: "json_schema", json_schema: { ... } }` 格式定义。
+            -   **深度清洗与 Schema 展开**: 自动提取并递归清洗 `$ref`/`$defs` 定义，转换 Schema 格式为 Gemini `generationConfig.responseSchema` 兼容标准，并设置 `responseMimeType: "application/json"`。
+            -   **全框架兼容性提升**: 完美解决 LangChain、Zod、Instructor 等第三方客户端框架在开启 Structured Outputs 时因 Schema 丢失导致类型校验失败的问题。
+            -   *相关 PR*: 详见 [PR #3324](https://github.com/lbjlaq/Antigravity-Manager/pull/3324)。
     *   **v4.5.9 (2026-08-23)**:
         -   **[核心功能] OpenAI 兼容端点支持多模态音频输入 (OpenAI Audio Input Support)**:
             -   **支持标准音频格式与多来源映射**: 支持 OpenAI 官方 `input_audio`（Base64 编码 + 格式标识）及 `audio_url`，无缝转换为 Gemini 的 `inlineData` / `fileData` 格式。
