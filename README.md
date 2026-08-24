@@ -444,6 +444,10 @@ response = client.chat.completions.create(
             -   **深度清洗与 Schema 展开**: 自动提取并递归清洗 `$ref`/`$defs` 定义，转换 Schema 格式为 Gemini `generationConfig.responseSchema` 兼容标准，并设置 `responseMimeType: "application/json"`。
             -   **全框架兼容性提升**: 完美解决 LangChain、Zod、Instructor 等第三方客户端框架在开启 Structured Outputs 时因 Schema 丢失导致类型校验失败的问题。
             -   *相关 PR*: 详见 [PR #3324](https://github.com/lbjlaq/Antigravity-Manager/pull/3324)。
+        -   **[核心修复] 修复代理池健康检查报 407 认证失败及支持 URL 内嵌凭据解析 (Proxy Pool Health Check 407 & Auth Parsing Fix)**:
+            -   **默认端点升级 HTTPS 204**: 将默认健康检查端点由明文 `http://` 升级为 `https://cp.cloudflare.com/generate_204`，强制走标准 HTTPS `CONNECT` 隧道建立鉴权管道，彻底解决 HTTP 代理下明文 Forwarding 报 `407 Proxy Authentication Required` 的误报问题。
+            -   **URL 内嵌凭据自动解析**: 在构建代理底层客户端时，自动从 `http(s)://user:password@ip:port` 格式的代理 URL 中安全提取 `username` 和 `password` 注入 Basic 认证，杜绝凭据漏传。
+            -   *相关 Issue*: 修复 [#3323](https://github.com/lbjlaq/Antigravity-Manager/issues/3323)。
     *   **v4.5.9 (2026-08-23)**:
         -   **[核心功能] OpenAI 兼容端点支持多模态音频输入 (OpenAI Audio Input Support)**:
             -   **支持标准音频格式与多来源映射**: 支持 OpenAI 官方 `input_audio`（Base64 编码 + 格式标识）及 `audio_url`，无缝转换为 Gemini 的 `inlineData` / `fileData` 格式。

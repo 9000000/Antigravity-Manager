@@ -433,6 +433,10 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
             -   **Deep Schema Cleaning & Ref Expansion**: Recursively resolves `$ref`/`$defs` references and normalizes schemas into Gemini-compatible `generationConfig.responseSchema`, setting `responseMimeType: "application/json"`.
             -   **Broad Ecosystem Compatibility**: Fixes schema validation errors in structured output frameworks like LangChain, Zod, and Instructor when invoking Gemini models via OpenAI endpoints.
             -   *Related PR*: See [PR #3324](https://github.com/lbjlaq/Antigravity-Manager/pull/3324).
+        -   **[Core Fix] Resolve Proxy Pool Health Check 407 Errors & Support URL-Embedded Credentials (Proxy Pool Health Check 407 & Auth Parsing Fix)**:
+            -   **Upgrade Default Endpoint to HTTPS 204**: Changed default health check endpoint from plaintext `http://` to `https://cp.cloudflare.com/generate_204`, enforcing standard HTTPS `CONNECT` tunnels and authenticating properly through proxy servers, fixing false positive `407 Proxy Authentication Required` errors.
+            -   **Automatic URL-Embedded Credential Extraction**: Automatically extracts `username` and `password` from `http(s)://user:password@ip:port` proxy URLs and safely applies them via Basic Auth to prevent credentials from being dropped.
+            -   *Related Issue*: Fixes [#3323](https://github.com/lbjlaq/Antigravity-Manager/issues/3323).
     *   **v4.5.9 (2026-08-23)**:
         -   **[Core Feature] Multimodal Audio Input Support on OpenAI-Compatible Endpoint (OpenAI Audio Input Support)**:
             -   **Standard Audio Input & Multi-Source Mapping**: Fully supports standard OpenAI `input_audio` (Base64 data + format specifier) and `audio_url` fields, seamlessly transforming them into Gemini `inlineData` / `fileData` parts.
