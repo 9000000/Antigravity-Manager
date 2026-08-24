@@ -448,6 +448,10 @@ response = client.chat.completions.create(
             -   **默认端点升级 HTTPS 204**: 将默认健康检查端点由明文 `http://` 升级为 `https://cp.cloudflare.com/generate_204`，强制走标准 HTTPS `CONNECT` 隧道建立鉴权管道，彻底解决 HTTP 代理下明文 Forwarding 报 `407 Proxy Authentication Required` 的误报问题。
             -   **URL 内嵌凭据自动解析**: 在构建代理底层客户端时，自动从 `http(s)://user:password@ip:port` 格式的代理 URL 中安全提取 `username` 和 `password` 注入 Basic 认证，杜绝凭据漏传。
             -   *相关 Issue*: 修复 [#3323](https://github.com/lbjlaq/Antigravity-Manager/issues/3323)。
+        -   **[核心修复] 完整支持 Gemini 3.7 Flash / 3.6 Flash 阶梯别名与思考预算映射，修复 429 误判 (Gemini 3.7 Flash Variant Mapping & 429 Fix)**:
+            -   **对齐官方 3.7 Flash 变体 Spec**: 完整注册 `gemini-3.7-flash` 系列家族及 `gemini-3.7-flash-low` (1000 tokens)、`gemini-3.7-flash-medium` (4000 tokens)、`gemini-3.7-flash-high` (10000 tokens) 与 `gemini-3.7-flash-tiered` 等阶梯别名。
+            -   **解决本地调度误判 429**: 消除因未注册 3.7 族系变体而在账号配额检查与变体解析时触发“无可用账号 / All accounts limited”的 429 本地拦截问题。
+            -   *相关 Issue*: 修复 [#3322](https://github.com/lbjlaq/Antigravity-Manager/issues/3322)。
     *   **v4.5.9 (2026-08-23)**:
         -   **[核心功能] OpenAI 兼容端点支持多模态音频输入 (OpenAI Audio Input Support)**:
             -   **支持标准音频格式与多来源映射**: 支持 OpenAI 官方 `input_audio`（Base64 编码 + 格式标识）及 `audio_url`，无缝转换为 Gemini 的 `inlineData` / `fileData` 格式。

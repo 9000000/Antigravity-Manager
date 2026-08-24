@@ -437,6 +437,10 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
             -   **Upgrade Default Endpoint to HTTPS 204**: Changed default health check endpoint from plaintext `http://` to `https://cp.cloudflare.com/generate_204`, enforcing standard HTTPS `CONNECT` tunnels and authenticating properly through proxy servers, fixing false positive `407 Proxy Authentication Required` errors.
             -   **Automatic URL-Embedded Credential Extraction**: Automatically extracts `username` and `password` from `http(s)://user:password@ip:port` proxy URLs and safely applies them via Basic Auth to prevent credentials from being dropped.
             -   *Related Issue*: Fixes [#3323](https://github.com/lbjlaq/Antigravity-Manager/issues/3323).
+        -   **[Core Fix] Full Support for Gemini 3.7 / 3.6 Flash Tiered Variants & Thinking Budget Mapping (Gemini 3.7 Flash Variant Mapping & 429 Fix)**:
+            -   **Official 3.7 Flash Spec Alignment**: Registered `gemini-3.7-flash` family and explicit tier aliases including `gemini-3.7-flash-low` (1,000 budget), `gemini-3.7-flash-medium` (4,000 budget), `gemini-3.7-flash-high` (10,000 budget), and `gemini-3.7-flash-tiered`.
+            -   **Eliminate Local 429 Interceptions**: Resolves issues where unregistered 3.7 variant IDs caused local token manager / quota evaluation to falsely trigger "No available accounts: All accounts limited" 429 responses.
+            -   *Related Issue*: Fixes [#3322](https://github.com/lbjlaq/Antigravity-Manager/issues/3322).
     *   **v4.5.9 (2026-08-23)**:
         -   **[Core Feature] Multimodal Audio Input Support on OpenAI-Compatible Endpoint (OpenAI Audio Input Support)**:
             -   **Standard Audio Input & Multi-Source Mapping**: Fully supports standard OpenAI `input_audio` (Base64 data + format specifier) and `audio_url` fields, seamlessly transforming them into Gemini `inlineData` / `fileData` parts.
