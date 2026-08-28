@@ -456,6 +456,9 @@ response = client.chat.completions.create(
         -   **[核心修复] 修复 Gemini 3.x 长对话中思考签名压缩后失效引发 400 报错 (PR #3337)**:
             -   **根因**: `ContextManager` 在压缩思考内容时将文本替换为 `"..."`，但保留了原始 `thoughtSignature`；Google API 对签名与原始内容强校验，导致下一轮请求报 `400 INVALID_ARGUMENT: Invalid thought signature`。
             -   **修复方案**: 压缩思考内容时同步清空对应签名字段，保持签名链有效；对非压缩路径、非思考模型零影响。
+        -   **[安装脚本修复] 修复 Linux 一键安装脚本因版本号解析异常导致 404 下载失败 (Issue #3328)**:
+            -   **根因**: fallback 方法（Method 2）在 GitHub API 限速时通过解析 redirect header 获取版本号，因 curl 版本差异或网络抖动，`Location:` 字段可能携带换行/回车/空白字符，导致版本号解析出 `value\` 等非法字符串后直接拼接为下载 URL，触发 404。
+            -   **修复方案**: 新增 `_is_valid_version()` 语义版本格式校验（必须匹配 `^[0-9]+\.[0-9]+\.[0-9]+`），两种获取方法均在使用前校验；Method 2 改为 `curl -w '%{url_effective}'` 直接获取最终跳转 URL，彻底规避 header 解析歧义；解析出非法版本号时立即报错并提示 `VERSION=x.x.x bash install.sh` 手动指定。
     *   **v4.6.1 (2026-08-25)**:
         -   **[核心修复] 修复多轮对话思考内容与图片堆积引发 1M Token 溢出，并增加报错时输入 Token 本地估算回退 (Token 1M Overflow & Monitor Token Estimation Fallback)**:
             -   **历史思考内容自动剪枝**: 在转换为 Gemini contents 时，仅保留最近窗口内 assistant 消息的思考文本，历史轮次仅保留工具调用关联的 `thoughtSignature` 占位，防止 Agent 长对话下思考内容滚雪球堆积触发 1M Token 限制。
