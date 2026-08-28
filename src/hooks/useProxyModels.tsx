@@ -2,7 +2,6 @@ import { useMemo, useEffect, useState } from 'react';
 import { MODEL_CONFIG } from '../config/modelConfig';
 import { useAccountStore } from '../stores/useAccountStore';
 import { Bot, Sparkles } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 import { request } from '../utils/request';
 
 export interface CanonicalFamilyDto {
@@ -69,7 +68,6 @@ const ALIAS_TO_CANONICAL: Record<string, { id: string; name: string; group: stri
 };
 
 export const useProxyModels = () => {
-    const { t } = useTranslation();
     const { accounts, fetchAccounts } = useAccountStore();
     const [canonicalFamilies, setCanonicalFamilies] = useState<CanonicalFamilyDto[]>([]);
 
