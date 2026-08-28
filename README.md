@@ -16,6 +16,10 @@
     <img src="https://img.shields.io/badge/License-CC--BY--NC--SA--4.0-lightgrey?style=flat-square" alt="License">
   </p>
 
+  <a href="https://trendshift.io/repositories/18224?utm_source=repository-badge&utm_medium=badge&utm_campaign=badge-repository-18224" target="_blank" rel="noopener noreferrer">
+    <img src="https://trendshift.io/api/badge/repositories/18224" alt="lbjlaq/Antigravity-Manager | Trendshift" width="250" height="55"/>
+  </a>
+
   <p>
     <a href="#-核心功能">核心功能</a> • 
     <a href="#-界面导览">界面导览</a> • 
