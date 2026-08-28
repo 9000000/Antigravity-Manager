@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.6.1)
+> 专业级 AI 账号管理与协议代理系统 (v4.6.2)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.6.1-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.6.2-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -438,6 +438,24 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.6.2 (2026-08-28)**:
+        -   **[核心修复] 修复重启后「界面显示运行中但端口连不上」及静默失败无日志问题 (Proxy Startup Diagnostics, PR #3330)**:
+            -   **补全启动失败分支日志**: `lib.rs` 中 `load_app_config()` 失败时新增 `error!` 日志，将配置加载异常从静默吞掉变为可排查的错误记录，明确标注 admin server 与反代服务均未启动。
+            -   **清理伪造 server handle**: 移除 `ProxyServiceInstance` 中无实际意义的 `tokio::spawn(async {})` 占位句柄及相关 `#[allow(dead_code)]` 标注，真实句柄由 `AdminServerInstance` 统一管理，消除歧义。
+        -   **[国际化] 巴西葡萄牙语 (pt-BR) 翻译全量补完，实现与 en.json 100% 键对齐 (PR #3334)**:
+            -   **补全 1224+ 条翻译键**: 翻译全部未翻译键值并清除残余中文，实现 0 缺失、0 不匹配、0 中文残留。
+            -   **修复占位符同步**: 对齐 `{{name}}`、`{{error}}` 等插值参数，避免运行时渲染异常。
+            -   **补充组件直引键**: 补全前端 TSX 组件中直接引用的缺失 key（账号申诉跳转、安全黑名单等）。
+        -   **[功能增强] 模型目录更新、官方图标接入与 OpenCode 同步规则优化 (PR #3335)**:
+            -   **新增模型支持**: 新增 `gemini-3.7-flash`、`gemini-3.1-flash-lite`、`claude-opus-4-6`、`gpt-oss-120b-medium` 等模型并接入 `@lobehub/icons` 官方图标。
+            -   **模型列表去重**: 规范化 `useProxyModels` 中的别名映射，消除因子层级后缀产生的重复模型条目。
+            -   **OpenCode 同步规则调整**: 启用 Claude 模型的 `ClaudeThinking` 推理变体支持，禁用 Gemini 3 系列不支持的 `max` 变体，补充 Web 模式的默认标签回退。
+        -   **[平台修复] 消除 Windows 下后台进程执行时控制台黑框闪烁 (PR #3336)**:
+            -   **统一 CREATE_NO_WINDOW 标志**: 将 Cloudflared 启动、tar 解压、手动可执行文件等调用中的 `DETACHED_PROCESS` 替换/补充为 `CREATE_NO_WINDOW` (0x08000000)，从根源消除临时独立控制台窗口弹出。
+            -   **同步/异步统一处理**: 在 `command.rs` 中对 `std::process::Command` 与 `tokio::process::Command` 两种扩展统一应用无窗口标志。
+        -   **[核心修复] 修复 Gemini 3.x 长对话中思考签名压缩后失效引发 400 报错 (PR #3337)**:
+            -   **根因**: `ContextManager` 在压缩思考内容时将文本替换为 `"..."`，但保留了原始 `thoughtSignature`；Google API 对签名与原始内容强校验，导致下一轮请求报 `400 INVALID_ARGUMENT: Invalid thought signature`。
+            -   **修复方案**: 压缩思考内容时同步清空对应签名字段，保持签名链有效；对非压缩路径、非思考模型零影响。
     *   **v4.6.1 (2026-08-25)**:
         -   **[核心修复] 修复多轮对话思考内容与图片堆积引发 1M Token 溢出，并增加报错时输入 Token 本地估算回退 (Token 1M Overflow & Monitor Token Estimation Fallback)**:
             -   **历史思考内容自动剪枝**: 在转换为 Gemini contents 时，仅保留最近窗口内 assistant 消息的思考文本，历史轮次仅保留工具调用关联的 `thoughtSignature` 占位，防止 Agent 长对话下思考内容滚雪球堆积触发 1M Token 限制。
