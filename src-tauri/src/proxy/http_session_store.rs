@@ -81,7 +81,7 @@ pub async fn append_outputs(response_id: &str, new_outputs: Vec<Value>) {
 pub fn merge_history_with_new_input(
     mut history: Vec<Value>,
     response_output: &[Value],
-    new_input: &[Value],
+    new_input: Vec<Value>,
     tool_call_cache: &HashMap<String, Value>,
 ) -> Vec<Value> {
     // 检测新输入中是否包含 compaction / compaction_summary，如果包含，说明客户端正在发送压缩后的全新完整历史
@@ -102,7 +102,7 @@ pub fn merge_history_with_new_input(
             if t == "compaction" || t == "compaction_summary" {
                 continue;
             }
-            filtered.push(item.clone());
+            filtered.push(item);
         }
         repair_tool_calls(&mut filtered, tool_call_cache);
         return dedupe_input_items(filtered);
@@ -119,7 +119,7 @@ pub fn merge_history_with_new_input(
         if t == "compaction" || t == "compaction_summary" {
             continue;
         }
-        history.push(item.clone());
+        history.push(item);
     }
 
     // 修复工具调用（确保function_call_output前有对应的function_call）

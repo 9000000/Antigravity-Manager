@@ -29,6 +29,8 @@ use crate::proxy::common::client_adapter::CLIENT_ADAPTERS; // [NEW] Adapter Regi
 use crate::proxy::session_manager::SessionManager;
 use axum::http::HeaderMap;
 use std::collections::VecDeque;
+use std::io;
+use tokio::task::JoinSet;
 use tokio::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +86,22 @@ fn parse_image_data_url(
     image_count: usize,
     total_bytes: usize,
 ) -> Result<NormalizedInputImage, String> {
+    let (mime_type, encoded) = parse_image_data_url_parts(data_url)?;
+
+    let max_encoded_len = MAX_INPUT_IMAGE_BYTES.div_ceil(3).saturating_mul(4);
+    if encoded.len() > max_encoded_len {
+        return Err(format!(
+            "Input image is too large: maximum decoded size is {} bytes",
+            MAX_INPUT_IMAGE_BYTES
+        ));
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| "Input image contains invalid base64 data".to_string())?;
+    normalized_image_from_bytes(&decoded, mime_type, image_count, total_bytes)
+}
+
+fn parse_image_data_url_parts(data_url: &str) -> Result<(&str, &str), String> {
     let (metadata, encoded) = data_url
         .strip_prefix("data:")
         .and_then(|value| value.split_once(','))
@@ -99,18 +117,7 @@ fn parse_image_data_url(
     if encoded.is_empty() {
         return Err("Input image data URL is empty".to_string());
     }
-
-    let max_encoded_len = MAX_INPUT_IMAGE_BYTES.div_ceil(3).saturating_mul(4);
-    if encoded.len() > max_encoded_len {
-        return Err(format!(
-            "Input image is too large: maximum decoded size is {} bytes",
-            MAX_INPUT_IMAGE_BYTES
-        ));
-    }
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .map_err(|_| "Input image contains invalid base64 data".to_string())?;
-    normalized_image_from_bytes(&decoded, mime_type, image_count, total_bytes)
+    Ok((mime_type, encoded))
 }
 
 fn parse_generation_input_images(image: Option<&Value>) -> Result<Vec<NormalizedInputImage>, String> {
@@ -279,55 +286,381 @@ fn responses_input_item_type(item: &Value) -> &str {
         .unwrap_or("")
 }
 
-fn responses_message_parts(item: &Value) -> (Vec<String>, Vec<Value>) {
-    let mut text_parts = Vec::new();
-    let mut image_parts = Vec::new();
+fn push_responses_content_part(
+    mut part: Value,
+    text_parts: &mut Vec<String>,
+    media_parts: &mut Vec<Value>,
+) -> Result<(), Value> {
+    let part_type = part
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if let Some(Value::String(text)) = part.as_object_mut().and_then(|obj| obj.remove("text")) {
+        text_parts.push(text);
+        Ok(())
+    } else if part_type == "input_image" {
+        if let Some(Value::String(image_url)) =
+            part.as_object_mut().and_then(|obj| obj.remove("image_url"))
+        {
+            media_parts.push(json!({
+                "type": "image_url",
+                "image_url": { "url": image_url }
+            }));
+            Ok(())
+        } else {
+            Err(part)
+        }
+    } else if part_type == "image_url" {
+        if let Some(image_url) = part.as_object_mut().and_then(|obj| obj.remove("image_url")) {
+            media_parts.push(json!({
+                "type": "image_url",
+                "image_url": image_url
+            }));
+            Ok(())
+        } else {
+            Err(part)
+        }
+    } else if matches!(part_type.as_str(), "input_audio" | "audio") {
+        if let Some(input_audio) = part
+            .as_object_mut()
+            .and_then(|obj| obj.remove("input_audio"))
+        {
+            media_parts.push(json!({
+                "type": "input_audio",
+                "input_audio": input_audio
+            }));
+            Ok(())
+        } else {
+            Err(part)
+        }
+    } else if part_type == "audio_url" {
+        if let Some(audio_url) = part.as_object_mut().and_then(|obj| obj.remove("audio_url")) {
+            media_parts.push(json!({
+                "type": "audio_url",
+                "audio_url": audio_url
+            }));
+            Ok(())
+        } else {
+            Err(part)
+        }
+    } else {
+        Err(part)
+    }
+}
 
-    match item.get("content") {
-        Some(Value::String(text)) => text_parts.push(text.clone()),
+fn responses_content_parts(content: Option<Value>) -> (Vec<String>, Vec<Value>, Vec<Value>) {
+    let mut text_parts = Vec::new();
+    let mut media_parts = Vec::new();
+    let mut unhandled_parts = Vec::new();
+
+    match content {
+        Some(Value::String(text)) => text_parts.push(text),
         Some(Value::Array(parts)) => {
             for part in parts {
-                if let Some(text) = part.get("text").and_then(Value::as_str) {
-                    text_parts.push(text.to_string());
-                } else if part.get("type").and_then(Value::as_str) == Some("input_image") {
-                    if let Some(image_url) = part.get("image_url").and_then(Value::as_str) {
-                        image_parts.push(json!({
-                            "type": "image_url",
-                            "image_url": { "url": image_url }
-                        }));
-                    }
-                } else if part.get("type").and_then(Value::as_str) == Some("image_url") {
-                    if let Some(image_url) = part.get("image_url") {
-                        image_parts.push(json!({
-                            "type": "image_url",
-                            "image_url": image_url.clone()
-                        }));
-                    }
-                } else if matches!(
-                    part.get("type").and_then(Value::as_str),
-                    Some("input_audio") | Some("audio")
-                ) {
-                    // [NEW] Responses API 音频入参透传给 chat/completions 映射层
-                    if let Some(input_audio) = part.get("input_audio") {
-                        image_parts.push(json!({
-                            "type": "input_audio",
-                            "input_audio": input_audio.clone()
-                        }));
-                    }
-                } else if part.get("type").and_then(Value::as_str) == Some("audio_url") {
-                    if let Some(audio_url) = part.get("audio_url") {
-                        image_parts.push(json!({
-                            "type": "audio_url",
-                            "audio_url": audio_url.clone()
-                        }));
-                    }
+                if let Err(part) =
+                    push_responses_content_part(part, &mut text_parts, &mut media_parts)
+                {
+                    unhandled_parts.push(part);
                 }
             }
         }
-        _ => {}
+        Some(part @ Value::Object(_)) => {
+            if let Err(part) = push_responses_content_part(part, &mut text_parts, &mut media_parts)
+            {
+                unhandled_parts.push(part);
+            }
+        }
+        Some(other) => unhandled_parts.push(other),
+        None => {}
     }
 
-    (text_parts, image_parts)
+    (text_parts, media_parts, unhandled_parts)
+}
+
+fn responses_message_parts(item: &mut Value) -> (Vec<String>, Vec<Value>) {
+    let content = item.as_object_mut().and_then(|obj| obj.remove("content"));
+    let (text, media, _) = responses_content_parts(content);
+    (text, media)
+}
+
+fn responses_tool_output_parts(item: &mut Value) -> (String, Vec<Value>) {
+    let Some(output) = item.as_object_mut().and_then(|obj| obj.remove("output")) else {
+        return (String::new(), Vec::new());
+    };
+    let mut output = output;
+    let content = output
+        .as_object_mut()
+        .and_then(|obj| obj.remove("content"))
+        .unwrap_or(output);
+
+    match content {
+        Value::String(text) => (text, Vec::new()),
+        content @ Value::Array(_) => {
+            let (text_parts, media_parts, unhandled) = responses_content_parts(Some(content));
+            if text_parts.is_empty() && media_parts.is_empty() {
+                (Value::Array(unhandled).to_string(), Vec::new())
+            } else {
+                (text_parts.join("\n"), media_parts)
+            }
+        }
+        content @ Value::Object(_) if content.get("type").is_some() => {
+            let (text_parts, media_parts, unhandled) = responses_content_parts(Some(content));
+            if text_parts.is_empty() && media_parts.is_empty() {
+                (
+                    unhandled
+                        .into_iter()
+                        .next()
+                        .unwrap_or(Value::Null)
+                        .to_string(),
+                    Vec::new(),
+                )
+            } else {
+                (text_parts.join("\n"), media_parts)
+            }
+        }
+        _ => (content.to_string(), Vec::new()),
+    }
+}
+
+fn decoded_base64_len(encoded: &str) -> Result<usize, String> {
+    let mut decoder = base64::read::DecoderReader::new(
+        encoded.as_bytes(),
+        &base64::engine::general_purpose::STANDARD,
+    );
+    let mut sink = io::sink();
+    usize::try_from(
+        io::copy(&mut decoder, &mut sink)
+            .map_err(|_| "Input image contains invalid base64 data".to_string())?,
+    )
+    .map_err(|_| "Input image is too large".to_string())
+}
+
+fn validate_responses_image_data_url(
+    data_url: &str,
+    image_count: usize,
+    total_bytes: usize,
+) -> Result<usize, String> {
+    let (_, encoded) = parse_image_data_url_parts(data_url)?;
+    validate_input_image_limits(image_count, 0, total_bytes)?;
+    let max_encoded_len = MAX_INPUT_IMAGE_BYTES.div_ceil(3).saturating_mul(4);
+    if encoded.len() > max_encoded_len {
+        return Err(format!(
+            "Input image is too large: maximum decoded size is {} bytes",
+            MAX_INPUT_IMAGE_BYTES
+        ));
+    }
+    let decoded_len = decoded_base64_len(encoded)?;
+    validate_input_image_limits(
+        image_count,
+        decoded_len,
+        total_bytes.saturating_add(decoded_len),
+    )?;
+    Ok(decoded_len)
+}
+
+fn validate_responses_input_image_limits(input: Option<&Value>) -> Result<(), String> {
+    fn visit(value: &Value, count: &mut usize, total: &mut usize) -> Result<(), String> {
+        match value {
+            Value::Array(values) => {
+                for value in values {
+                    visit(value, count, total)?;
+                }
+            }
+            Value::Object(values) => {
+                if matches!(
+                    values.get("type").and_then(Value::as_str),
+                    Some("input_image") | Some("image_url")
+                ) {
+                    let image_url = values.get("image_url").and_then(|value| {
+                        value
+                            .as_str()
+                            .or_else(|| value.get("url").and_then(Value::as_str))
+                    });
+                    if let Some(data_url) = image_url {
+                        if !data_url.starts_with("data:") {
+                            return Ok(());
+                        }
+                        *count = count.saturating_add(1);
+                        let decoded_len =
+                            validate_responses_image_data_url(data_url, *count, *total)?;
+                        *total = total.saturating_add(decoded_len);
+                    }
+                    return Ok(());
+                }
+                for value in values.values() {
+                    visit(value, count, total)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    let mut count = 0;
+    let mut total = 0;
+    if let Some(input) = input {
+        visit(input, &mut count, &mut total)?;
+    }
+    Ok(())
+}
+
+fn historical_media_placeholder(value: &serde_json::Map<String, Value>) -> Option<Value> {
+    match value.get("type").and_then(Value::as_str) {
+        Some("input_image") | Some("image_url") => Some(json!({
+            "type": "input_text",
+            "text": "[historical image omitted]"
+        })),
+        Some("input_audio") | Some("audio") | Some("audio_url") => Some(json!({
+            "type": "input_text",
+            "text": "[historical audio omitted]"
+        })),
+        _ => None,
+    }
+}
+
+fn history_without_inline_media(value: &Value) -> Value {
+    fn clone_bounded(value: &Value) -> Option<Value> {
+        match value {
+            Value::String(text)
+                if text.starts_with("data:image/") || text.starts_with("data:audio/") =>
+            {
+                None
+            }
+            Value::Array(values) => Some(Value::Array(
+                values.iter().filter_map(clone_bounded).collect(),
+            )),
+            Value::Object(values) => historical_media_placeholder(values).or_else(|| {
+                Some(Value::Object(
+                    values
+                        .iter()
+                        .filter_map(|(key, value)| {
+                            clone_bounded(value).map(|value| (key.clone(), value))
+                        })
+                        .collect(),
+                ))
+            }),
+            _ => Some(value.clone()),
+        }
+    }
+
+    clone_bounded(value).unwrap_or(Value::Null)
+}
+
+fn into_history_without_inline_media(value: Value) -> Option<Value> {
+    match value {
+        Value::String(text)
+            if text.starts_with("data:image/") || text.starts_with("data:audio/") =>
+        {
+            None
+        }
+        Value::Array(values) => Some(Value::Array(
+            values
+                .into_iter()
+                .filter_map(into_history_without_inline_media)
+                .collect(),
+        )),
+        Value::Object(values) => {
+            if let Some(placeholder) = historical_media_placeholder(&values) {
+                Some(placeholder)
+            } else {
+                Some(Value::Object(
+                    values
+                        .into_iter()
+                        .filter_map(|(key, value)| {
+                            into_history_without_inline_media(value).map(|value| (key, value))
+                        })
+                        .collect(),
+                ))
+            }
+        }
+        other => Some(other),
+    }
+}
+
+fn omit_media_before_latest_user_turn(items: &mut [Value]) {
+    let Some(current_turn_start) = items.iter().rposition(|item| {
+        item.get("role").and_then(Value::as_str) == Some("user")
+            && matches!(
+                item.get("type").and_then(Value::as_str),
+                None | Some("message")
+            )
+    }) else {
+        return;
+    };
+
+    for item in &mut items[..current_turn_start] {
+        let historical = std::mem::take(item);
+        *item = into_history_without_inline_media(historical).unwrap_or(Value::Null);
+    }
+}
+
+fn build_responses_tool_output_content(text: String, mut media_parts: Vec<Value>) -> Value {
+    if media_parts.is_empty() {
+        return Value::String(text);
+    }
+
+    let mut content = Vec::with_capacity(media_parts.len() + usize::from(!text.is_empty()));
+    if !text.is_empty() {
+        content.push(json!({ "type": "text", "text": text }));
+    }
+    content.append(&mut media_parts);
+    Value::Array(content)
+}
+
+fn debug_value_without_inline_data(value: &Value) -> Value {
+    match value {
+        Value::String(text)
+            if text.starts_with("data:image/") || text.starts_with("data:audio/") =>
+        {
+            Value::String(format!("[inline data omitted: {} chars]", text.len()))
+        }
+        Value::Array(values) => {
+            Value::Array(values.iter().map(debug_value_without_inline_data).collect())
+        }
+        Value::Object(values) => {
+            let is_inline_data = values.get("mimeType").and_then(Value::as_str).is_some()
+                && values.get("data").and_then(Value::as_str).is_some();
+            Value::Object(
+                values
+                    .iter()
+                    .map(|(key, value)| {
+                        let value = if is_inline_data && key == "data" {
+                            Value::String(format!(
+                                "[inline data omitted: {} chars]",
+                                value.as_str().map(str::len).unwrap_or_default()
+                            ))
+                        } else {
+                            debug_value_without_inline_data(value)
+                        };
+                        (key.clone(), value)
+                    })
+                    .collect(),
+            )
+        }
+        _ => value.clone(),
+    }
+}
+
+#[derive(Default)]
+struct JsonByteCounter(usize);
+
+impl std::io::Write for JsonByteCounter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn serialized_json_len(value: &Value) -> usize {
+    let mut counter = JsonByteCounter::default();
+    serde_json::to_writer(&mut counter, value)
+        .map(|_| counter.0)
+        .unwrap_or_default()
 }
 
 fn rewrite_terminal_assistant_prefill(messages: &mut [Value]) -> bool {
@@ -531,16 +864,22 @@ mod stream_peek_tests {
     use super::drop_leading_orphan_tool_history;
     use super::edit_size_input;
     use super::generation_image_size_param;
+    use super::history_without_inline_media;
     use super::image_account_selection_target;
+    use super::into_history_without_inline_media;
     use super::is_codex_transcript_only_assistant_message;
     use super::is_edit_image_field;
+    use super::omit_media_before_latest_user_turn;
     use super::parse_generation_input_images;
     use super::responses_input_item_type;
     use super::responses_message_parts;
     use super::rewrite_terminal_assistant_prefill;
     use super::stream_chunk_has_error_event;
     use super::validate_input_image_limits;
+    use super::validate_responses_image_data_url;
+    use super::validate_responses_input_image_limits;
     use super::{MAX_INPUT_IMAGES, MAX_INPUT_IMAGE_BYTES, MAX_TOTAL_INPUT_IMAGE_BYTES};
+    use crate::proxy::mappers::openai::{transform_openai_request, OpenAIRequest};
     use serde_json::{json, Value};
 
     #[test]
@@ -590,11 +929,11 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
 
         assert_eq!(responses_input_item_type(&string_message), "message");
         assert_eq!(
-            responses_message_parts(&string_message).0,
+            responses_message_parts(&mut string_message.clone()).0,
             vec!["Follow the system instructions."]
         );
         assert_eq!(
-            responses_message_parts(&array_message).0,
+            responses_message_parts(&mut array_message.clone()).0,
             vec!["Continue planning."]
         );
 
@@ -618,6 +957,149 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
                 {"role": "user", "content": "Continue planning."}
             ])
         );
+    }
+
+    #[test]
+    fn responses_tool_output_image_is_sent_as_inline_data() {
+        let converted = convert_codex_to_openai_request(json!({
+            "model": "gemini-3.7-flash-high",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Generate an image."}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_image",
+                    "name": "view_image",
+                    "arguments": "{}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_image",
+                    "output": [
+                        {"type": "input_text", "text": "image generated"},
+                        {"type": "input_image", "image_url": "data:image/png;base64,AQ=="}
+                    ]
+                }
+            ]
+        }));
+        assert!(converted.get("input").is_none());
+        let request: OpenAIRequest =
+            serde_json::from_value(converted).expect("valid OpenAI request");
+
+        let (upstream, _, _, _) =
+            transform_openai_request(&request, "project", "gemini-3.7-flash-high", None);
+        let parts = upstream["request"]["contents"]
+            .as_array()
+            .expect("contents")
+            .iter()
+            .flat_map(|content| content["parts"].as_array().expect("content parts").iter())
+            .collect::<Vec<_>>();
+        let function_response = parts
+            .iter()
+            .find(|part| part.get("functionResponse").is_some())
+            .expect("function response");
+        let inline_data = parts
+            .iter()
+            .find(|part| part.get("inlineData").is_some())
+            .expect("inline image data");
+
+        assert_eq!(
+            function_response["functionResponse"]["response"]["result"],
+            "image generated"
+        );
+        assert!(!function_response.to_string().contains("data:image/"));
+        assert_eq!(inline_data["inlineData"]["mimeType"], "image/png");
+        assert_eq!(inline_data["inlineData"]["data"], "AQ==");
+    }
+
+    #[test]
+    fn pure_image_tool_history_keeps_small_placeholder() {
+        let history = json!({
+            "type": "function_call_output",
+            "call_id": "call_image",
+            "output": [{
+                "type": "input_image",
+                "image_url": "data:image/png;base64,AQ=="
+            }]
+        });
+        let expected = json!({
+            "type": "function_call_output",
+            "call_id": "call_image",
+            "output": [{
+                "type": "input_text",
+                "text": "[historical image omitted]"
+            }]
+        });
+
+        let borrowed = history_without_inline_media(&history);
+        let moved = into_history_without_inline_media(history).expect("bounded history");
+        assert_eq!(borrowed, expected);
+        assert_eq!(moved, expected);
+        assert!(!borrowed.to_string().contains("base64"));
+    }
+
+    #[test]
+    fn responses_data_url_metadata_and_byte_limits() {
+        assert_eq!(
+            validate_responses_image_data_url("data:image/png;BASE64,AQ==", 1, 0)
+                .expect("uppercase base64 token"),
+            1
+        );
+        let encoded = "AAAA".repeat(MAX_INPUT_IMAGE_BYTES / 3 + 1);
+        assert_eq!(
+            validate_responses_image_data_url(&format!("data:image/png;BASE64,{encoded}"), 1, 0)
+                .unwrap_err(),
+            format!(
+                "Input image is too large: maximum decoded size is {} bytes",
+                MAX_INPUT_IMAGE_BYTES
+            )
+        );
+        assert!(validate_responses_image_data_url(
+            "data:image/png;BASE64,AQ==",
+            1,
+            MAX_TOTAL_INPUT_IMAGE_BYTES
+        )
+        .unwrap_err()
+        .starts_with("Total input image data is too large"));
+        assert!(validate_input_image_limits(
+            MAX_INPUT_IMAGES,
+            2 * 1024 * 1024,
+            MAX_TOTAL_INPUT_IMAGE_BYTES
+        )
+        .is_ok());
+        assert!(validate_input_image_limits(
+            MAX_INPUT_IMAGES,
+            2 * 1024 * 1024,
+            MAX_TOTAL_INPUT_IMAGE_BYTES + 1
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn responses_omits_old_images_before_validating_current_turn() {
+        let images = |count| {
+            (0..count)
+                .map(|_| {
+                    json!({"type": "input_image", "image_url": "data:image/png;base64,AQ=="})
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut input = vec![
+            json!({"type": "message", "role": "user", "content": images(16)}),
+            json!({"type": "message", "role": "assistant", "content": "done"}),
+            json!({"type": "message", "role": "user", "content": images(16)}),
+        ];
+
+        omit_media_before_latest_user_turn(&mut input);
+        assert!(input[0].to_string().contains("[historical image omitted]"));
+        assert!(!input[0].to_string().contains("data:image/"));
+        assert!(validate_responses_input_image_limits(Some(&Value::Array(input.clone()))).is_ok());
+
+        input[2]["content"] = Value::Array(images(17));
+        assert!(validate_responses_input_image_limits(Some(&Value::Array(input))).is_err());
     }
 
     #[test]
@@ -1103,9 +1585,9 @@ pub async fn handle_chat_completions(
         return intercept_chat_to_image(state, body, &model_name).await;
     }
 
-    // [FIX] 保存原始请求体的完整副本，用于日志记录
-    // 这确保了即使结构体定义遗漏字段，日志也能完整记录所有参数
-    let original_body = body.clone();
+    let debug_cfg = state.debug_logging.read().await.clone();
+    let original_body =
+        debug_logger::is_enabled(&debug_cfg).then(|| debug_value_without_inline_data(&body));
 
     // [NEW] 自动检测并转换 Responses 格式
     // 如果请求包含 instructions 或 input 但没有 messages，则认为是 Responses 格式
@@ -1190,8 +1672,6 @@ pub async fn handle_chat_completions(
         openai_req.messages.len(),
         openai_req.stream
     );
-    let debug_cfg = state.debug_logging.read().await.clone();
-
     let mut force_rotate = false;
 
     if debug_logger::is_enabled(&debug_cfg) {
@@ -1218,7 +1698,7 @@ pub async fn handle_chat_completions(
             "protocol": "openai",
             "trace_id": trace_id,
             "original_model": openai_req.model,
-            "request": original_body,  // 使用原始请求体，不是结构体序列化
+            "request": original_body.as_ref(),
         });
         debug_logger::write_exchange_payload(
             &debug_cfg,
@@ -1351,7 +1831,8 @@ pub async fn handle_chat_completions(
             &mapped_model,
             proxy_token.as_ref(),
         );
-        let gemini_body_for_debug = gemini_body.clone();
+        let gemini_body_for_debug = debug_logger::is_enabled(&debug_cfg)
+            .then(|| debug_value_without_inline_data(&gemini_body));
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
@@ -1362,7 +1843,7 @@ pub async fn handle_chat_completions(
                 "mapped_model": mapped_model,
                 "request_type": config.request_type,
                 "attempt": attempt,
-                "v1internal_request": gemini_body.clone(),
+                "v1internal_request": gemini_body_for_debug.as_ref(),
             });
             debug_logger::write_exchange_payload(
                 &debug_cfg,
@@ -1373,10 +1854,10 @@ pub async fn handle_chat_completions(
             .await;
         }
 
-        // [New] 打印转换后的报文 (Gemini Body) 供调试
-        if let Ok(body_json) = serde_json::to_string_pretty(&gemini_body) {
-            debug!("[OpenAI-Request] Transformed Gemini Body:\n{}", body_json);
-        }
+        debug!(
+            "[OpenAI-Request] Transformed Gemini body: {} bytes",
+            serialized_json_len(&gemini_body)
+        );
 
         // 5. 发送请求
         let client_wants_stream = openai_req.stream;
@@ -1668,8 +2149,8 @@ pub async fn handle_chat_completions(
                                     "kind": "exchange_summary",
                                     "protocol": "openai",
                                     "trace_id": trace_id,
-                                    "original_codex_request": original_body,
-                                    "gemini_request": gemini_body_for_debug,
+                                    "original_codex_request": original_body.as_ref(),
+                                    "gemini_request": gemini_body_for_debug.as_ref(),
                                     "converted_codex_response": converted_response,
                                     "gemini_raw_response_ref": "see upstream_response file with the same trace_id",
                                 });
@@ -1745,8 +2226,8 @@ pub async fn handle_chat_completions(
                     "kind": "exchange_summary",
                     "protocol": "openai",
                     "trace_id": trace_id,
-                    "original_codex_request": original_body,
-                    "gemini_request": gemini_body_for_debug,
+                    "original_codex_request": original_body.as_ref(),
+                    "gemini_request": gemini_body_for_debug.as_ref(),
                     "gemini_raw_response": gemini_resp,
                     "converted_codex_response": converted_response,
                 });
@@ -2096,11 +2577,22 @@ pub async fn handle_completions(
     Json(mut body): Json<Value>,
 ) -> Response {
     debug!(
-        "Received /v1/completions or /v1/responses payload: {:?}",
-        body
+        "Received /v1/completions or /v1/responses payload: {} bytes",
+        serialized_json_len(&body)
     );
-    let original_body = body.clone();
     let debug_cfg = state.debug_logging.read().await.clone();
+    let original_body =
+        debug_logger::is_enabled(&debug_cfg).then(|| debug_value_without_inline_data(&body));
+    let is_codex_style = body.get("input").is_some() || body.get("instructions").is_some();
+
+    if is_codex_style {
+        if let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) {
+            omit_media_before_latest_user_turn(input);
+        }
+        if let Err(message) = validate_responses_input_image_limits(body.get("input")) {
+            return (StatusCode::BAD_REQUEST, message).into_response();
+        }
+    }
 
     // [MULTI-TURN] 支持 previous_response_id 链式历史恢复
     // 当客户端通过 HTTP POST /v1/responses 传入 previous_response_id 时，
@@ -2116,19 +2608,22 @@ pub async fn handle_completions(
         if let Some(session) = crate::proxy::http_session_store::get_session(prev_id).await {
             // 把历史 input items 合并进来
             let existing_input = body
-                .get("input")
-                .and_then(|v| v.as_array())
-                .cloned()
+                .as_object_mut()
+                .and_then(|obj| obj.remove("input"))
+                .and_then(|value| match value {
+                    Value::Array(items) => Some(items),
+                    _ => None,
+                })
                 .unwrap_or_default();
             let merged = crate::proxy::http_session_store::merge_history_with_new_input(
                 session.input_items,
                 &[],
-                &existing_input,
+                existing_input,
                 &http_tool_call_cache,
             );
             let merged_len = merged.len();
             if let Some(obj) = body.as_object_mut() {
-                obj.insert("input".to_string(), json!(merged));
+                obj.insert("input".to_string(), Value::Array(merged));
                 // 从历史 session 继承 instructions（如果本轮没带）
                 if !obj.contains_key("instructions") && !session.instructions.is_empty() {
                     obj.insert("instructions".to_string(), json!(session.instructions));
@@ -2146,16 +2641,31 @@ pub async fn handle_completions(
         }
     }
 
-    let is_codex_style = body.get("input").is_some() || body.get("instructions").is_some();
+    let mut bounded_session_input = None;
 
     // 1. Convert Payload to Messages (Shared Chat Format)
     if is_codex_style {
         let instructions = body
             .get("instructions")
             .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        let input_items = body.get("input").and_then(|v| v.as_array());
+            .unwrap_or_default()
+            .to_string();
         let (interaction_ledger, mut step_markers) = codex_ledger_from_body(&body);
+        let input_items = body
+            .as_object_mut()
+            .and_then(|obj| obj.remove("input"))
+            .and_then(|value| match value {
+                Value::Array(items) => Some(items),
+                _ => None,
+            })
+            .unwrap_or_default();
+        bounded_session_input = Some(
+            input_items
+                .iter()
+                .map(history_without_inline_media)
+                .filter(|item| !item.is_null())
+                .collect(),
+        );
 
         let mut messages = Vec::new();
 
@@ -2168,9 +2678,9 @@ pub async fn handle_completions(
         let mut skipped_incomplete_custom_call_ids = std::collections::HashSet::new();
 
         // Pass 1: Build Call ID to Name Map
-        if let Some(items) = input_items {
-            for item in items {
-                let item_type = responses_input_item_type(item);
+        {
+            for item in &input_items {
+                let item_type = responses_input_item_type(&item).to_string();
                 if item_type == "custom_tool_call"
                     && item.get("status").and_then(|v| v.as_str()) == Some("incomplete")
                 {
@@ -2183,7 +2693,7 @@ pub async fn handle_completions(
                     }
                     continue;
                 }
-                match item_type {
+                match item_type.as_str() {
                     "function_call" | "custom_tool_call" | "local_shell_call"
                     | "web_search_call" => {
                         let call_id = item
@@ -2216,22 +2726,30 @@ pub async fn handle_completions(
         // Pass 2: Map durable conversation items to Gemini messages. Visible
         // assistant commentary stays in Codex's local transcript and must not
         // be replayed as model history.
-        if let Some(items) = input_items {
-            for item in items {
-                let item_type = responses_input_item_type(item);
+        {
+            for mut item in input_items {
+                let item_type = responses_input_item_type(&item).to_string();
                 let step_marker = step_markers.pop_front();
                 if item_type == "custom_tool_call"
                     && item.get("status").and_then(|v| v.as_str()) == Some("incomplete")
                 {
                     continue;
                 }
-                match item_type {
+                match item_type.as_str() {
                     "message" => {
-                        let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
-                        let (text_parts, image_parts) = responses_message_parts(item);
+                        let role = item
+                            .get("role")
+                            .and_then(Value::as_str)
+                            .unwrap_or("user")
+                            .to_string();
+                        let transcript_only_metadata =
+                            is_codex_transcript_only_assistant_message(&item, "");
+                        let (text_parts, image_parts) = responses_message_parts(&mut item);
 
                         let joined_text = text_parts.join("\n");
-                        if is_codex_transcript_only_assistant_message(item, &joined_text) {
+                        if transcript_only_metadata
+                            || joined_text.trim_start().starts_with("**Thinking**")
+                        {
                             continue;
                         }
 
@@ -2341,9 +2859,10 @@ pub async fn handle_completions(
                         let call_id = item
                             .get("call_id")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
+                            .unwrap_or("unknown")
+                            .to_string();
                         if item_type == "custom_tool_call_output"
-                            && skipped_incomplete_custom_call_ids.contains(call_id)
+                            && skipped_incomplete_custom_call_ids.contains(&call_id)
                         {
                             tracing::warn!(
                                 "Skipping output for incomplete custom tool call {}",
@@ -2351,21 +2870,9 @@ pub async fn handle_completions(
                             );
                             continue;
                         }
-                        let output = item.get("output");
-                        let mut output_str = if let Some(o) = output {
-                            if o.is_string() {
-                                o.as_str().unwrap().to_string()
-                            } else if let Some(content) = o.get("content").and_then(|v| v.as_str())
-                            {
-                                content.to_string()
-                            } else {
-                                o.to_string()
-                            }
-                        } else {
-                            "".to_string()
-                        };
+                        let (mut output_str, output_media) = responses_tool_output_parts(&mut item);
 
-                        let name = if let Some(name) = call_id_to_name.get(call_id).cloned() {
+                        let name = if let Some(name) = call_id_to_name.get(&call_id).cloned() {
                             name
                         } else if item_type == "custom_tool_call_output" {
                             tracing::warn!(
@@ -2389,12 +2896,14 @@ pub async fn handle_completions(
                             );
                         }
                         output_str = prefix_with_step_marker(step_marker, output_str);
+                        let output_content =
+                            build_responses_tool_output_content(output_str, output_media);
 
                         messages.push(json!({
                             "role": "tool",
                             "tool_call_id": call_id,
                             "name": name,
-                            "content": output_str
+                            "content": output_content
                         }));
                     }
                     _ => {}
@@ -2402,7 +2911,7 @@ pub async fn handle_completions(
             }
         }
         if let Some(obj) = body.as_object_mut() {
-            obj.insert("messages".to_string(), json!(messages));
+            obj.insert("messages".to_string(), Value::Array(messages));
             if let Some(ledger) = interaction_ledger {
                 obj.insert("_interaction_ledger".to_string(), json!(ledger));
             }
@@ -2589,7 +3098,7 @@ pub async fn handle_completions(
                 "[Codex] Injecting normalized messages: {} messages",
                 messages.len()
             );
-            obj.insert("messages".to_string(), json!(messages));
+            obj.insert("messages".to_string(), Value::Array(messages));
         }
     } else if already_normalized {
         tracing::debug!(
@@ -2616,23 +3125,23 @@ pub async fn handle_completions(
 
     // [FIX] 在 openai_req 反序列化之前，从 body 中捕获原始 input 和 instructions
     // 用于后续 session 保存时，保留完整的工具调用历史（而非从 openai_req.messages 重建丢失信息）
-    let session_save_input: Vec<serde_json::Value> = body
-        .get("input")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let session_save_instructions: String = body
-        .get("instructions")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
     let normalized_interaction_ledger = body.get("_interaction_ledger").cloned();
+    let (session_save_input, session_save_instructions) = if let Some(obj) = body.as_object_mut() {
+        let input = bounded_session_input.take().unwrap_or_default();
+        obj.remove("input");
+        let instructions = obj
+            .remove("instructions")
+            .and_then(|value| match value {
+                Value::String(text) => Some(text),
+                _ => None,
+            })
+            .unwrap_or_default();
+        (input, instructions)
+    } else {
+        (Vec::new(), String::new())
+    };
 
-    if let Some(obj) = body.as_object_mut() {
-        obj.remove("instructions");
-    }
-
-    let mut openai_req: OpenAIRequest = match serde_json::from_value(body.clone()) {
+    let mut openai_req: OpenAIRequest = match serde_json::from_value(body) {
         Ok(req) => req,
         Err(e) => {
             return (StatusCode::BAD_REQUEST, format!("Invalid request: {}", e)).into_response();
@@ -2880,7 +3389,7 @@ pub async fn handle_completions(
             "protocol": "openai",
             "trace_id": trace_id,
             "request_path": uri.path(),
-            "request": original_body,
+            "request": original_body.as_ref(),
         });
         debug_logger::write_exchange_payload(
             &debug_cfg,
@@ -2950,7 +3459,8 @@ pub async fn handle_completions(
             &mapped_model,
             proxy_token.as_ref(),
         );
-        let gemini_body_for_debug = gemini_body.clone();
+        let gemini_body_for_debug = debug_logger::is_enabled(&debug_cfg)
+            .then(|| debug_value_without_inline_data(&gemini_body));
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
                 "kind": "v1internal_request",
@@ -2961,7 +3471,7 @@ pub async fn handle_completions(
                 "mapped_model": mapped_model,
                 "request_type": config.request_type,
                 "attempt": attempt,
-                "v1internal_request": gemini_body_for_debug.clone(),
+                "v1internal_request": gemini_body_for_debug.as_ref(),
             });
             debug_logger::write_exchange_payload(
                 &debug_cfg,
@@ -2980,20 +3490,24 @@ pub async fn handle_completions(
                     .get("role")
                     .and_then(|r| r.as_str())
                     .unwrap_or("unknown");
-                let msg_str = serde_json::to_string(msg).unwrap_or_default();
-                sizes.push(format!("msg_{}[{}]: {} chars", idx, role, msg_str.len()));
+                sizes.push(format!(
+                    "msg_{}[{}]: {} chars",
+                    idx,
+                    role,
+                    serialized_json_len(msg)
+                ));
             }
 
             let system_instruction_len = gemini_body
                 .get("request")
                 .and_then(|r| r.get("systemInstruction"))
-                .map(|s| serde_json::to_string(s).unwrap_or_default().len())
+                .map(serialized_json_len)
                 .unwrap_or(0);
 
             let tools_len = gemini_body
                 .get("request")
                 .and_then(|r| r.get("tools"))
-                .map(|t| serde_json::to_string(t).unwrap_or_default().len())
+                .map(serialized_json_len)
                 .unwrap_or(0);
 
             tracing::info!(
@@ -3174,8 +3688,8 @@ pub async fn handle_completions(
                     // 使用从 body 中提取的原始 input（含文本/工具调用/工具结果全量历史），
                     // 而非从 openai_req.messages 重建（会丢失 tool_calls/tool 角色等信息）
                     {
-                        let save_input = session_save_input.clone();
-                        let save_instructions = session_save_instructions.clone();
+                        let save_input = session_save_input;
+                        let save_instructions = session_save_instructions;
                         let save_model = openai_req.model.clone();
                         let entry = crate::proxy::http_session_store::HttpSessionEntry {
                             input_items: save_input,
@@ -3298,8 +3812,8 @@ pub async fn handle_completions(
                                         "protocol": "openai",
                                         "trace_id": trace_id,
                                         "request_path": uri.path(),
-                                        "original_codex_request": original_body.clone(),
-                                        "gemini_request": gemini_body_for_debug.clone(),
+                                        "original_codex_request": original_body.as_ref(),
+                                        "gemini_request": gemini_body_for_debug.as_ref(),
                                         "converted_codex_response": resp.clone(),
                                         "gemini_raw_response_ref": "see upstream_response file with the same trace_id",
                                     });
@@ -3362,8 +3876,8 @@ pub async fn handle_completions(
                                     "protocol": "openai",
                                     "trace_id": trace_id,
                                     "request_path": uri.path(),
-                                    "original_codex_request": original_body.clone(),
-                                    "gemini_request": gemini_body_for_debug.clone(),
+                                    "original_codex_request": original_body.as_ref(),
+                                    "gemini_request": gemini_body_for_debug.as_ref(),
                                     "converted_codex_response": legacy_resp.clone(),
                                     "gemini_raw_response_ref": "see upstream_response file with the same trace_id",
                                 });
@@ -3426,8 +3940,8 @@ pub async fn handle_completions(
                         "protocol": "openai",
                         "trace_id": trace_id,
                         "request_path": uri.path(),
-                        "original_codex_request": original_body.clone(),
-                        "gemini_request": gemini_body_for_debug.clone(),
+                        "original_codex_request": original_body.as_ref(),
+                        "gemini_request": gemini_body_for_debug.as_ref(),
                         "gemini_raw_response": gemini_resp.clone(),
                         "converted_codex_response": resp.clone(),
                     });
@@ -3478,8 +3992,8 @@ pub async fn handle_completions(
                     "protocol": "openai",
                     "trace_id": trace_id,
                     "request_path": uri.path(),
-                    "original_codex_request": original_body.clone(),
-                    "gemini_request": gemini_body_for_debug.clone(),
+                    "original_codex_request": original_body.as_ref(),
+                    "gemini_request": gemini_body_for_debug.as_ref(),
                     "gemini_raw_response": gemini_resp.clone(),
                     "converted_codex_response": legacy_resp.clone(),
                 });
@@ -4595,6 +5109,7 @@ async fn handle_websocket_session(mut socket: WebSocket, headers: HeaderMap, sta
                 continue;
             }
         };
+        drop(text);
         let ws_trace_id = format!("ws_{}", chrono::Utc::now().timestamp_subsec_millis());
         let debug_cfg = state.debug_logging.read().await.clone();
         if debug_logger::is_enabled(&debug_cfg) {
@@ -4602,8 +5117,7 @@ async fn handle_websocket_session(mut socket: WebSocket, headers: HeaderMap, sta
                 "kind": "codex_websocket_raw_request",
                 "protocol": "codex_websocket",
                 "trace_id": ws_trace_id,
-                "raw_text": text.clone(),
-                "payload": payload.clone(),
+                "payload": debug_value_without_inline_data(&payload),
             });
             debug_logger::write_exchange_payload(
                 &debug_cfg,
@@ -4636,7 +5150,7 @@ async fn handle_websocket_session(mut socket: WebSocket, headers: HeaderMap, sta
             continue;
         }
 
-        let normalized = match normalize_responses_websocket_request(&payload, &mut session_state) {
+        let normalized = match normalize_responses_websocket_request(payload, &mut session_state) {
             Ok(n) => n,
             Err(e) => {
                 let error_ev = json!({
@@ -4777,8 +5291,8 @@ async fn handle_websocket_session(mut socket: WebSocket, headers: HeaderMap, sta
                 "kind": "codex_websocket_converted_response",
                 "protocol": "codex_websocket",
                 "trace_id": ws_trace_id,
-                "events": outgoing_ws_events,
-                "completed_output": completed_output.clone(),
+                "events": debug_value_without_inline_data(&Value::Array(outgoing_ws_events)),
+                "completed_output": debug_value_without_inline_data(&completed_output),
             });
             debug_logger::write_exchange_payload(
                 &debug_cfg,
@@ -4789,7 +5303,8 @@ async fn handle_websocket_session(mut socket: WebSocket, headers: HeaderMap, sta
             .await;
         }
 
-        session_state.last_response_output = completed_output;
+        session_state.last_response_output =
+            into_history_without_inline_media(completed_output).unwrap_or_else(|| json!([]));
         session_state.last_response_id = translation_state.response_id.clone();
         session_state.last_response_pending_tool_call_ids = translation_state
             .tool_calls
@@ -4864,7 +5379,7 @@ fn handle_prewarm_locally(payload: &Value, state: &mut WebsocketSessionState) ->
         }
     });
 
-    let mut normalized = payload.clone();
+    let mut normalized = history_without_inline_media(payload);
     if let Some(obj) = normalized.as_object_mut() {
         obj.remove("type");
         obj.remove("generate");
@@ -4878,30 +5393,31 @@ fn handle_prewarm_locally(payload: &Value, state: &mut WebsocketSessionState) ->
 }
 
 fn normalize_responses_websocket_request(
-    payload: &Value,
+    mut payload: Value,
     state: &mut WebsocketSessionState,
 ) -> Result<Value, String> {
-    let event_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    match event_type {
+    let event_type = payload
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    match event_type.as_str() {
         "response.create" => {
             if state.last_request.is_none() {
-                let mut normalized = payload.clone();
-                if let Some(obj) = normalized.as_object_mut() {
+                if let Some(obj) = payload.as_object_mut() {
                     obj.remove("type");
                     obj.insert("stream".to_string(), Value::Bool(true));
                     if !obj.contains_key("input") {
                         obj.insert("input".to_string(), json!([]));
                     }
                 }
-                let model_name = normalized
-                    .get("model")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let model_name = payload.get("model").and_then(|v| v.as_str()).unwrap_or("");
                 if model_name.is_empty() {
                     return Err("missing model in response.create request".to_string());
                 }
-                state.last_request = Some(normalized.clone());
-                Ok(normalized)
+                validate_responses_input_image_limits(payload.get("input"))?;
+                state.last_request = Some(history_without_inline_media(&payload));
+                Ok(payload)
             } else {
                 normalize_response_subsequent_request(payload, state)
             }
@@ -4915,101 +5431,100 @@ fn normalize_responses_websocket_request(
 }
 
 fn normalize_response_subsequent_request(
-    payload: &Value,
+    mut payload: Value,
     state: &mut WebsocketSessionState,
 ) -> Result<Value, String> {
     if state.last_request.is_none() {
         return Err("websocket request received before response.create".to_string());
     }
+    validate_responses_input_image_limits(payload.get("input"))?;
 
     // [FIX] 拦截 compaction 和完整历史替换事件
-    if should_replace_websocket_transcript(payload) {
-        let mut normalized = payload.clone();
-        if let Some(obj) = normalized.as_object_mut() {
+    if should_replace_websocket_transcript(&payload) {
+        if let Some(obj) = payload.as_object_mut() {
             obj.remove("type");
             obj.remove("previous_response_id");
             obj.insert("stream".to_string(), Value::Bool(true));
         }
-        state.last_request = Some(normalized.clone());
-        return Ok(normalized);
+        state.last_request = Some(history_without_inline_media(&payload));
+        return Ok(payload);
     }
 
     // [FIX] 始终走完整的 merge 逻辑，废弃 transcript replacement 分支
     // 旧逻辑在检测到 function_call/assistant 时直接替换整个历史，导致多轮对话历史丢失
     // 正确做法：last_request.input + last_response_output + new payload.input 全部合并
-    let mut merged_input = Vec::new();
+    let mut last_request = state.last_request.take().expect("checked above");
+    let mut merged_input = last_request
+        .as_object_mut()
+        .and_then(|obj| obj.remove("input"))
+        .and_then(|value| match value {
+            Value::Array(items) => Some(items),
+            _ => None,
+        })
+        .unwrap_or_default();
 
-    // 1. 上一轮请求的 input（已含此前所有历史）
-    if let Some(last_req) = &state.last_request {
-        if let Some(arr) = last_req.get("input").and_then(|v| v.as_array()) {
-            merged_input.extend(arr.clone());
-        }
-    }
-
+    // 上一轮请求的 input 已按所有权移入 merged_input。
     // 2. 上一轮 response 的 output items（assistant 回复、工具调用等）
-    if let Some(arr) = state.last_response_output.as_array() {
-        merged_input.extend(arr.clone());
+    if let Value::Array(items) = std::mem::take(&mut state.last_response_output) {
+        merged_input.extend(items);
     }
 
     // 3. 本轮新的 input items（用户消息、工具调用结果等）
-    if let Some(arr) = payload.get("input").and_then(|v| v.as_array()) {
-        for item in arr {
-            let t = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
-            if t == "compaction" || t == "compaction_summary" {
-                continue;
-            }
-            if t == "function_call_output" || t == "custom_tool_call_output" {
-                if let Some(call_id) = item.get("call_id").and_then(|v| v.as_str()) {
-                    state
-                        .last_response_pending_tool_call_ids
-                        .retain(|x| x != call_id);
-                }
-            }
-            merged_input.push(item.clone());
+    let current_input = payload
+        .as_object_mut()
+        .and_then(|obj| obj.remove("input"))
+        .and_then(|value| match value {
+            Value::Array(items) => Some(items),
+            _ => None,
+        })
+        .unwrap_or_default();
+    for item in current_input {
+        let t = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if t == "compaction" || t == "compaction_summary" {
+            continue;
         }
+        if t == "function_call_output" || t == "custom_tool_call_output" {
+            if let Some(call_id) = item.get("call_id").and_then(|v| v.as_str()) {
+                state
+                    .last_response_pending_tool_call_ids
+                    .retain(|x| x != call_id);
+            }
+        }
+        merged_input.push(item);
     }
 
     repair_tool_calls(&mut merged_input, &state.tool_call_cache);
 
     let deduped = dedupe_function_calls_by_call_id(dedupe_input_items_by_id(merged_input));
 
-    let mut normalized = payload.clone();
-    if let Some(obj) = normalized.as_object_mut() {
+    if let Some(obj) = payload.as_object_mut() {
         obj.remove("type");
         obj.remove("previous_response_id");
-        obj.insert("input".to_string(), json!(deduped));
+        obj.insert("input".to_string(), Value::Array(deduped));
         if !obj.contains_key("model") {
-            if let Some(last_req) = &state.last_request {
-                if let Some(model) = last_req.get("model") {
-                    obj.insert("model".to_string(), model.clone());
-                }
+            if let Some(model) = last_request.get_mut("model").map(Value::take) {
+                obj.insert("model".to_string(), model);
             }
         }
         if !obj.contains_key("instructions") {
-            if let Some(last_req) = &state.last_request {
-                if let Some(instructions) = last_req.get("instructions") {
-                    obj.insert("instructions".to_string(), instructions.clone());
-                }
+            if let Some(instructions) = last_request.get_mut("instructions").map(Value::take) {
+                obj.insert("instructions".to_string(), instructions);
             }
         }
         if !obj.contains_key("tools") {
-            if let Some(last_req) = &state.last_request {
-                if let Some(tools) = last_req.get("tools") {
-                    obj.insert("tools".to_string(), tools.clone());
-                }
+            if let Some(tools) = last_request.get_mut("tools").map(Value::take) {
+                obj.insert("tools".to_string(), tools);
             }
         }
         if !obj.contains_key("tool_choice") {
-            if let Some(last_req) = &state.last_request {
-                if let Some(tool_choice) = last_req.get("tool_choice") {
-                    obj.insert("tool_choice".to_string(), tool_choice.clone());
-                }
+            if let Some(tool_choice) = last_request.get_mut("tool_choice").map(Value::take) {
+                obj.insert("tool_choice".to_string(), tool_choice);
             }
         }
         obj.insert("stream".to_string(), Value::Bool(true));
     }
-    state.last_request = Some(normalized.clone());
-    Ok(normalized)
+    state.last_request = Some(history_without_inline_media(&payload));
+    Ok(payload)
 }
 #[allow(dead_code)]
 fn should_replace_websocket_transcript(payload: &Value) -> bool {
@@ -5022,7 +5537,7 @@ fn should_replace_websocket_transcript(payload: &Value) -> bool {
     }
     if let Some(input_array) = payload.get("input").and_then(|v| v.as_array()) {
         for item in input_array {
-            let item_type = responses_input_item_type(item);
+            let item_type = responses_input_item_type(&item).to_string();
             if item_type == "function_call" || item_type == "custom_tool_call" {
                 return true;
             }
@@ -5035,27 +5550,6 @@ fn should_replace_websocket_transcript(payload: &Value) -> bool {
         }
     }
     false
-}
-
-#[allow(dead_code)]
-fn normalize_response_transcript_replacement(payload: &Value, last_request: &Value) -> Value {
-    let mut normalized = payload.clone();
-    if let Some(obj) = normalized.as_object_mut() {
-        obj.remove("type");
-        obj.remove("previous_response_id");
-        obj.insert("stream".to_string(), Value::Bool(true));
-        if !obj.contains_key("model") {
-            if let Some(model) = last_request.get("model") {
-                obj.insert("model".to_string(), model.clone());
-            }
-        }
-        if !obj.contains_key("instructions") {
-            if let Some(instructions) = last_request.get("instructions") {
-                obj.insert("instructions".to_string(), instructions.clone());
-            }
-        }
-    }
-    normalized
 }
 
 fn dedupe_input_items_by_id(items: Vec<Value>) -> Vec<Value> {
@@ -5168,9 +5662,17 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
     let instructions = body
         .get("instructions")
         .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    let input_items = body.get("input").and_then(|v| v.as_array());
+        .unwrap_or_default()
+        .to_string();
     let (interaction_ledger, mut step_markers) = codex_ledger_from_body(&body);
+    let input_items = body
+        .as_object_mut()
+        .and_then(|obj| obj.remove("input"))
+        .and_then(|value| match value {
+            Value::Array(items) => Some(items),
+            _ => None,
+        })
+        .unwrap_or_default();
 
     let mut messages = Vec::new();
     if !instructions.is_empty() {
@@ -5180,8 +5682,8 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
     let mut call_id_to_name = std::collections::HashMap::new();
     let mut skipped_incomplete_custom_call_ids = std::collections::HashSet::new();
 
-    if let Some(items) = input_items {
-        for item in items {
+    {
+        for item in &input_items {
             let item_type = responses_input_item_type(item);
             if item_type == "custom_tool_call"
                 && item.get("status").and_then(|v| v.as_str()) == Some("incomplete")
@@ -5219,21 +5721,25 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
         }
     }
 
-    if let Some(items) = input_items {
+    {
         let mut seen_apply_patch_failures = std::collections::HashSet::new();
         let mut apply_patch_failure_distinct_count = 0usize;
-        for item in items {
-            let item_type = responses_input_item_type(item);
+        for mut item in input_items {
+            let item_type = responses_input_item_type(&item).to_string();
             let step_marker = step_markers.pop_front();
             if item_type == "custom_tool_call"
                 && item.get("status").and_then(|v| v.as_str()) == Some("incomplete")
             {
                 continue;
             }
-            match item_type {
+            match item_type.as_str() {
                 "message" => {
-                    let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
-                    let (text_parts, image_parts) = responses_message_parts(item);
+                    let role = item
+                        .get("role")
+                        .and_then(Value::as_str)
+                        .unwrap_or("user")
+                        .to_string();
+                    let (text_parts, image_parts) = responses_message_parts(&mut item);
 
                     if image_parts.is_empty() {
                         let content = prefix_with_step_marker(step_marker, text_parts.join("\n"));
@@ -5318,9 +5824,10 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
                     let call_id = item
                         .get("call_id")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
+                        .unwrap_or("unknown")
+                        .to_string();
                     if item_type == "custom_tool_call_output"
-                        && skipped_incomplete_custom_call_ids.contains(call_id)
+                        && skipped_incomplete_custom_call_ids.contains(&call_id)
                     {
                         tracing::warn!(
                             "Skipping output for incomplete custom tool call {}",
@@ -5328,21 +5835,10 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
                         );
                         continue;
                     }
-                    let output = item.get("output");
-                    let mut output_str = if let Some(o) = output {
-                        if o.is_string() {
-                            o.as_str().unwrap().to_string()
-                        } else if let Some(content) = o.get("content").and_then(|v| v.as_str()) {
-                            content.to_string()
-                        } else {
-                            o.to_string()
-                        }
-                    } else {
-                        "".to_string()
-                    };
+                    let (mut output_str, output_media) = responses_tool_output_parts(&mut item);
 
-                    let name = match call_id_to_name.get(call_id).cloned().or_else(|| {
-                        get_cached_tool_call(call_id).and_then(|v| {
+                    let name = match call_id_to_name.get(&call_id).cloned().or_else(|| {
+                        get_cached_tool_call(&call_id).and_then(|v| {
                             v.get("name")
                                 .and_then(|n| n.as_str())
                                 .map(|s| s.to_string())
@@ -5367,12 +5863,14 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
                         );
                     }
                     output_str = prefix_with_step_marker(step_marker, output_str);
+                    let output_content =
+                        build_responses_tool_output_content(output_str, output_media);
 
                     messages.push(json!({
                         "role": "tool",
                         "tool_call_id": call_id,
                         "name": name,
-                        "content": output_str
+                        "content": output_content
                     }));
                 }
                 _ => {}
@@ -5394,10 +5892,11 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
     }
 
     if let Some(obj) = body.as_object_mut() {
-        obj.insert("messages".to_string(), json!(messages));
+        obj.insert("messages".to_string(), Value::Array(messages));
         if let Some(ledger) = interaction_ledger {
             obj.insert("_interaction_ledger".to_string(), json!(ledger));
         }
+        obj.remove("input");
         obj.remove("instructions");
     }
     body
