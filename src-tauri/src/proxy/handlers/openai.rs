@@ -1082,9 +1082,7 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
     fn responses_omits_old_images_before_validating_current_turn() {
         let images = |count| {
             (0..count)
-                .map(|_| {
-                    json!({"type": "input_image", "image_url": "data:image/png;base64,AQ=="})
-                })
+                .map(|_| json!({"type": "input_image", "image_url": "data:image/png;base64,AQ=="}))
                 .collect::<Vec<_>>()
         };
         let mut input = vec![
@@ -2585,15 +2583,6 @@ pub async fn handle_completions(
         debug_logger::is_enabled(&debug_cfg).then(|| debug_value_without_inline_data(&body));
     let is_codex_style = body.get("input").is_some() || body.get("instructions").is_some();
 
-    if is_codex_style {
-        if let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) {
-            omit_media_before_latest_user_turn(input);
-        }
-        if let Err(message) = validate_responses_input_image_limits(body.get("input")) {
-            return (StatusCode::BAD_REQUEST, message).into_response();
-        }
-    }
-
     // [MULTI-TURN] 支持 previous_response_id 链式历史恢复
     // 当客户端通过 HTTP POST /v1/responses 传入 previous_response_id 时，
     // 从服务器端 session store 取出上一轮的历史，合并到本轮的 input 中
@@ -2604,40 +2593,61 @@ pub async fn handle_completions(
     let response_id_for_save = format!("resp-{}", uuid::Uuid::new_v4());
     let http_tool_call_cache: std::collections::HashMap<String, serde_json::Value> =
         std::collections::HashMap::new();
-    if let Some(ref prev_id) = previous_response_id {
-        if let Some(session) = crate::proxy::http_session_store::get_session(prev_id).await {
-            // 把历史 input items 合并进来
-            let existing_input = body
-                .as_object_mut()
-                .and_then(|obj| obj.remove("input"))
-                .and_then(|value| match value {
-                    Value::Array(items) => Some(items),
-                    _ => None,
-                })
-                .unwrap_or_default();
-            let merged = crate::proxy::http_session_store::merge_history_with_new_input(
-                session.input_items,
-                &[],
-                existing_input,
-                &http_tool_call_cache,
-            );
-            let merged_len = merged.len();
-            if let Some(obj) = body.as_object_mut() {
-                obj.insert("input".to_string(), Value::Array(merged));
-                // 从历史 session 继承 instructions（如果本轮没带）
-                if !obj.contains_key("instructions") && !session.instructions.is_empty() {
-                    obj.insert("instructions".to_string(), json!(session.instructions));
+    let mut session_parent = None;
+    let mut session_delta_input = Vec::new();
+    if is_codex_style {
+        let mut existing_input = body
+            .as_object_mut()
+            .and_then(|obj| obj.remove("input"))
+            .and_then(|value| match value {
+                Value::Array(items) => Some(items),
+                _ => None,
+            })
+            .unwrap_or_default();
+        // 完整回放先裁掉最新用户轮次之前的内联媒体，再执行硬限制校验。
+        omit_media_before_latest_user_turn(&mut existing_input);
+
+        let merged = if let Some(ref prev_id) = previous_response_id {
+            if let Some((session, parent)) =
+                crate::proxy::http_session_store::get_session_with_parent(prev_id).await
+            {
+                let prepared = crate::proxy::http_session_store::prepare_session_input(
+                    session.input_items,
+                    existing_input,
+                    &http_tool_call_cache,
+                );
+                session_delta_input = prepared.delta;
+                if !prepared.reset_parent {
+                    session_parent = Some(parent);
                 }
-                // 继承 model（如果本轮没带）
-                if !obj.contains_key("model") && !session.model.is_empty() {
-                    obj.insert("model".to_string(), json!(session.model));
+                if let Some(obj) = body.as_object_mut() {
+                    if !obj.contains_key("instructions") && !session.instructions.is_empty() {
+                        obj.insert("instructions".to_string(), json!(session.instructions));
+                    }
+                    if !obj.contains_key("model") && !session.model.is_empty() {
+                        obj.insert("model".to_string(), json!(session.model));
+                    }
                 }
+                tracing::debug!(
+                    "[MultiTurn] Restored session from prev_id={}, {} items in history",
+                    prev_id,
+                    prepared.merged.len()
+                );
+                prepared.merged
+            } else {
+                session_delta_input = existing_input.clone();
+                existing_input
             }
-            tracing::debug!(
-                "[MultiTurn] Restored session from prev_id={}, {} items in history",
-                prev_id,
-                merged_len
-            );
+        } else {
+            session_delta_input = existing_input.clone();
+            existing_input
+        };
+
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("input".to_string(), Value::Array(merged));
+        }
+        if let Err(message) = validate_responses_input_image_limits(body.get("input")) {
+            return (StatusCode::BAD_REQUEST, message).into_response();
         }
     }
 
@@ -2660,9 +2670,9 @@ pub async fn handle_completions(
             })
             .unwrap_or_default();
         bounded_session_input = Some(
-            input_items
-                .iter()
-                .map(history_without_inline_media)
+            session_delta_input
+                .drain(..)
+                .filter_map(into_history_without_inline_media)
                 .filter(|item| !item.is_null())
                 .collect(),
         );
@@ -3590,14 +3600,19 @@ pub async fn handle_completions(
                 // and we already have logic to convert Chat JSON -> Legacy JSON.
 
                 if client_wants_stream {
+                    let mut session_completion_rx = None;
                     let mut openai_stream = if is_codex_style {
                         use crate::proxy::mappers::openai::streaming::create_codex_sse_stream;
+                        let (completion_tx, completion_rx) = tokio::sync::oneshot::channel();
+                        session_completion_rx = Some(completion_rx);
                         create_codex_sse_stream(
                             gemini_stream,
                             openai_req.model.clone(),
                             session_id,
                             message_count,
                             assistant_turn_index,
+                            response_id_for_save.clone(),
+                            Some(completion_tx),
                         )
                     } else {
                         use crate::proxy::mappers::openai::streaming::create_legacy_sse_stream;
@@ -3684,22 +3699,30 @@ pub async fn handle_completions(
                         converted_meta,
                     );
 
-                    // [MULTI-TURN][FIX] 保存本次完整 input_items 到 session store
-                    // 使用从 body 中提取的原始 input（含文本/工具调用/工具结果全量历史），
-                    // 而非从 openai_req.messages 重建（会丢失 tool_calls/tool 角色等信息）
-                    {
+                    // 仅当转换器产生 response.completed 时保存本轮增量及必要输出。
+                    if let Some(completion_rx) = session_completion_rx {
+                        let save_parent = session_parent;
                         let save_input = session_save_input;
                         let save_instructions = session_save_instructions;
                         let save_model = openai_req.model.clone();
-                        let entry = crate::proxy::http_session_store::HttpSessionEntry {
-                            input_items: save_input,
-                            instructions: save_instructions,
-                            model: save_model,
-                            last_accessed: std::time::Instant::now(),
-                        };
                         let rid = response_id_for_save.clone();
                         tokio::spawn(async move {
-                            crate::proxy::http_session_store::save_session(rid, entry).await;
+                            if let Ok((outputs, ack_tx)) = completion_rx.await {
+                                let outputs = outputs
+                                    .into_iter()
+                                    .filter_map(into_history_without_inline_media)
+                                    .collect();
+                                crate::proxy::http_session_store::save_session_delta(
+                                    rid,
+                                    save_parent,
+                                    save_input,
+                                    outputs,
+                                    save_instructions,
+                                    save_model,
+                                )
+                                .await;
+                                let _ = ack_tx.send(());
+                            }
                         });
                     }
                     return Response::builder()
