@@ -4,6 +4,12 @@
 
 *   **Version History**:
     *   **v4.6.4 (2026-08-30)**:
+        -   **[Core Fix] Fix Token Acquisition Timeout (5s) / Deadlock Error Under High Concurrency & Tokio Runtime Starvation (Issue #3348)**:
+            -   **Async Disk I/O & Blocking Thread Pool Isolation**: Refactored `update_account_json` to an async function that dispatches synchronous disk I/O and global account locks to Tokio's blocking thread pool (`spawn_blocking`). This prevents disk serialization contention from blocking Tokio worker threads and causing runtime starvation under high concurrency.
+            -   **Fire-and-Forget Disk Persistence on Token Acquisition Hot Path**: On the primary `get_token` scheduling path, file persistence after OAuth token refreshes and `project_id` resolution is now offloaded to background tasks after updating memory caches immediately, preventing disk write overhead from consuming the 5-second timeout window.
+        -   **[Core Fix] Fix Indefinite Hang on Minimal/Single-Dot Prompts Causing Claude Desktop Gateway Health Check Timeout (Issue #3359)**:
+            -   **Empty SSE Event Fallback**: Added defensive fallback logic in the Claude SSE streaming conversion layer. When upstream models terminate empty responses on minimal/punctuation-only prompts without yielding content or thinking, the stream synthesizer automatically emits valid `message_start`, fallback text ContentBlock, and `message_stop` events, eliminating peek loop timeouts.
+            -   **Non-Streaming Collector Schema Guard**: Enforced that `collect_stream_to_json` always returns at least one valid text ContentBlock when parsing empty upstream streams, complying strictly with Anthropic client non-empty content constraints.
         -   **[Streaming & Session Management] Upstream SSE Cancellation on Client Disconnect & Session Branching Graph (PR #3367, PR #3366)**:
             -   **Proactive Upstream SSE Teardown**: Automatically stops polling and consuming upstream SSE streams as soon as the client disconnects or the downstream response body is dropped, preventing incomplete requests from saving invalid sessions.
             -   **Parent-Linked Session Graph**: Fixed streaming HTTP Responses session addressing and replaced full-history deep copies with a persistent parent-linked session tree graph for efficient branch support.

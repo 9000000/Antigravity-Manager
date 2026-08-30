@@ -4,6 +4,12 @@
 
 *   **版本演进**:
     *   **v4.6.4 (2026-08-30)**:
+        -   **[核心修复] 彻底修复高并发下「Token 获取超时 (5s) / 死锁」报错与 Tokio 异步运行时饥饿 (Issue #3348)**:
+            -   **账号写盘异步化与阻塞池隔离**: 将 `update_account_json` 重构为异步函数并通过 `tokio::task::spawn_blocking` 将同步文件 I/O 及全局互斥锁移入阻塞线程池，彻底消除高并发时因持锁读写磁盘导致 Tokio Worker 线程被阻塞、进而引发 Tokio 运行时饥饿的根本问题。
+            -   **Token 获取热路径写盘后台化**: 在 `get_token` 调度的主路径中，将 OAuth 刷新及 `project_id` 解析成功后的磁盘持久化操作转为后台异步任务，优先立即在内存中完成更新并返回 Token，彻底杜绝写盘耗时挤占 5 秒超时窗口的问题。
+        -   **[核心修复] 修复单点探测请求（如 `.`）无限挂起导致 Claude Desktop 3P Gateway 健康检查超时失败 (Issue #3359)**:
+            -   **空流式事件保底机制**: 在 Claude SSE 流式转换层增加空响应兜底逻辑，当上游模型对极简或单标点 Prompt 直接结束且未产出内容时，自动补齐合法的 `message_start`、文本 ContentBlock 及 `message_stop` 事件，彻底解决客户端非流式预读 Peek 循环等待超时与反序列化失败问题。
+            -   **非流式响应收集器防御**: 在 `collect_stream_to_json` 中保证返回对象包含至少一个有效的文本块，满足 Anthropic 官方客户端对 `content` 数组非空强约束。
         -   **[流式代理与会话管理] 客户端断开自动终止上游 SSE 与会话分支图结构重构 (PR #3367, PR #3366)**:
             -   **下游断开主动取消上游**: 当客户端断开连接或取消请求导致下游 Response Body 被释放时，立即终止对上游 SSE 的拉取与消费，并防止未完成的请求错误持久化为 Session。
             -   **父级链接 Session 图结构**: 修复流式 HTTP Responses ID 寻址，使用持久化父链接 Session 树图结构（parent-linked session graph）替代全量历史深拷贝，高效支持多分支对话。

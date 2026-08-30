@@ -78,18 +78,28 @@ async fn wait_for_image_token_selection<T>(
     tokio::time::timeout(remaining, selection).await.ok()
 }
 
-fn update_account_json(
+/// 异步安全的账号 JSON 更新函数
+///
+/// 使用 `tokio::task::spawn_blocking` 将阻塞的文件 I/O 与 `std::sync::Mutex`
+/// 的获取操作转移到 Tokio 的阻塞线程池中，避免占用 Tokio Worker Thread，
+/// 防止高并发场景下因同步锁争抢导致 Tokio 运行时饥饿（runtime starvation）。
+async fn update_account_json(
     path: &std::path::Path,
-    update: impl FnOnce(&mut serde_json::Value),
+    update: impl FnOnce(&mut serde_json::Value) + Send + 'static,
 ) -> Result<(), String> {
-    let _account_write = crate::modules::account::lock_account_file_updates()?;
-    let raw = std::fs::read_to_string(path).map_err(|e| format!("读取文件失败: {}", e))?;
-    let mut content: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|e| format!("解析 JSON 失败: {}", e))?;
-    update(&mut content);
-    let serialized =
-        serde_json::to_string_pretty(&content).map_err(|e| format!("序列化 JSON 失败: {}", e))?;
-    std::fs::write(path, serialized).map_err(|e| format!("写入文件失败: {}", e))
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let _account_write = crate::modules::account::lock_account_file_updates()?;
+        let raw = std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))?;
+        let mut content: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|e| format!("解析 JSON 失败: {}", e))?;
+        update(&mut content);
+        let serialized = serde_json::to_string_pretty(&content)
+            .map_err(|e| format!("序列化 JSON 失败: {}", e))?;
+        std::fs::write(&path, serialized).map_err(|e| format!("写入文件失败: {}", e))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking panicked: {}", e))?
 }
 
 fn unix_timestamp_ceil(time: std::time::SystemTime) -> Option<i64> {
@@ -495,7 +505,8 @@ impl TokenManager {
                     latest["validation_blocked"] = serde_json::json!(false);
                     latest["validation_blocked_until"] = serde_json::json!(0);
                     latest["validation_blocked_reason"] = serde_json::Value::Null;
-                })?;
+                })
+                .await?;
                 tracing::info!(
                     "Validation block expired and cleared for account: {}",
                     account
@@ -1090,7 +1101,8 @@ impl TokenManager {
             );
 
             // 3. 写入磁盘
-            update_account_json(account_path, |latest| {
+            let model_name_owned = model_name.to_string();
+            update_account_json(account_path, move |latest| {
                 if latest
                     .get("protected_models")
                     .and_then(|value| value.as_array())
@@ -1101,11 +1113,12 @@ impl TokenManager {
                 let protected_models = latest["protected_models"].as_array_mut().unwrap();
                 if !protected_models
                     .iter()
-                    .any(|model| model.as_str() == Some(model_name))
+                    .any(|model| model.as_str() == Some(&model_name_owned))
                 {
-                    protected_models.push(serde_json::Value::String(model_name.to_string()));
+                    protected_models.push(serde_json::Value::String(model_name_owned));
                 }
-            })?;
+            })
+            .await?;
 
             // [FIX] 触发 TokenManager 的账号重新加载信号，确保内存中的 protected_models 同步
             crate::proxy::server::trigger_account_reload(account_id);
@@ -1176,7 +1189,8 @@ impl TokenManager {
             latest["proxy_disabled_reason"] = serde_json::Value::Null;
             latest["proxy_disabled_at"] = serde_json::Value::Null;
             latest["protected_models"] = serde_json::Value::Array(protected_list);
-        });
+        })
+        .await;
 
         false // 返回 false 表示现在已可以尝试加载该账号（模型级过滤会在 get_token 时发生）
     }
@@ -1203,14 +1217,16 @@ impl TokenManager {
                     account_id,
                     model_name
                 );
-                update_account_json(account_path, |latest| {
+                let model_name_owned = model_name.to_string();
+                update_account_json(account_path, move |latest| {
                     if let Some(protected_models) = latest
                         .get_mut("protected_models")
                         .and_then(|value| value.as_array_mut())
                     {
-                        protected_models.retain(|model| model.as_str() != Some(model_name));
+                        protected_models.retain(|model| model.as_str() != Some(&model_name_owned));
                     }
-                })?;
+                })
+                .await?;
                 return Ok(true);
             }
         }
@@ -1737,12 +1753,27 @@ impl TokenManager {
                                                     entry.expires_in = token.expires_in;
                                                     entry.timestamp = token.timestamp;
                                                 }
-                                                let _ = self
-                                                    .save_refreshed_token(
-                                                        &token.account_id,
-                                                        &token_response,
-                                                    )
-                                                    .await;
+                                                // [FIX] 写盘操作后台化：避免阻塞 get_token 的 5s 超时窗口
+                                                // 内存已更新完毕，将磁盘持久化 spawn 到 blocking 线程池
+                                                {
+                                                    let write_path = token.account_path.clone();
+                                                    let access_token = token_response.access_token.clone();
+                                                    let expires_in = token_response.expires_in;
+                                                    let id_token = token_response.id_token.clone();
+                                                    let new_rt = token_response.refresh_token.clone();
+                                                    let write_ts = now + token_response.expires_in;
+                                                    tokio::task::spawn_blocking(move || {
+                                                        let Ok(_lk) = crate::modules::account::lock_account_file_updates() else { return; };
+                                                        let Ok(raw) = std::fs::read_to_string(&write_path) else { return; };
+                                                        let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&raw) else { return; };
+                                                        val["token"]["access_token"] = access_token.into();
+                                                        val["token"]["expires_in"] = expires_in.into();
+                                                        val["token"]["expiry_timestamp"] = write_ts.into();
+                                                        if let Some(it) = id_token { val["token"]["id_token"] = it.into(); }
+                                                        if let Some(rt) = new_rt { val["token"]["refresh_token"] = rt.into(); }
+                                                        if let Ok(s) = serde_json::to_string_pretty(&val) { let _ = std::fs::write(&write_path, s); }
+                                                    });
+                                                }
                                             }
                                             Err(e) => {
                                                 tracing::warn!(
@@ -1780,7 +1811,18 @@ impl TokenManager {
                                         {
                                             entry.project_id = Some(pid.clone());
                                         }
-                                        let _ = self.save_project_id(&token.account_id, &pid).await;
+                                        // [FIX] 写盘后台化：project_id 已写入内存，磁盘持久化不阻塞热路径
+                                        {
+                                            let write_path = token.account_path.clone();
+                                            let pid_clone = pid.clone();
+                                            tokio::task::spawn_blocking(move || {
+                                                let Ok(_lk) = crate::modules::account::lock_account_file_updates() else { return; };
+                                                let Ok(raw) = std::fs::read_to_string(&write_path) else { return; };
+                                                let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&raw) else { return; };
+                                                val["token"]["project_id"] = pid_clone.into();
+                                                if let Ok(s) = serde_json::to_string_pretty(&val) { let _ = std::fs::write(&write_path, s); }
+                                            });
+                                        }
                                         pid
                                     }
                                     Err(_) => "bamboo-precept-lgxtn".to_string(), // fallback
@@ -2156,9 +2198,27 @@ impl TokenManager {
                                     entry.expires_in = token.expires_in;
                                     entry.timestamp = token.timestamp;
                                 }
-                                let _ = self
-                                    .save_refreshed_token(&token.account_id, &token_response)
-                                    .await;
+                                // [FIX] 写盘操作后台化：内存已更新，磁盘持久化 spawn 到 blocking 线程池
+                                // 避免在 get_token 的 5s 超时窗口内因磁盘 I/O 或锁争抢导致超时
+                                {
+                                    let write_path = token.account_path.clone();
+                                    let access_token = token_response.access_token.clone();
+                                    let expires_in = token_response.expires_in;
+                                    let id_token = token_response.id_token.clone();
+                                    let new_rt = token_response.refresh_token.clone();
+                                    let write_ts = now + token_response.expires_in;
+                                    tokio::task::spawn_blocking(move || {
+                                        let Ok(_lk) = crate::modules::account::lock_account_file_updates() else { return; };
+                                        let Ok(raw) = std::fs::read_to_string(&write_path) else { return; };
+                                        let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&raw) else { return; };
+                                        val["token"]["access_token"] = access_token.into();
+                                        val["token"]["expires_in"] = expires_in.into();
+                                        val["token"]["expiry_timestamp"] = write_ts.into();
+                                        if let Some(it) = id_token { val["token"]["id_token"] = it.into(); }
+                                        if let Some(rt) = new_rt { val["token"]["refresh_token"] = rt.into(); }
+                                        if let Ok(s) = serde_json::to_string_pretty(&val) { let _ = std::fs::write(&write_path, s); }
+                                    });
+                                }
                             }
                             Err(e) => {
                                 tracing::error!(
@@ -2296,7 +2356,20 @@ impl TokenManager {
                                     {
                                         entry.project_id = Some(pid.clone());
                                     }
-                                    let _ = self.save_project_id(&token.account_id, &pid).await;
+                                    // [FIX] 写盘后台化：project_id 已写入内存，磁盘持久化不阻塞热路径
+                                    {
+                                        let write_path = self.tokens.get(&token.account_id)
+                                            .map(|e| e.account_path.clone())
+                                            .unwrap_or_else(|| self.data_dir.join("accounts").join(format!("{}.json", token.account_id)));
+                                        let pid_clone = pid.clone();
+                                        tokio::task::spawn_blocking(move || {
+                                            let Ok(_lk) = crate::modules::account::lock_account_file_updates() else { return; };
+                                            let Ok(raw) = std::fs::read_to_string(&write_path) else { return; };
+                                            let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&raw) else { return; };
+                                            val["token"]["project_id"] = pid_clone.into();
+                                            if let Ok(s) = serde_json::to_string_pretty(&val) { let _ = std::fs::write(&write_path, s); }
+                                        });
+                                    }
                                     pid
                                 }
                                 Err(_) => "bamboo-precept-lgxtn".to_string(),
@@ -2356,11 +2429,13 @@ impl TokenManager {
         };
 
         let now = chrono::Utc::now().timestamp();
-        update_account_json(&path, |content| {
+        let reason_owned = reason.to_string();
+        update_account_json(&path, move |content| {
             content["disabled"] = serde_json::Value::Bool(true);
             content["disabled_at"] = serde_json::Value::Number(now.into());
-            content["disabled_reason"] = serde_json::Value::String(truncate_reason(reason, 800));
-        })?;
+            content["disabled_reason"] = serde_json::Value::String(truncate_reason(&reason_owned, 800));
+        })
+        .await?;
 
         // 【修复 Issue #3】从内存中移除禁用的账号，防止被60s锁定逻辑继续使用
         self.remove_account(account_id);
@@ -2377,9 +2452,11 @@ impl TokenManager {
             .ok_or("账号不存在")?
             .account_path
             .clone();
-        update_account_json(&path, |content| {
-            content["token"]["project_id"] = serde_json::Value::String(project_id.to_string());
-        })?;
+        let project_id_owned = project_id.to_string();
+        update_account_json(&path, move |content| {
+            content["token"]["project_id"] = serde_json::Value::String(project_id_owned);
+        })
+        .await?;
 
         tracing::debug!("已保存 project_id 到账号 {}", account_id);
         Ok(())
@@ -2398,24 +2475,27 @@ impl TokenManager {
             .account_path
             .clone();
         let now = chrono::Utc::now().timestamp();
-        update_account_json(&path, |content| {
-            content["token"]["access_token"] =
-                serde_json::Value::String(token_response.access_token.clone());
-            content["token"]["expires_in"] =
-                serde_json::Value::Number(token_response.expires_in.into());
-            content["token"]["expiry_timestamp"] =
-                serde_json::Value::Number((now + token_response.expires_in).into());
+        let access_token = token_response.access_token.clone();
+        let expires_in = token_response.expires_in;
+        let id_token = token_response.id_token.clone();
+        let refresh_token = token_response.refresh_token.clone();
+        let expiry_timestamp = now + expires_in;
+        update_account_json(&path, move |content| {
+            content["token"]["access_token"] = serde_json::Value::String(access_token);
+            content["token"]["expires_in"] = serde_json::Value::Number(expires_in.into());
+            content["token"]["expiry_timestamp"] = serde_json::Value::Number(expiry_timestamp.into());
 
             // 如果获取到了新的 id_token，则保存它
-            if let Some(ref id_token) = token_response.id_token {
-                content["token"]["id_token"] = serde_json::Value::String(id_token.clone());
+            if let Some(it) = id_token {
+                content["token"]["id_token"] = serde_json::Value::String(it);
             }
 
             // 如果获取到了新的 refresh_token（Token 轮转），也一并保存
-            if let Some(ref rt) = token_response.refresh_token {
-                content["token"]["refresh_token"] = serde_json::Value::String(rt.clone());
+            if let Some(rt) = refresh_token {
+                content["token"]["refresh_token"] = serde_json::Value::String(rt);
             }
-        })?;
+        })
+        .await?;
 
         tracing::debug!("已保存刷新后的 token 到账号 {}", account_id);
         Ok(())
@@ -3584,15 +3664,17 @@ impl TokenManager {
             }
         }
 
-        update_account_json(&path, |account| {
+        let reason_owned = reason.to_string();
+        update_account_json(&path, move |account| {
             account["validation_blocked"] = serde_json::Value::Bool(true);
             account["validation_blocked_until"] =
                 serde_json::Value::Number(serde_json::Number::from(block_until));
-            account["validation_blocked_reason"] = serde_json::Value::String(reason.to_string());
+            account["validation_blocked_reason"] = serde_json::Value::String(reason_owned);
             if let Some(url) = extracted_url {
                 account["validation_url"] = serde_json::Value::String(url);
             }
-        })?;
+        })
+        .await?;
 
         // Clear sticky session if blocked
         self.session_accounts.retain(|_, v| *v != account_id);
@@ -3901,6 +3983,7 @@ mod tests {
                 serde_json::Value::Number((chrono::Utc::now().timestamp() - 1).into());
             latest["validation_blocked_reason"] = serde_json::Value::String("expired".to_string());
         })
+        .await
         .unwrap();
         manager.load_single_account(&account_path).await.unwrap();
 
