@@ -428,7 +428,7 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
 
 > Latest version **v4.6.3** (2026-08-30): Account JSON storage self-healing and write lock protection (#3345), pinned quota model discrete chip rendering fix (#3344), dashboard best accounts recommendation algorithm optimization (#3343), Gemini 3.7 / 3.x thought-signature invalidation and multi-turn variant compatibility fixes (#3342), and 100% full localization across multiple languages (#3338, #3339, #3340, #3341).
 
-👉 **[View Full Changelog → CHANGELOG.md](CHANGELOG.md)**
+👉 **[View Full Changelog → CHANGELOG_EN.md](CHANGELOG_EN.md)**
 
 ## 👥 Contributors
 
