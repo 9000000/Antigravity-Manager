@@ -475,8 +475,6 @@ response = client.chat.completions.create(
 <a href="https://github.com/hakanyalitekin"><img src="https://github.com/hakanyalitekin.png" width="50px" style="border-radius: 50%;" alt="hakanyalitekin"/></a>
 <a href="https://github.com/Gok-tug"><img src="https://github.com/Gok-tug.png" width="50px" style="border-radius: 50%;" alt="Gok-tug"/></a>
 <a href="https://github.com/johngbl"><img src="https://github.com/johngbl.png" width="50px" style="border-radius: 50%;" alt="johngbl"/></a>
-<a href="https://github.com/lhpnano"><img src="https://github.com/lhpnano.png" width="50px" style="border-radius: 50%;" alt="lhpnano"/></a>
-<a href="https://github.com/hxyinan"><img src="https://github.com/hxyinan.png" width="50px" style="border-radius: 50%;" alt="hxyinan"/></a>
 
 感谢所有为本项目付出汗水与智慧的开发者。
 
