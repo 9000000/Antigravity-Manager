@@ -17,6 +17,9 @@ use crate::proxy::server::AppState;
 use crate::proxy::upstream::client::mask_email;
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
+const MAX_INPUT_IMAGES: usize = 16;
+const MAX_INPUT_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+const MAX_TOTAL_INPUT_IMAGE_BYTES: usize = 32 * 1024 * 1024;
 const CODEX_VISIBLE_THOUGHT_MESSAGE_PREFIX: &str = "msg_thought_";
 use super::common::{
     apply_retry_strategy, determine_retry_strategy, should_rotate_account, RetryStrategy,
@@ -27,6 +30,226 @@ use crate::proxy::session_manager::SessionManager;
 use axum::http::HeaderMap;
 use std::collections::VecDeque;
 use tokio::time::Duration;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NormalizedInputImage {
+    mime_type: String,
+    base64_data: String,
+    decoded_len: usize,
+}
+
+fn validate_input_image_limits(
+    image_count: usize,
+    image_bytes: usize,
+    total_bytes: usize,
+) -> Result<(), String> {
+    if image_count > MAX_INPUT_IMAGES {
+        return Err(format!(
+            "Too many input images: maximum is {}",
+            MAX_INPUT_IMAGES
+        ));
+    }
+    if image_bytes > MAX_INPUT_IMAGE_BYTES {
+        return Err(format!(
+            "Input image is too large: maximum decoded size is {} bytes",
+            MAX_INPUT_IMAGE_BYTES
+        ));
+    }
+    if total_bytes > MAX_TOTAL_INPUT_IMAGE_BYTES {
+        return Err(format!(
+            "Total input image data is too large: maximum decoded size is {} bytes",
+            MAX_TOTAL_INPUT_IMAGE_BYTES
+        ));
+    }
+    Ok(())
+}
+
+fn normalized_image_from_bytes(
+    bytes: &[u8],
+    mime_type: &str,
+    image_count: usize,
+    total_bytes: usize,
+) -> Result<NormalizedInputImage, String> {
+    let next_total = total_bytes.saturating_add(bytes.len());
+    validate_input_image_limits(image_count, bytes.len(), next_total)?;
+    Ok(NormalizedInputImage {
+        mime_type: mime_type.to_string(),
+        base64_data: base64::engine::general_purpose::STANDARD.encode(bytes),
+        decoded_len: bytes.len(),
+    })
+}
+
+fn parse_image_data_url(
+    data_url: &str,
+    image_count: usize,
+    total_bytes: usize,
+) -> Result<NormalizedInputImage, String> {
+    let (metadata, encoded) = data_url
+        .strip_prefix("data:")
+        .and_then(|value| value.split_once(','))
+        .ok_or_else(|| "Input image must be a base64 data:image URL".to_string())?;
+    let mut metadata_parts = metadata.split(';');
+    let mime_type = metadata_parts.next().unwrap_or_default();
+    if !mime_type.starts_with("image/") || mime_type.len() <= "image/".len() {
+        return Err("Input image data URL must use an image MIME type".to_string());
+    }
+    if !metadata_parts.any(|part| part.eq_ignore_ascii_case("base64")) {
+        return Err("Input image data URL must be base64 encoded".to_string());
+    }
+    if encoded.is_empty() {
+        return Err("Input image data URL is empty".to_string());
+    }
+
+    let max_encoded_len = MAX_INPUT_IMAGE_BYTES.div_ceil(3).saturating_mul(4);
+    if encoded.len() > max_encoded_len {
+        return Err(format!(
+            "Input image is too large: maximum decoded size is {} bytes",
+            MAX_INPUT_IMAGE_BYTES
+        ));
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| "Input image contains invalid base64 data".to_string())?;
+    normalized_image_from_bytes(&decoded, mime_type, image_count, total_bytes)
+}
+
+fn parse_generation_input_images(image: Option<&Value>) -> Result<Vec<NormalizedInputImage>, String> {
+    let Some(image) = image else {
+        return Ok(Vec::new());
+    };
+
+    let urls: Vec<&str> = match image {
+        Value::String(url) => vec![url.as_str()],
+        Value::Array(urls) if urls.is_empty() => {
+            return Err("Input image array must not be empty".to_string())
+        }
+        Value::Array(urls) => urls
+            .iter()
+            .map(|url| {
+                url.as_str()
+                    .ok_or_else(|| "Every input image must be a base64 data:image URL".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err("Input image must be a string or an array of strings".to_string()),
+    };
+
+    validate_input_image_limits(urls.len(), 0, 0)?;
+    let mut images = Vec::with_capacity(urls.len());
+    let mut total_bytes = 0;
+    for url in urls {
+        let image = parse_image_data_url(url, images.len() + 1, total_bytes)?;
+        total_bytes = total_bytes.saturating_add(image.decoded_len);
+        images.push(image);
+    }
+    Ok(images)
+}
+
+fn generation_image_size_param(body: &Value) -> Result<Option<&str>, String> {
+    for key in ["image_size", "imageSize"] {
+        let Some(value) = body.get(key) else {
+            continue;
+        };
+        if value.is_null() {
+            continue;
+        }
+        return value.as_str().map(Some).ok_or_else(|| {
+            "Invalid image_size: expected one of 1K, 2K, 4K, or auto".to_string()
+        });
+    }
+    Ok(None)
+}
+
+fn is_edit_image_field(name: &str) -> bool {
+    name == "image"
+        || name == "image[]"
+        || name
+            .strip_prefix("image")
+            .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn edit_size_input<'a>(aspect_ratio: Option<&'a str>, size: Option<&'a str>) -> Option<&'a str> {
+    aspect_ratio
+        .filter(|value| {
+            crate::proxy::mappers::common_utils::image_aspect_ratio_from_size(value).is_some()
+        })
+        .or_else(|| {
+            size.filter(|value| {
+                crate::proxy::mappers::common_utils::image_aspect_ratio_from_size(value).is_some()
+            })
+        })
+}
+
+fn image_account_selection_target(model_to_use: &str) -> &str {
+    model_to_use
+}
+
+fn image_inline_part(image: &NormalizedInputImage) -> Value {
+    json!({
+        "inlineData": {
+            "mimeType": image.mime_type,
+            "data": image.base64_data
+        }
+    })
+}
+
+fn build_image_contents(
+    prompt: String,
+    input_images: &[NormalizedInputImage],
+    mask: Option<&NormalizedInputImage>,
+) -> Vec<Value> {
+    let mut parts = Vec::with_capacity(1 + input_images.len() + usize::from(mask.is_some()));
+    parts.push(json!({ "text": prompt }));
+    for (index, image) in input_images.iter().enumerate() {
+        parts.push(image_inline_part(image));
+        if index == 0 {
+            if let Some(mask) = mask {
+                parts.push(image_inline_part(mask));
+            }
+        }
+    }
+    if input_images.is_empty() {
+        if let Some(mask) = mask {
+            parts.push(image_inline_part(mask));
+        }
+    }
+    parts
+}
+
+fn build_image_edit_body(
+    project_id: String,
+    resolved_model: &str,
+    contents_parts: Vec<Value>,
+    image_config: Value,
+) -> Value {
+    json!({
+        "project": project_id,
+        "requestId": format!("img-edit-{}", uuid::Uuid::new_v4()),
+        "model": resolved_model,
+        "userAgent": "antigravity",
+        "requestType": "image_gen",
+        "request": {
+            "contents": [{
+                "role": "user",
+                "parts": contents_parts
+            }],
+            "generationConfig": {
+                "candidateCount": 1,
+                "imageConfig": image_config,
+                "maxOutputTokens": 8192,
+                "stopSequences": [],
+                "temperature": 1.0,
+                "topP": 0.95,
+                "topK": 40
+            },
+            "safetySettings": [
+                { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },
+                { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
+                { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
+                { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
+            ]
+        }
+    })
+}
 
 /// Return true only when a streamed chunk contains an actual error event.
 ///
@@ -301,15 +524,24 @@ fn is_codex_transcript_only_assistant_message(item: &Value, text: &str) -> bool 
 
 #[cfg(test)]
 mod stream_peek_tests {
+    use super::build_image_contents;
+    use super::build_image_edit_body;
     use super::convert_chat_response_to_responses;
     use super::convert_codex_to_openai_request;
     use super::drop_leading_orphan_tool_history;
+    use super::edit_size_input;
+    use super::generation_image_size_param;
+    use super::image_account_selection_target;
     use super::is_codex_transcript_only_assistant_message;
+    use super::is_edit_image_field;
+    use super::parse_generation_input_images;
     use super::responses_input_item_type;
     use super::responses_message_parts;
     use super::rewrite_terminal_assistant_prefill;
     use super::stream_chunk_has_error_event;
-    use serde_json::json;
+    use super::validate_input_image_limits;
+    use super::{MAX_INPUT_IMAGES, MAX_INPUT_IMAGE_BYTES, MAX_TOTAL_INPUT_IMAGE_BYTES};
+    use serde_json::{json, Value};
 
     #[test]
     fn responses_created_with_null_error_is_not_an_error_event() {
@@ -589,6 +821,142 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
             &clean_final,
             "done"
         ));
+    }
+
+    #[test]
+    fn generation_image_extension_adds_single_and_array_images_in_order() {
+        let single = json!("data:image/png;base64,AQ==");
+        let single_images = parse_generation_input_images(Some(&single)).expect("single data URL");
+        let single_parts = build_image_contents("prompt".to_string(), &single_images, None);
+        assert_eq!(single_parts.len(), 2);
+        assert_eq!(single_parts[1]["inlineData"]["data"], "AQ==");
+
+        let multiple = json!([
+            "data:image/png;base64,AQ==",
+            "data:image/jpeg;base64,Ag=="
+        ]);
+        let multiple_images =
+            parse_generation_input_images(Some(&multiple)).expect("ordered data URL array");
+        let multiple_parts = build_image_contents("prompt".to_string(), &multiple_images, None);
+        assert_eq!(multiple_parts.len(), 3);
+        assert_eq!(multiple_parts[1]["inlineData"]["data"], "AQ==");
+        assert_eq!(multiple_parts[2]["inlineData"]["data"], "Ag==");
+    }
+
+    #[test]
+    fn generation_without_image_remains_text_only() {
+        let images = parse_generation_input_images(None).expect("absent image is standard text-to-image");
+        let parts = build_image_contents("prompt".to_string(), &images, None);
+        assert_eq!(parts, vec![json!({"text": "prompt"})]);
+    }
+
+    #[test]
+    fn generation_image_extension_rejects_invalid_or_remote_inputs() {
+        let invalid_inputs = [
+            json!("https://example.invalid/image.png"),
+            json!("data:text/plain;base64,AQ=="),
+            json!("data:image/png;base64,not-base64"),
+            json!([]),
+            json!(["data:image/png;base64,AQ==", 2]),
+        ];
+        for input in invalid_inputs {
+            assert!(parse_generation_input_images(Some(&input)).is_err());
+        }
+
+        let too_many = Value::Array(
+            (0..=MAX_INPUT_IMAGES)
+                .map(|_| json!("data:image/png;base64,AQ=="))
+                .collect(),
+        );
+        assert!(parse_generation_input_images(Some(&too_many)).is_err());
+        assert!(validate_input_image_limits(1, MAX_INPUT_IMAGE_BYTES + 1, 0).is_err());
+        assert!(
+            validate_input_image_limits(1, 1, MAX_TOTAL_INPUT_IMAGE_BYTES + 1).is_err()
+        );
+
+        assert!(generation_image_size_param(&json!({"imageSize": 4})).is_err());
+    }
+
+    #[test]
+    fn edit_image_fields_preserve_all_supported_forms_in_arrival_order() {
+        let field_names = [
+            "image",
+            "image",
+            "image[]",
+            "image[]",
+            "image1",
+            "image2",
+            "imageSize",
+            "image_size",
+            "imageReference",
+        ];
+        let accepted: Vec<(usize, &str)> = field_names
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| is_edit_image_field(name))
+            .map(|(index, name)| (index, *name))
+            .collect();
+        assert_eq!(
+            accepted,
+            vec![
+                (0, "image"),
+                (1, "image"),
+                (2, "image[]"),
+                (3, "image[]"),
+                (4, "image1"),
+                (5, "image2"),
+            ]
+        );
+    }
+
+    #[test]
+    fn edit_aspect_ratio_priority_preserves_suffix_without_explicit_size() {
+        use crate::proxy::mappers::common_utils::try_parse_image_config_with_params;
+
+        let suffix_input = edit_size_input(None, None);
+        let (suffix_config, _) = try_parse_image_config_with_params(
+            "gemini-3.1-flash-image-16x9",
+            suffix_input,
+            None,
+            None,
+        )
+        .expect("model suffix config");
+        assert_eq!(suffix_config["aspectRatio"], "16:9");
+
+        let explicit_input = edit_size_input(Some("4:3"), Some("1280x720"));
+        let (explicit_config, _) = try_parse_image_config_with_params(
+            "gemini-3.1-flash-image-16x9",
+            explicit_input,
+            None,
+            None,
+        )
+        .expect("explicit aspect ratio config");
+        assert_eq!(explicit_config["aspectRatio"], "4:3");
+    }
+
+    #[test]
+    fn edit_flash_model_is_used_for_account_selection_and_resolved_upstream_body() {
+        use crate::proxy::mappers::common_utils::try_parse_image_config_with_params;
+
+        let (image_config, model_to_use) = try_parse_image_config_with_params(
+            "gemini-3.1-flash-image",
+            None,
+            None,
+            None,
+        )
+        .expect("flash edit model config");
+        assert_eq!(
+            image_account_selection_target(&model_to_use),
+            "gemini-3.1-flash-image"
+        );
+
+        let body = build_image_edit_body(
+            "project".to_string(),
+            "account-resolved-image-model",
+            json!([{"text": "prompt"}]).as_array().cloned().expect("parts"),
+            image_config,
+        );
+        assert_eq!(body["model"], "account-resolved-image-model");
     }
 }
 
@@ -3430,31 +3798,36 @@ pub async fn handle_images_generations_internal(
 
     let quality = body.get("quality").and_then(|v| v.as_str());
 
-    let image_size = body
-        .get("image_size")
-        .or(body.get("imageSize"))
-        .and_then(|v| v.as_str());
+    let image_size = generation_image_size_param(&body)
+        .map_err(|message| (StatusCode::BAD_REQUEST, message, None))?;
 
     let style = body
         .get("style")
         .and_then(|v| v.as_str())
         .unwrap_or("vivid");
 
+    // Canvas compatibility extension: OpenAI's standard generations endpoint does not define
+    // this top-level field. Accept only inline data:image URLs and never fetch remote URLs.
+    let input_images = parse_generation_input_images(body.get("image")).map_err(|message| {
+        (StatusCode::BAD_REQUEST, message, None)
+    })?;
+
     info!(
-        "[Images] Received request: model={}, prompt={:.50}..., n={}, size={}, quality={}, style={}",
-        model,
-        prompt,
-        n,
-        size.unwrap_or("auto"),
-        quality.unwrap_or("auto"),
-        style
+        model = model,
+        image_count = input_images.len(),
+        n = n,
+        size = size.unwrap_or("auto"),
+        quality = quality.unwrap_or("auto"),
+        style = style,
+        "[Images] Received generation request"
     );
 
     // 2. 使用 common_utils 解析图片配置（统一逻辑，支持动态计算宽高比和 quality 映射）
     let (image_config, clean_model_name) =
-        crate::proxy::mappers::common_utils::parse_image_config_with_params(
+        crate::proxy::mappers::common_utils::try_parse_image_config_with_params(
             model, size, quality, image_size,
-        );
+        )
+        .map_err(|message| (StatusCode::BAD_REQUEST, message, None))?;
 
     // 3. Prompt Enhancement（保留原有逻辑）
     let mut final_prompt = prompt.to_string();
@@ -3466,6 +3839,7 @@ pub async fn handle_images_generations_internal(
         "natural" => final_prompt.push_str(", (natural lighting, realistic, photorealistic)"),
         _ => {}
     }
+    let contents_parts = build_image_contents(final_prompt, &input_images, None);
 
     // 4. 并发发送请求
     // 注意：不再在外部获取 Token，而是移入 Task 内部并在重试时获取
@@ -3485,7 +3859,7 @@ pub async fn handle_images_generations_internal(
     for _ in 0..n {
         let upstream = upstream.clone();
         let token_manager = token_manager.clone();
-        let final_prompt = final_prompt.clone();
+        let contents_parts = contents_parts.clone();
         let image_config = image_config.clone(); // 使用解析后的完整配置
         let _response_format = response_format.to_string();
 
@@ -3532,7 +3906,7 @@ pub async fn handle_images_generations_internal(
                     "request": {
                         "contents": [{
                             "role": "user",
-                            "parts": [{"text": final_prompt}]
+                            "parts": contents_parts
                         }],
                         "generationConfig": {
                             "candidateCount": 1, // 强制单张
@@ -3742,16 +4116,17 @@ pub async fn handle_images_edits(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     tracing::info!("[Images] Received edit request");
 
-    let mut image_data: Option<(String, String)> = None;
-    let mut mask_data: Option<(String, String)> = None;
-    let mut reference_images: Vec<(String, String)> = Vec::new(); // Store (base64 data, mime type) reference images
+    let mut input_images: Vec<NormalizedInputImage> = Vec::new();
+    let mut mask_data: Option<NormalizedInputImage> = None;
+    let mut total_input_image_bytes = 0;
     let mut prompt = String::new();
     let mut n = 1;
-    let mut size = "1024x1024".to_string();
+    let mut size: Option<String> = None;
     let mut response_format = "b64_json".to_string();
     let mut model = "gemini-3.1-flash-image".to_string();
     let mut aspect_ratio: Option<String> = None;
     let mut image_size_param: Option<String> = None;
+    let mut quality: Option<String> = None;
     let mut style: Option<String> = None;
 
     while let Some(field) = multipart
@@ -3761,7 +4136,7 @@ pub async fn handle_images_edits(
     {
         let name = field.name().unwrap_or("").to_string();
 
-        if name == "image" {
+        if is_edit_image_field(&name) {
             let mime_type = field
                 .content_type()
                 .map(|content_type| content_type.to_string())
@@ -3770,10 +4145,15 @@ pub async fn handle_images_edits(
                 .bytes()
                 .await
                 .map_err(|e| (StatusCode::BAD_REQUEST, format!("Image read error: {}", e)))?;
-            image_data = Some((
-                base64::engine::general_purpose::STANDARD.encode(data),
-                mime_type,
-            ));
+            let image = normalized_image_from_bytes(
+                &data,
+                &mime_type,
+                input_images.len() + 1,
+                total_input_image_bytes,
+            )
+            .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+            total_input_image_bytes = total_input_image_bytes.saturating_add(image.decoded_len);
+            input_images.push(image);
         } else if name == "mask" {
             let mime_type = field
                 .content_type()
@@ -3783,26 +4163,15 @@ pub async fn handle_images_edits(
                 .bytes()
                 .await
                 .map_err(|e| (StatusCode::BAD_REQUEST, format!("Mask read error: {}", e)))?;
-            mask_data = Some((
-                base64::engine::general_purpose::STANDARD.encode(data),
-                mime_type,
-            ));
-        } else if name.starts_with("image") && name != "image_size" {
-            // Support image1, image2, etc.
-            let mime_type = field
-                .content_type()
-                .map(|content_type| content_type.to_string())
-                .unwrap_or_else(|| "image/jpeg".to_string());
-            let data = field.bytes().await.map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    format!("Reference image read error: {}", e),
-                )
-            })?;
-            reference_images.push((
-                base64::engine::general_purpose::STANDARD.encode(data),
-                mime_type,
-            ));
+            let mask = normalized_image_from_bytes(
+                &data,
+                &mime_type,
+                input_images.len(),
+                total_input_image_bytes,
+            )
+            .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+            total_input_image_bytes = total_input_image_bytes.saturating_add(mask.decoded_len);
+            mask_data = Some(mask);
         } else if name == "prompt" {
             prompt = field
                 .text()
@@ -3813,12 +4182,18 @@ pub async fn handle_images_edits(
                 n = val.parse().unwrap_or(1);
             }
         } else if name == "size" {
-            if let Ok(val) = field.text().await {
-                size = val;
-            }
-        } else if name == "image_size" {
+            let val = field
+                .text()
+                .await
+                .map_err(|e| (StatusCode::BAD_REQUEST, format!("Size read error: {}", e)))?;
+            size = Some(val);
+        } else if name == "image_size" || name == "imageSize" {
             if let Ok(val) = field.text().await {
                 image_size_param = Some(val);
+            }
+        } else if name == "quality" {
+            if let Ok(val) = field.text().await {
+                quality = Some(val);
             }
         } else if name == "aspect_ratio" {
             if let Ok(val) = field.text().await {
@@ -3848,16 +4223,16 @@ pub async fn handle_images_edits(
     }
 
     tracing::info!(
-        "[Images] Edit/Ref Request: model={}, prompt={}, n={}, size={}, aspect_ratio={:?}, image_size={:?}, style={:?}, refs={}, has_main_image={}",
-        model,
-        prompt,
-        n,
-        size,
-        aspect_ratio,
-        image_size_param,
-        style,
-        reference_images.len(),
-        image_data.is_some()
+        model = model,
+        n = n,
+        size = size.as_deref().unwrap_or("auto"),
+        aspect_ratio = aspect_ratio.as_deref().unwrap_or("auto"),
+        image_size = image_size_param.as_deref().unwrap_or("auto"),
+        quality = quality.as_deref().unwrap_or("auto"),
+        style = style.as_deref().unwrap_or("auto"),
+        image_count = input_images.len(),
+        has_mask = mask_data.is_some(),
+        "[Images] Received edit request metadata"
     );
 
     // 2. Prepare Config (Aspect Ratio / Size)
@@ -3865,65 +4240,23 @@ pub async fn handle_images_edits(
     // Priority: image_size param > quality param (derived from model suffix or default)
 
     // We reuse parse_image_config_with_params but need to adapt the inputs
-    let size_input = aspect_ratio.as_deref().or(Some(&size)); // If aspect_ratio is "16:9", it works. If it's just "1:1", it also works.
-
-    // Map 'image_size' (2K) to 'quality' semantics if needed, or pass directly if logic supports
-    // common_utils logic: 'hd' -> 4K, 'medium' -> 2K.
-    let quality_input = match image_size_param.as_deref() {
-        Some("4K") => Some("hd"),
-        Some("2K") => Some("medium"),
-        _ => None, // Fallback to standard
-    };
+    let size_input = edit_size_input(aspect_ratio.as_deref(), size.as_deref());
 
     let (image_config, clean_model_name) =
-        crate::proxy::mappers::common_utils::parse_image_config_with_params(
+        crate::proxy::mappers::common_utils::try_parse_image_config_with_params(
             &model,
             size_input,
-            quality_input,
-            image_size_param.as_deref(), // [NEW] Pass direct image_size param
-        );
+            quality.as_deref(),
+            image_size_param.as_deref(),
+        )
+        .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
 
     // 3. Construct Contents
-    let mut contents_parts = Vec::new();
-
-    // Add Prompt
     let mut final_prompt = prompt.clone();
     if let Some(s) = style {
         final_prompt.push_str(&format!(", style: {}", s));
     }
-    contents_parts.push(json!({
-        "text": final_prompt
-    }));
-
-    // Add Main Image (if standard edit)
-    if let Some((data, mime_type)) = image_data {
-        contents_parts.push(json!({
-            "inlineData": {
-                "mimeType": mime_type,
-                "data": data
-            }
-        }));
-    }
-
-    // Add Mask (if standard edit)
-    if let Some((data, mime_type)) = mask_data {
-        contents_parts.push(json!({
-            "inlineData": {
-                "mimeType": mime_type,
-                "data": data
-            }
-        }));
-    }
-
-    // Add Reference Images (Image-to-Image)
-    for (ref_data, mime_type) in reference_images {
-        contents_parts.push(json!({
-            "inlineData": {
-                "mimeType": mime_type,
-                "data": ref_data
-            }
-        }));
-    }
+    let contents_parts = build_image_contents(final_prompt, &input_images, mask_data.as_ref());
 
     // 4. 并发发送请求
     // 注意：不再在外部获取 Token，而是移入 Task 内部
@@ -3951,7 +4284,12 @@ pub async fn handle_images_edits(
             for attempt in 0..max_attempts {
                 // 4.1 获取 Token
                 let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
-                    .get_token("image_gen", force_rotate, None, "gemini-3-pro-image")
+                    .get_token(
+                        "image_gen",
+                        force_rotate,
+                        None,
+                        image_account_selection_target(&model_to_use),
+                    )
                     .await
                 {
                     Ok(t) => t,
@@ -3965,35 +4303,17 @@ pub async fn handle_images_edits(
                     }
                 };
 
-                // 4.2 Construct Request Body (Need project_id)
-                let gemini_body = json!({
-                    "project": project_id,
-                    "requestId": format!("img-edit-{}", uuid::Uuid::new_v4()),
-                    "model": model_to_use,
-                    "userAgent": "antigravity",
-                    "requestType": "image_gen",
-                    "request": {
-                        "contents": [{
-                            "role": "user",
-                            "parts": contents_parts
-                        }],
-                        "generationConfig": {
-                            "candidateCount": 1,
-                            "imageConfig": image_config,
-                            "maxOutputTokens": 8192,
-                            "stopSequences": [],
-                            "temperature": 1.0,
-                            "topP": 0.95,
-                            "topK": 40
-                        },
-                        "safetySettings": [
-                            { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },
-                            { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
-                            { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
-                            { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
-                        ]
-                    }
-                });
+                let resolved_model = token_manager
+                    .resolve_dynamic_model_for_account(&account_id, &model_to_use)
+                    .await;
+
+                // 4.2 Construct Request Body (Need project_id and account-resolved model)
+                let gemini_body = build_image_edit_body(
+                    project_id,
+                    &resolved_model,
+                    contents_parts.clone(),
+                    image_config.clone(),
+                );
 
                 match upstream
                     .call_v1_internal(
