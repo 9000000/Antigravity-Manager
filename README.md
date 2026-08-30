@@ -441,7 +441,7 @@ response = client.chat.completions.create(
 
 ## 📝 更新日志
 
-> 最新版本 **v4.6.3**（2026-08-30）包含仪表盘最佳账号推荐算法优化（5h 与周配额综合木桶短板判定）、Gemini 3.7 / 3.x 思考签名失效识别与多轮对话跨变体兼容修复，以及日语、西班牙语、俄语、韩语 100% 多语言本地化全量补全与残余中英文字符串清理。
+> 最新版本 **v4.6.3**（2026-08-30）包含配额置顶 3.7 模型芯片渲染修复、仪表盘最佳账号推荐算法优化（5h 与周配额综合木桶判定）、Gemini 3.7 / 3.x 思考签名失效识别与多轮对话跨变体兼容修复，以及日语、西班牙语、俄语、韩语 100% 多语言本地化全量补全与残余中英文字符串清理。
 
 👉 **[查看完整更新日志 CHANGELOG.md →](CHANGELOG.md)**
 
@@ -475,6 +475,7 @@ response = client.chat.completions.create(
 <a href="https://github.com/hakanyalitekin"><img src="https://github.com/hakanyalitekin.png" width="50px" style="border-radius: 50%;" alt="hakanyalitekin"/></a>
 <a href="https://github.com/Gok-tug"><img src="https://github.com/Gok-tug.png" width="50px" style="border-radius: 50%;" alt="Gok-tug"/></a>
 <a href="https://github.com/johngbl"><img src="https://github.com/johngbl.png" width="50px" style="border-radius: 50%;" alt="johngbl"/></a>
+<a href="https://github.com/lhpnano"><img src="https://github.com/lhpnano.png" width="50px" style="border-radius: 50%;" alt="lhpnano"/></a>
 
 感谢所有为本项目付出汗水与智慧的开发者。
 
