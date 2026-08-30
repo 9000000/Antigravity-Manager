@@ -1363,6 +1363,8 @@ pub async fn handle_chat_completions(
 
     // 1. 获取 UpstreamClient (Clone handle)
     let upstream = state.upstream.clone();
+    let image_scheduler = state.image_scheduler.clone();
+    let request_timeout = state.request_timeout;
     let token_manager = state.token_manager;
     let pool_size = token_manager.len();
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size).max(1);
@@ -1371,6 +1373,7 @@ pub async fn handle_chat_completions(
     let mut last_email: Option<String> = None;
     let mut retry_state = RequestRetryState::default();
     let mut retry_credentials: Option<(String, String, String, String, u64)> = None;
+    let mut image_permit = None;
     let mut failure_statuses = FailureStatusTracker::default();
     let mut used_attempts = 0;
 
@@ -1408,6 +1411,28 @@ pub async fn handle_chat_completions(
         let (access_token, project_id, email, account_id, _wait_ms) =
             if let Some(credentials) = retry_credentials.take() {
                 credentials
+            } else if config.request_type == "image_gen" {
+                drop(image_permit.take());
+                match token_manager
+                    .get_image_token(
+                        force_rotate,
+                        Some(&session_id),
+                        &mapped_model,
+                        &image_scheduler,
+                        request_timeout,
+                    )
+                    .await
+                {
+                    Ok((access_token, project_id, email, account_id, wait_ms, permit)) => {
+                        image_permit = Some(permit);
+                        (access_token, project_id, email, account_id, wait_ms)
+                    }
+                    Err((status, message)) => {
+                        failure_statuses.record(status);
+                        last_error = message;
+                        break;
+                    }
+                }
             } else {
                 match token_manager
                     .get_token(
@@ -1522,6 +1547,7 @@ pub async fn handle_chat_completions(
             Err(e) => {
                 last_error = e.clone();
                 failure_statuses.record(StatusCode::BAD_GATEWAY);
+                drop(image_permit.take());
                 debug!(
                     "OpenAI Request failed on attempt {}/{}: {}",
                     attempt + 1,
@@ -1674,11 +1700,13 @@ pub async fn handle_chat_completions(
                     .chain(openai_stream);
 
                 // [NEW] 针对 OpenAI 流增加 300 秒空闲超时保护
+                let image_permit_for_stream = image_permit.take();
                 let track_image_success = config.request_type == "image_gen";
                 let image_success_manager = token_manager.clone();
                 let image_success_account = account_id.clone();
                 let image_success_model = mapped_model.clone();
                 let combined_stream = async_stream::stream! {
+                    let _image_permit = image_permit_for_stream;
                     let mut s = Box::pin(combined_stream);
                     let mut saw_image_data = false;
                     let mut stream_failed = false;
@@ -1962,6 +1990,9 @@ pub async fn handle_chat_completions(
         } else {
             false
         };
+        if !matches!(&strategy, RetryStrategy::GraceRetry(_)) {
+            drop(image_permit.take());
+        }
         if needs_quota_refresh {
             token_manager
                 .refresh_quota_lock_after_fast_mark(&email, Some(&mapped_model))
@@ -4031,6 +4062,8 @@ pub async fn handle_images_generations_internal(
     // 注意：不再在外部获取 Token，而是移入 Task 内部并在重试时获取
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager.clone();
+    let image_scheduler = state.image_scheduler.clone();
+    let request_timeout = state.request_timeout;
     let max_pool_size = token_manager.len();
     let max_attempts = MAX_RETRY_ATTEMPTS.min(max_pool_size).max(1);
 
@@ -4049,8 +4082,10 @@ pub async fn handle_images_generations_internal(
 
         let model_to_use = clean_model_name.clone();
         let attempted_account = attempted_account.clone();
+        let image_scheduler = image_scheduler.clone();
 
         tasks.spawn(async move {
+            let mut image_permit = None;
             let mut last_error = String::new();
             let mut force_rotate = false;
             let mut retry_state = RequestRetryState::default();
@@ -4067,19 +4102,34 @@ pub async fn handle_images_generations_internal(
                     if let Some(credentials) = retry_credentials.take() {
                         credentials
                     } else {
+                        drop(image_permit.take());
                         match token_manager
-                            .get_token(
-                                "image_gen",
+                            .get_image_token(
                                 force_rotate,
                                 None,
                                 &model_to_use,
+                                &image_scheduler,
+                                request_timeout,
                             )
                             .await
                         {
-                            Ok(credentials) => credentials,
-                            Err(e) => {
+                            Ok((
+                                access_token,
+                                project_id,
+                                email,
+                                account_id,
+                                wait_ms,
+                                permit,
+                            )) => {
+                                image_permit = Some(permit);
+                                (access_token, project_id, email, account_id, wait_ms)
+                            }
+                            Err((status, e)) => {
                                 last_error = format!("Token error: {}", e);
-                                failure_statuses.record(StatusCode::SERVICE_UNAVAILABLE);
+                                failure_statuses.record(status);
+                                if status == StatusCode::TOO_MANY_REQUESTS {
+                                    return Err((status, e));
+                                }
                                 if attempt < max_attempts - 1 {
                                     tokio::time::sleep(Duration::from_millis(500)).await;
                                     continue;
@@ -4177,6 +4227,9 @@ pub async fn handle_images_generations_internal(
                             } else {
                                 false
                             };
+                            if !matches!(strategy.as_ref(), Some(RetryStrategy::GraceRetry(_))) {
+                                drop(image_permit.take());
+                            }
                             if needs_quota_refresh {
                                 token_manager
                                     .refresh_quota_lock_after_fast_mark(
@@ -4257,6 +4310,7 @@ pub async fn handle_images_generations_internal(
                     Err(e) => {
                         last_error = format!("Network error: {}", e);
                         failure_statuses.record(StatusCode::BAD_GATEWAY);
+                        drop(image_permit.take());
                         continue;
                     }
                 }
@@ -4529,6 +4583,8 @@ pub async fn handle_images_edits(
     // 注意：不再在外部获取 Token，而是移入 Task 内部
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager.clone();
+    let image_scheduler = state.image_scheduler.clone();
+    let request_timeout = state.request_timeout;
     let max_pool_size = token_manager.len();
     let max_attempts = MAX_RETRY_ATTEMPTS.min(max_pool_size).max(1);
 
@@ -4540,8 +4596,10 @@ pub async fn handle_images_edits(
         let image_config = image_config.clone();
         let response_format = response_format.clone();
         let model_to_use = clean_model_name.clone();
+        let image_scheduler = image_scheduler.clone();
 
         tasks.spawn(async move {
+            let mut image_permit = None;
             let mut last_error = String::new();
             let mut force_rotate = false;
             let mut retry_state = RequestRetryState::default();
@@ -4559,19 +4617,27 @@ pub async fn handle_images_edits(
                     if let Some(credentials) = retry_credentials.take() {
                         credentials
                     } else {
+                        drop(image_permit.take());
                         match token_manager
-                            .get_token(
-                                "image_gen",
+                            .get_image_token(
                                 force_rotate,
                                 None,
                                 image_account_selection_target(&model_to_use),
+                                &image_scheduler,
+                                request_timeout,
                             )
                             .await
                         {
-                            Ok(credentials) => credentials,
-                            Err(e) => {
+                            Ok((access_token, project_id, email, account_id, wait_ms, permit)) => {
+                                image_permit = Some(permit);
+                                (access_token, project_id, email, account_id, wait_ms)
+                            }
+                            Err((status, e)) => {
                                 last_error = format!("Token error: {}", e);
-                                failure_statuses.record(StatusCode::SERVICE_UNAVAILABLE);
+                                failure_statuses.record(status);
+                                if status == StatusCode::TOO_MANY_REQUESTS {
+                                    return Err((status, e));
+                                }
                                 if attempt < max_attempts - 1 {
                                     tokio::time::sleep(Duration::from_millis(500)).await;
                                     continue;
@@ -4646,6 +4712,9 @@ pub async fn handle_images_edits(
                             } else {
                                 false
                             };
+                            if !matches!(strategy.as_ref(), Some(RetryStrategy::GraceRetry(_))) {
+                                drop(image_permit.take());
+                            }
                             if needs_quota_refresh {
                                 token_manager
                                     .refresh_quota_lock_after_fast_mark(
@@ -4707,6 +4776,7 @@ pub async fn handle_images_edits(
                     Err(e) => {
                         last_error = format!("Network error: {}", e);
                         failure_statuses.record(StatusCode::BAD_GATEWAY);
+                        drop(image_permit.take());
                         continue;
                     }
                 }

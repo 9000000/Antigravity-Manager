@@ -135,6 +135,8 @@ pub async fn handle_generate(
 
     // 2. 获取 UpstreamClient 和 TokenManager
     let upstream = state.upstream.clone();
+    let image_scheduler = state.image_scheduler.clone();
+    let request_timeout = state.request_timeout;
     let token_manager = state.token_manager;
     let pool_size = token_manager.len();
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size).max(1);
@@ -144,6 +146,7 @@ pub async fn handle_generate(
     let mut force_rotate = false;
     let mut retry_state = RequestRetryState::default();
     let mut retry_credentials: Option<(String, String, String, String, u64)> = None;
+    let mut image_permit = None;
     let mut failure_statuses = FailureStatusTracker::default();
     let mut used_attempts = 0;
 
@@ -192,6 +195,28 @@ pub async fn handle_generate(
         let (access_token, project_id, email, account_id, _wait_ms) =
             if let Some(credentials) = retry_credentials.take() {
                 credentials
+            } else if config.request_type == "image_gen" {
+                drop(image_permit.take());
+                match token_manager
+                    .get_image_token(
+                        force_rotate,
+                        Some(&session_id),
+                        &config.final_model,
+                        &image_scheduler,
+                        request_timeout,
+                    )
+                    .await
+                {
+                    Ok((access_token, project_id, email, account_id, wait_ms, permit)) => {
+                        image_permit = Some(permit);
+                        (access_token, project_id, email, account_id, wait_ms)
+                    }
+                    Err((status, message)) => {
+                        failure_statuses.record(status);
+                        last_error = message;
+                        break;
+                    }
+                }
             } else {
                 match token_manager
                     .get_token(
@@ -286,6 +311,7 @@ pub async fn handle_generate(
             Err(e) => {
                 last_error = e.clone();
                 failure_statuses.record(StatusCode::BAD_GATEWAY);
+                drop(image_permit.take());
                 debug!(
                     "Gemini Request failed on attempt {}/{}: {}",
                     attempt + 1,
@@ -411,11 +437,13 @@ pub async fn handle_generate(
                 }
                 let s_id_for_stream = s_id.clone();
                 let model_name_for_stream = mapped_model.clone();
+                let image_permit_for_stream = image_permit.take();
                 let track_image_success = config.request_type == "image_gen";
                 let image_success_manager = token_manager.clone();
                 let image_success_account = account_id.clone();
                 let image_success_model = mapped_model.clone();
                 let stream = async_stream::stream! {
+                    let _image_permit = image_permit_for_stream;
                     let mut first_data = first_chunk;
                     let mut meta_sent = false;
                     let mut saw_image_data = false;
@@ -744,6 +772,9 @@ pub async fn handle_generate(
         } else {
             false
         };
+        if !matches!(&strategy, RetryStrategy::GraceRetry(_)) {
+            drop(image_permit.take());
+        }
         if needs_quota_refresh {
             token_manager
                 .refresh_quota_lock_after_fast_mark(&email, Some(&mapped_model))

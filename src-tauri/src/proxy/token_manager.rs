@@ -1,12 +1,14 @@
 // 移除冗余的顶层导入，因为这些在代码中已由 full path 或局部导入处理
+use axum::http::StatusCode;
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use tokio_util::sync::CancellationToken;
 
 use crate::proxy::rate_limit::RateLimitTracker;
+use crate::proxy::server::{ImagePermit, ImageScheduler};
 use crate::proxy::sticky_config::StickySessionConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +50,32 @@ fn classify_rate_limit_reason(error_body: &str) -> crate::proxy::rate_limit::Rat
     } else {
         RateLimitReason::Unknown
     }
+}
+
+const IMAGE_ACCOUNT_RESELECT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+async fn wait_for_image_account_change(
+    changes: &mut tokio::sync::watch::Receiver<u64>,
+    remaining: std::time::Duration,
+) -> bool {
+    if remaining.is_zero() {
+        return false;
+    }
+    tokio::select! {
+        result = changes.changed() => result.is_ok(),
+        _ = tokio::time::sleep(remaining.min(IMAGE_ACCOUNT_RESELECT_INTERVAL)) => true,
+    }
+}
+
+async fn wait_for_image_token_selection<T>(
+    deadline: tokio::time::Instant,
+    selection: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
+        return None;
+    }
+    tokio::time::timeout(remaining, selection).await.ok()
 }
 
 fn update_account_json(
@@ -123,6 +151,7 @@ pub struct TokenManager {
     /// 支持优雅关闭时主动 abort 后台任务
     auto_cleanup_handle: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
     cancel_token: CancellationToken,
+    image_scheduler: std::sync::RwLock<Option<Weak<ImageScheduler>>>,
 }
 
 impl TokenManager {
@@ -146,6 +175,32 @@ impl TokenManager {
             invalid_grant_failures: Arc::new(DashMap::new()),
             auto_cleanup_handle: Arc::new(tokio::sync::Mutex::new(None)),
             cancel_token: CancellationToken::new(),
+            image_scheduler: std::sync::RwLock::new(None),
+        }
+    }
+
+    pub(crate) fn register_image_scheduler(&self, scheduler: &Arc<ImageScheduler>) {
+        if let Ok(mut slot) = self.image_scheduler.write() {
+            *slot = Some(Arc::downgrade(scheduler));
+        }
+        scheduler.sync_accounts(self.enabled_account_ids());
+    }
+
+    pub(crate) fn enabled_account_ids(&self) -> Vec<String> {
+        self.tokens
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
+    fn sync_image_scheduler_accounts(&self) {
+        let scheduler = self
+            .image_scheduler
+            .read()
+            .ok()
+            .and_then(|slot| slot.as_ref().and_then(Weak::upgrade));
+        if let Some(scheduler) = scheduler {
+            scheduler.sync_accounts(self.enabled_account_ids());
         }
     }
 
@@ -197,6 +252,7 @@ impl TokenManager {
         // Reload should reflect current on-disk state (accounts can be added/removed/disabled).
         self.tokens.clear();
         self.rate_limit_tracker.clear_all();
+        self.sync_image_scheduler_accounts();
         self.current_index.store(0, Ordering::SeqCst);
         {
             let mut last_used = self.last_used_account.lock().await;
@@ -209,7 +265,10 @@ impl TokenManager {
         let mut count = 0;
 
         for entry in entries {
-            let entry = entry.map_err(|e| format!("读取目录项失败: {}", e))?;
+            let entry = entry.map_err(|e| {
+                self.sync_image_scheduler_accounts();
+                format!("读取目录项失败: {}", e)
+            })?;
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
@@ -232,6 +291,7 @@ impl TokenManager {
             }
         }
 
+        self.sync_image_scheduler_accounts();
         Ok(count)
     }
 
@@ -248,6 +308,7 @@ impl TokenManager {
         match self.load_single_account(&path).await {
             Ok(Some(token)) => {
                 self.tokens.insert(account_id.to_string(), token);
+                self.sync_image_scheduler_accounts();
                 Ok(())
             }
             Ok(None) => {
@@ -284,6 +345,7 @@ impl TokenManager {
                 );
             }
         }
+        self.sync_image_scheduler_accounts();
     }
 
     /// 根据账号 ID 获取完整的 ProxyToken 对象 (v4.1.29)
@@ -1297,6 +1359,76 @@ impl TokenManager {
             &excluded_accounts,
         )
         .await
+    }
+
+    pub async fn get_image_token(
+        &self,
+        force_rotate: bool,
+        session_id: Option<&str>,
+        target_model: &str,
+        scheduler: &Arc<ImageScheduler>,
+        request_timeout: u64,
+    ) -> Result<(String, String, String, String, u64, ImagePermit), (StatusCode, String)> {
+        let deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(request_timeout);
+        let mut scheduler_changes = scheduler.subscribe_changes();
+
+        loop {
+            scheduler_changes.borrow_and_update();
+            let mut busy_accounts = HashSet::new();
+
+            loop {
+                let selection = wait_for_image_token_selection(
+                    deadline,
+                    self.get_token_filtered(
+                        "image_gen",
+                        force_rotate,
+                        session_id,
+                        target_model,
+                        &busy_accounts,
+                    ),
+                )
+                .await;
+                match selection {
+                    None => {
+                        return Err((
+                            StatusCode::TOO_MANY_REQUESTS,
+                            "图片队列等待超时".to_string(),
+                        ));
+                    }
+                    Some(Ok((access_token, project_id, email, account_id, wait_ms))) => {
+                        if let Some(permit) = scheduler.try_acquire(&account_id) {
+                            return Ok((
+                                access_token,
+                                project_id,
+                                email,
+                                account_id,
+                                wait_ms,
+                                permit,
+                            ));
+                        }
+                        busy_accounts.insert(account_id);
+                    }
+                    Some(Err(selection_error)) => {
+                        if busy_accounts.is_empty() {
+                            return Err((
+                                StatusCode::SERVICE_UNAVAILABLE,
+                                format!("Token error: {}", selection_error),
+                            ));
+                        }
+                        break;
+                    }
+                }
+            }
+
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if !wait_for_image_account_change(&mut scheduler_changes, remaining).await {
+                return Err((
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "图片队列等待超时".to_string(),
+                ));
+            }
+        }
     }
 
     async fn get_token_filtered(
@@ -3785,6 +3917,27 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[tokio::test]
+    async fn task_image_selection_respects_queue_deadline() {
+        let result = wait_for_image_token_selection(
+            tokio::time::Instant::now() + std::time::Duration::from_millis(20),
+            std::future::pending::<()>(),
+        )
+        .await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn task_image_queue_reselects_without_scheduler_notification() {
+        let (_sender, mut changes) = tokio::sync::watch::channel(0);
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            wait_for_image_account_change(&mut changes, std::time::Duration::from_secs(1)),
+        )
+        .await;
+        assert_eq!(result, Ok(true));
     }
 
     #[tokio::test]
