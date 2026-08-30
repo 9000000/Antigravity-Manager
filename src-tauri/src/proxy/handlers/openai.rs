@@ -595,6 +595,22 @@ fn omit_media_before_latest_user_turn(items: &mut [Value]) {
     }
 }
 
+async fn save_session_unless_response_cancelled<F>(
+    mut ack_tx: tokio::sync::oneshot::Sender<()>,
+    save: F,
+) where
+    F: std::future::Future<Output = ()>,
+{
+    let saved = tokio::select! {
+        biased;
+        _ = ack_tx.closed() => false,
+        _ = save => true,
+    };
+    if saved {
+        let _ = ack_tx.send(());
+    }
+}
+
 fn build_responses_tool_output_content(text: String, mut media_parts: Vec<Value>) -> Value {
     if media_parts.is_empty() {
         return Value::String(text);
@@ -874,6 +890,7 @@ mod stream_peek_tests {
     use super::responses_input_item_type;
     use super::responses_message_parts;
     use super::rewrite_terminal_assistant_prefill;
+    use super::save_session_unless_response_cancelled;
     use super::stream_chunk_has_error_event;
     use super::validate_input_image_limits;
     use super::validate_responses_image_data_url;
@@ -1098,6 +1115,37 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
 
         input[2]["content"] = Value::Array(images(17));
         assert!(validate_responses_input_image_limits(Some(&Value::Array(input))).is_err());
+    }
+
+    #[tokio::test]
+    async fn cancelled_response_drops_pending_session_save() {
+        let response_id = format!("resp-cancelled-{}", uuid::Uuid::new_v4());
+        let save_response_id = response_id.clone();
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let save_task = tokio::spawn(save_session_unless_response_cancelled(ack_tx, async move {
+            entered_tx.send(()).expect("save future entered");
+            std::future::pending::<()>().await;
+            crate::proxy::http_session_store::save_session_delta(
+                save_response_id,
+                None,
+                vec![json!({"id": "cancelled-user"})],
+                Vec::new(),
+                String::new(),
+                "gemini-pro-agent".to_string(),
+            )
+            .await;
+        }));
+
+        entered_rx.await.expect("save future is waiting");
+        drop(ack_rx);
+        tokio::time::timeout(std::time::Duration::from_secs(1), save_task)
+            .await
+            .expect("cancelled save task exits")
+            .expect("save task");
+        assert!(crate::proxy::http_session_store::get_session(&response_id)
+            .await
+            .is_none());
     }
 
     #[test]
@@ -3712,16 +3760,18 @@ pub async fn handle_completions(
                                     .into_iter()
                                     .filter_map(into_history_without_inline_media)
                                     .collect();
-                                crate::proxy::http_session_store::save_session_delta(
-                                    rid,
-                                    save_parent,
-                                    save_input,
-                                    outputs,
-                                    save_instructions,
-                                    save_model,
+                                save_session_unless_response_cancelled(
+                                    ack_tx,
+                                    crate::proxy::http_session_store::save_session_delta(
+                                        rid,
+                                        save_parent,
+                                        save_input,
+                                        outputs,
+                                        save_instructions,
+                                        save_model,
+                                    ),
                                 )
                                 .await;
-                                let _ = ack_tx.send(());
                             }
                         });
                     }
