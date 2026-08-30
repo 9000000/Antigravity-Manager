@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.6.2)
+> 专业级 AI 账号管理与协议代理系统 (v4.6.3)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.6.2-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.6.3-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -441,7 +441,7 @@ response = client.chat.completions.create(
 
 ## 📝 更新日志
 
-> 最新版本 **v4.6.2**（2026-08-28）包含代理启动诊断修复、模型目录更新（gemini-3.7-flash / claude-opus-4-6）、Windows 控制台黑框修复、Gemini 思考签名压缩报错修复、pt-BR 翻译补完及安装脚本版本号解析修复。
+> 最新版本 **v4.6.3**（2026-08-30）包含多语言国际化全量本地化补全（日语、西班牙语、俄语、韩语 100% 翻译及残余中英文字符串清理）。
 
 👉 **[查看完整更新日志 CHANGELOG.md →](CHANGELOG.md)**
 
@@ -474,6 +474,7 @@ response = client.chat.completions.create(
 <a href="https://github.com/Koshikai"><img src="https://github.com/Koshikai.png" width="50px" style="border-radius: 50%;" alt="Koshikai"/></a>
 <a href="https://github.com/hakanyalitekin"><img src="https://github.com/hakanyalitekin.png" width="50px" style="border-radius: 50%;" alt="hakanyalitekin"/></a>
 <a href="https://github.com/Gok-tug"><img src="https://github.com/Gok-tug.png" width="50px" style="border-radius: 50%;" alt="Gok-tug"/></a>
+<a href="https://github.com/johngbl"><img src="https://github.com/johngbl.png" width="50px" style="border-radius: 50%;" alt="johngbl"/></a>
 
 感谢所有为本项目付出汗水与智慧的开发者。
 
