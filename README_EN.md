@@ -415,7 +415,14 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
 1. **Enter Model Settings**: Select the `gemini-3-pro-image` model
 2. **Configure Parameters**:
    - **Size**: Enter any `WIDTHxHEIGHT` format (e.g. `1920x1080`, `1024x1024`)
-```
+   - **Quality**: Choose `standard` / `hd` / `medium`
+   - **Number**: Set the number of images (1-10)
+3. **Send Request**: Simply type your image description in the chat dialog
+
+**Parameter mapping rules**:
+- `size: "1920x1080"` → Auto-calculated as `16:9` aspect ratio
+- `quality: "hd"` → Mapped to `4K` resolution
+- `quality: "medium"` → Mapped to `2K` resolution
 
 ## 📝 Changelog
 
