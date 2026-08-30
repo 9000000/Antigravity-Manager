@@ -4,6 +4,9 @@
 
 *   **版本演进**:
     *   **v4.6.3 (2026-08-30)**:
+        -   **[核心修复] 修复 Gemini 3.7 / 3.x 思考签名失效识别与跨变体多轮对话兼容性 (PR #3342)**:
+            -   **不区分大小写匹配 Google 思考签名错误**: 在 Claude 协议及通用处理器中采用 `to_lowercase()` 匹配，全量覆盖 `Invalid thought signature.`、`thought_signature`、`thoughtsignature` 等各类变体，确保 400 签名失效时正确触发重试自动剥离思考重发。
+            -   **完善 Gemini 3.x 模型签名兼容性检查**: 在 `is_model_compatible` 中新增 `gemini-3.x`（Flash / Pro 家族同族互通）与 `gemini-3.7` 显式兼容规则，解决使用 `gemini-3.7-flash-high` 等阶梯变体时跨轮次签名丢失或报错的问题。
         -   **[国际化] 多语言全量本地化补全与残余中英文字符串清理 (PR #3338, PR #3339, PR #3340, PR #3341)**:
             -   **日语本地化 (ja.json, PR #3338)**: 补全配额保护、智能预热、自适应断路器、上下文压缩级别、模型路由及 Homebrew 更新等配置项，清理残余中文与未对齐键。
             -   **西班牙语本地化 (es.json, PR #3339)**: 补齐代理池（Proxy Pool）、调试日志控制台、网络抓包监控（Network Monitor）、IP 安全管理与黑白名单、OpenCode 同步及 APIKEY.FUN 中转等全量翻译。
