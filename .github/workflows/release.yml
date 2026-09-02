@@ -171,7 +171,7 @@ jobs:
             $0 ~ "^[[:space:]]*[*+-][[:space:]]+\\*\\*" ver { capture=1; next }
             capture && $0 ~ "^[[:space:]]*[*+-][[:space:]]+\\*\\*v" { capture=0; exit }
             capture { print }
-          ' README.md | sed 's/^[[:space:]]\{8\}//' > release_notes.md
+          ' CHANGELOG.md | sed 's/^[[:space:]]\{8\}//' > release_notes.md
           if [ ! -s release_notes.md ]; then
             echo "See the assets to download this version and install." > release_notes.md
           fi
