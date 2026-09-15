@@ -410,6 +410,20 @@ pub async fn save_config(
     // 通知托盘配置已更新
     let _ = app.emit("config://updated", ());
 
+    // 同步全局内存配置（无论反代服务当前是否处于运行状态）
+    crate::proxy::update_thinking_budget_config(config.proxy.thinking_budget.clone());
+    crate::proxy::update_global_system_prompt_config(config.proxy.global_system_prompt.clone());
+    crate::proxy::update_image_thinking_mode(config.proxy.image_thinking_mode.clone());
+    crate::proxy::config::update_global_compression_level(
+        config.proxy.experimental.compression_level.clone(),
+        config.proxy.experimental.enable_usage_scaling,
+    );
+    crate::proxy::config::update_global_thresholds(
+        config.proxy.experimental.context_compression_threshold_l1,
+        config.proxy.experimental.context_compression_threshold_l2,
+        config.proxy.experimental.context_compression_threshold_l3,
+    );
+
     // 热更新正在运行的服务
     let instance_lock = proxy_state.instance.read().await;
     if let Some(instance) = instance_lock.as_ref() {
