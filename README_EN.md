@@ -446,7 +446,7 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
 
 ## 📝 Changelog
 
-> Latest version **v4.7.3** (2026-09-16): Built in-house Thinking Store engine (L1 memory + L2 SQLite caching with AGZ1 fast compression) eliminating third-party CLI/Agent model degradation and early refusals caused by dropped signatures; normalized Claude/OpenAI/Gemini/Codex pipeline to canonical Gemini Contents with native tool calling; granular microsecond stage timing diagnostics and three-pane inspection window; traffic log memory slimming with disk budget safety.
+> Latest version **v4.7.3** (2026-09-16): Built in-house Thinking Store engine (L1 memory + L2 SQLite caching with AGZ1 fast compression) eliminating third-party CLI/Agent model degradation and early refusals caused by dropped signatures; normalized Claude/OpenAI/Gemini/Codex pipeline to canonical Gemini Contents with native tool calling; adapted DeepSeek Harness (DSH) and WorkBuddy tool calling schemas; granular microsecond stage timing diagnostics and three-pane inspection window; traffic log memory slimming with disk budget safety.
 
 👉 **[View Full Changelog → CHANGELOG_EN.md](CHANGELOG_EN.md)**
 

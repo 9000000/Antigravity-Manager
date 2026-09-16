@@ -22,6 +22,10 @@
         -   **[OpenAI / Codex 适配] 规范化清洗陈旧 Codex 模型身份声明以规避 Gemini 429 频控 (PR #3444, Issue #3442)**:
             -   **过滤陈旧身份语句**: 在将 OpenAI/Responses 协议映射为 Gemini 请求并进行系统指令缓存查找前，自动将陈旧身份描述 `You are Codex, an agent based on GPT-5.` 规范化清洗为 `You are Codex, an agent.`。
             -   **精准作用域保护**: 仅针对顶层 `instructions`、系统/开发者消息（`system`/`developer`）和历史模型切换指令进行规范化，用户消息（`user`）与工具执行结果（`tool`）内容严格保持原样不作修改，解决该特定模式触发 Gemini 服务端持续 429 报错的缺陷。
+        -   **[智能体生态与工具链适配] 适配 DeepSeek Harness (DSH) 与 WorkBuddy 等工具调用协议 (Issue #3440, Issue #3430)**:
+            -   **pwsh / bash 强约束双向补齐**: 针对 DSH 严格校验 `command` 与 `description` 为非空字符串的运行时断言，自动在缺失 `description` 时按命令语义提取生成简述（如 `Run: <cmd>`），防止前端卡片渲染因字段缺失抛出异常崩溃。
+            -   **真实执行命令精准提取还原**: 修复此前缺失命令时盲目回退为 `echo` 占位导致执行被吞的问题；当模型将真实执行命令输出在 `description` 时，优先识别提取为有效 `command`，保障真实命令准确下发。
+            -   **workflow 工具嵌套元数据适配**: 适配 DSH `tool-workflow` 的 `{ script, meta: { name, description } }` 嵌套规范；当模型将字段平铺返回时，自动归拢并组装合法 `meta` 对象，彻底解决 DSH workflow 解析异常。
     *   **v4.7.2 (2026-09-15)**:
         -   **[OpenAI / Codex 适配] 修复 Codex 客户端中 Gemini 模型思考过程未作为 reasoning summary 显示的问题 (PR #3439, Issue #3438)**:
             -   **标准化 Reasoning Summary 事件**: 使用流式 `POST /v1/responses` 时，将 Gemini 的 `thought: true` 思考分片调整为标准 `rs_...` 项（`type: reasoning`），并通过 `response.reasoning_summary_part.*` 与 `response.reasoning_summary_text.*` 规范事件流输出，使 Codex 可以在合适位置正规渲染思考摘要。

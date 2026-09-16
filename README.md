@@ -457,7 +457,7 @@ response = client.chat.completions.create(
 
 ## 📝 更新日志
 
-> 最新版本 **v4.7.3**（2026-09-16）：从0到1自研 Thinking Store 服务端思考链引擎（L1 内存+L2 SQLite 缓存与 AGZ1 极速压缩），根治第三方 CLI/Agent 思考签名丢失导致的模型降级与提前摆烂；四大协议流水线严格归一化为 Gemini Contents 与原生工具链调度；全链路微观毫秒计时与横向三栏报文审计视窗；流量日志内存精简与磁盘配额防护。
+> 最新版本 **v4.7.3**（2026-09-16）：从0到1自研 Thinking Store 服务端思考链引擎（L1 内存+L2 SQLite 缓存与 AGZ1 极速压缩），根治第三方 CLI/Agent 思考签名丢失导致的模型降级与提前摆烂；四大协议流水线严格归一化为 Gemini Contents 与原生工具链调度；深度适配 DeepSeek Harness (DSH) 与 WorkBuddy 工具调用规范；全链路微观毫秒计时与横向三栏报文审计视窗；流量日志内存精简与磁盘配额防护。
 
 👉 **[查看完整更新日志 CHANGELOG.md →](CHANGELOG.md)**
 
