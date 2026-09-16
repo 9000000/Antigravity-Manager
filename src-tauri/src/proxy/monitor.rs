@@ -18,12 +18,98 @@ pub struct ProxyRequestLog {
     pub client_ip: Option<String>, // 客户端 IP 地址
     pub error: Option<String>,
     pub request_body: Option<String>,
+    pub upstream_request_body: Option<String>, // 网关转出给上游(Antigravity)的报文
     pub response_body: Option<String>,
+    #[serde(default)]
+    pub request_headers: Option<String>,
+    #[serde(default)]
+    pub upstream_request_headers: Option<String>,
+    #[serde(default)]
+    pub response_headers: Option<String>,
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
     pub cached_tokens: Option<u32>,
     pub protocol: Option<String>, // 协议类型: "openai", "anthropic", "gemini"
     pub username: Option<String>, // User token username
+}
+
+#[derive(Default)]
+pub(crate) struct UpstreamCapture {
+    body: Option<String>,
+    headers: Option<String>,
+}
+
+#[derive(Clone, Default)]
+pub struct UpstreamRequestBodyHolder(pub std::sync::Arc<std::sync::Mutex<UpstreamCapture>>);
+
+tokio::task_local! {
+    pub static CURRENT_UPSTREAM_CAPTURE: UpstreamRequestBodyHolder;
+}
+
+impl UpstreamRequestBodyHolder {
+    pub fn new() -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(UpstreamCapture::default())))
+    }
+
+    pub fn set(&self, body: String) {
+        if let Ok(mut lock) = self.0.lock() {
+            lock.body = Some(body);
+        }
+    }
+
+    pub fn set_headers_json(&self, headers: String) {
+        if let Ok(mut lock) = self.0.lock() {
+            lock.headers = Some(headers);
+        }
+    }
+
+    pub fn set_value(&self, val: &serde_json::Value) {
+        let clean = sanitize_upstream_debug_value(val);
+        if let Ok(s) = serde_json::to_string(&clean) {
+            self.set(s);
+        }
+    }
+
+    pub fn take(&self) -> Option<String> {
+        self.0.lock().ok().and_then(|mut g| g.body.take())
+    }
+
+    pub fn take_headers(&self) -> Option<String> {
+        self.0.lock().ok().and_then(|mut g| g.headers.take())
+    }
+}
+
+fn sanitize_upstream_debug_value(val: &serde_json::Value) -> serde_json::Value {
+    match val {
+        serde_json::Value::String(s)
+            if s.starts_with("data:image/") || s.starts_with("data:audio/") =>
+        {
+            serde_json::Value::String(format!("[inline data omitted: {} chars]", s.len()))
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(sanitize_upstream_debug_value).collect())
+        }
+        serde_json::Value::Object(map) => {
+            let is_inline = map.get("mimeType").and_then(serde_json::Value::as_str).is_some()
+                && map.get("data").and_then(serde_json::Value::as_str).is_some();
+            serde_json::Value::Object(
+                map.iter()
+                    .map(|(k, v)| {
+                        let v = if is_inline && k == "data" {
+                            serde_json::Value::String(format!(
+                                "[inline data omitted: {} chars]",
+                                v.as_str().map(str::len).unwrap_or_default()
+                            ))
+                        } else {
+                            sanitize_upstream_debug_value(v)
+                        };
+                        (k.clone(), v)
+                    })
+                    .collect(),
+            )
+        }
+        _ => val.clone(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -48,6 +134,7 @@ impl ProxyMonitor {
             tracing::error!("Failed to initialize proxy DB: {}", e);
         }
 
+        let thinking_days = crate::proxy::config::get_thinking_retention_days() as i64;
         let retention = crate::modules::config::load_app_config()
             .map(|config| config.proxy.log_retention)
             .unwrap_or_default();
@@ -66,6 +153,20 @@ impl ProxyMonitor {
                     tracing::error!("Failed to cleanup old logs: {}", e);
                 }
             }
+            match crate::modules::proxy_db::cleanup_old_thinking_records(thinking_days) {
+                Ok(deleted) => {
+                    if deleted > 0 {
+                        tracing::info!(
+                            "Auto cleanup: removed {} old thinking/signature records (>{} days)",
+                            deleted,
+                            thinking_days
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to cleanup thinking records: {}", e);
+                }
+            }
         });
 
         tokio::spawn(async {
@@ -73,21 +174,43 @@ impl ProxyMonitor {
             interval.tick().await;
             loop {
                 interval.tick().await;
+                let thinking_days = crate::proxy::config::get_thinking_retention_days() as i64;
                 let retention = crate::modules::config::load_app_config()
                     .map(|config| config.proxy.log_retention)
                     .unwrap_or_default();
                 let result = tokio::task::spawn_blocking(move || {
-                    crate::modules::proxy_db::apply_retention(&retention)
+                    let retention_res = crate::modules::proxy_db::apply_retention(&retention);
+                    let thinking_res =
+                        crate::modules::proxy_db::cleanup_old_thinking_records(thinking_days);
+                    (retention_res, thinking_res)
                 })
                 .await;
                 match result {
-                    Ok(Ok((cleared, deleted))) => tracing::info!(
-                        "Proxy log retention: cleared {} bodies, deleted {} rows",
-                        cleared,
-                        deleted
-                    ),
-                    Ok(Err(error)) => {
-                        tracing::error!("Failed to apply proxy log retention: {}", error)
+                    Ok((retention_res, thinking_res)) => {
+                        match retention_res {
+                            Ok((cleared, deleted)) => {
+                                if cleared > 0 || deleted > 0 {
+                                    tracing::info!(
+                                        "Proxy log retention: cleared {} bodies, deleted {} rows",
+                                        cleared,
+                                        deleted
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                tracing::error!("Failed to apply proxy log retention: {}", error)
+                            }
+                        }
+                        if let Ok(deleted) = thinking_res {
+                            if deleted > 0 {
+                                tracing::info!(
+                                    "Auto cleanup: removed {} old thinking/signature records",
+                                    deleted
+                                );
+                            }
+                        } else if let Err(e) = thinking_res {
+                            tracing::error!("Failed to cleanup thinking records: {}", e);
+                        }
                     }
                     Err(error) => tracing::error!("Proxy log retention task failed: {}", error),
                 }
@@ -151,8 +274,21 @@ impl ProxyMonitor {
             logs.push_front(log.clone());
         }
 
-        // Save to DB
-        let log_to_save = log.clone();
+        // Save to DB (respect server-side simple/full storage mode)
+        let mut log_to_save = log.clone();
+        let storage_mode = crate::proxy::config::get_payload_storage_mode();
+        log_to_save.request_body = crate::proxy::payload_audit::apply_storage_mode_to_body(
+            log_to_save.request_body,
+            &storage_mode,
+        );
+        log_to_save.upstream_request_body = crate::proxy::payload_audit::apply_storage_mode_to_body(
+            log_to_save.upstream_request_body,
+            &storage_mode,
+        );
+        log_to_save.response_body = crate::proxy::payload_audit::apply_storage_mode_to_body(
+            log_to_save.response_body,
+            &storage_mode,
+        );
         tokio::task::spawn_blocking(move || {
             if let Err(e) = crate::modules::proxy_db::save_log(&log_to_save) {
                 tracing::error!("Failed to save proxy log to DB: {}", e);
@@ -196,7 +332,11 @@ impl ProxyMonitor {
                 client_ip: log.client_ip.clone(),
                 error: log.error.clone(),
                 request_body: None,  // Don't send body in event
+                upstream_request_body: None,
                 response_body: None, // Don't send body in event
+                request_headers: None,
+                upstream_request_headers: None,
+                response_headers: None,
                 input_tokens: log.input_tokens,
                 output_tokens: log.output_tokens,
                 cached_tokens: log.cached_tokens,

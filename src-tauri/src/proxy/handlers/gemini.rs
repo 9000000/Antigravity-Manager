@@ -70,6 +70,7 @@ pub async fn handle_generate(
     State(state): State<AppState>,
     Path(model_action): Path<String>,
     headers: HeaderMap,          // [NEW] Extract headers for adapter detection
+    upstream_recorder: Option<axum::extract::Extension<crate::proxy::monitor::UpstreamRequestBodyHolder>>,
     Json(mut body): Json<Value>, // 改为 mut 以支持修复提示词注入
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     // 解析 model:method
@@ -94,6 +95,9 @@ pub async fn handle_generate(
     if client_adapter.is_some() {
         debug!("[{}] Client Adapter detected", trace_id);
     }
+
+    // [DEFENSE] 净化 Gemini 原生请求体中的所有 inlineData (过滤或降级空数据/损坏图片)
+    crate::proxy::mappers::common_utils::sanitize_gemini_payload_inline_data(&mut body);
 
     // 1. 验证方法
     // [NEW] :countTokens 冒号语法，直接代理到上游 v1internal:countTokens
@@ -191,7 +195,14 @@ pub async fn handle_generate(
 
         // 4. 获取 Token (使用准确的 request_type)
         // 提取 SessionId (粘性指纹)
-        let session_id = SessionManager::extract_gemini_session_id(&body, &model_name);
+        let fallback_sid = SessionManager::extract_gemini_session_id(&body, &model_name);
+        let session_scope = crate::proxy::thinking_store::SessionScope::from_headers_and_body(
+            &headers,
+            Some(&body),
+            fallback_sid,
+        );
+        let session_id = session_scope.store_key.clone();
+        let client_session_id = session_scope.client_id.clone();
 
         // 关键：根据 force_rotate 标志决定是否轮换账号（支持 Grace Retry 原地重试）
         let (access_token, project_id, email, account_id, _wait_ms) =
@@ -257,7 +268,7 @@ pub async fn handle_generate(
         // [FIX #765] Pass session_id to wrap_request for signature injection
         // [NEW] 获取完整 Token 对象以注入动态规格 (dynamic > static default > 65535)
         let token_obj = token_manager.get_token_by_id(&account_id);
-        let wrapped_body = wrap_request_v2(
+        let mut wrapped_body = wrap_request_v2(
             &body,
             &project_id,
             &mapped_model,
@@ -266,6 +277,14 @@ pub async fn handle_generate(
             token_obj.as_ref(),
             Some(&token_manager),
         );
+        let _ = crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
+            &mut wrapped_body,
+            &mapped_model,
+        );
+
+        if let Some(ref recorder) = upstream_recorder {
+            recorder.set_value(&wrapped_body);
+        }
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
@@ -457,6 +476,7 @@ pub async fn handle_generate(
                     let mut meta_sent = false;
                     let mut saw_image_data = false;
                     let mut stream_failed = false;
+                    let mut thinking_acc = crate::proxy::thinking_store::TurnAccumulator::new();
 
                     loop {
                         // [NEW] 阶段 6.2: 补全 __cloudCodeMeta 响应元数据透传
@@ -545,9 +565,13 @@ pub async fn handle_generate(
                                                     for cand in candidates {
                                                         if let Some(parts) = cand.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
                                                             for part in parts {
+                                                                thinking_acc.ingest_part(part);
                                                                 if let Some(sig) = part.get("thoughtSignature").and_then(|s| s.as_str()) {
                                                                     crate::proxy::SignatureCache::global()
                                                                         .cache_session_signature(&s_id_for_stream, sig.to_string(), 1);
+                                                                    if let Some(call_id) = part.get("functionCall").and_then(|f| f.get("id")).and_then(|id| id.as_str()) {
+                                                                        crate::proxy::SignatureCache::global().cache_tool_signature(call_id, sig.to_string());
+                                                                    }
                                                                     debug!("[Gemini-SSE] Cached signature (len: {}) for session: {}", sig.len(), s_id_for_stream);
                                                                 }
                                                             }
@@ -585,6 +609,7 @@ pub async fn handle_generate(
                         }
                     }
 
+                    thinking_acc.commit(&s_id_for_stream);
                     if track_image_success && saw_image_data && !stream_failed {
                         image_success_manager.mark_account_success(&image_success_account);
                         image_success_manager
@@ -604,6 +629,8 @@ pub async fn handle_generate(
                         .header("X-Accel-Buffering", "no")
                         .header("X-Account-Email", &email)
                         .header("X-Mapped-Model", &mapped_model)
+                        .header("X-Session-Id", &client_session_id)
+                        .header("X-Antigravity-Session-Id", &client_session_id)
                         .body(body)
                         .unwrap()
                         .into_response());
@@ -622,6 +649,8 @@ pub async fn handle_generate(
                                 [
                                     ("X-Account-Email", email.as_str()),
                                     ("X-Mapped-Model", mapped_model.as_str()),
+                                    ("X-Session-Id", client_session_id.as_str()),
+                                    ("X-Antigravity-Session-Id", client_session_id.as_str()),
                                 ],
                                 Json(unwrapped),
                             )
@@ -674,6 +703,9 @@ pub async fn handle_generate(
                                         sig.to_string(),
                                         1,
                                     );
+                                    if let Some(call_id) = part.get("functionCall").and_then(|f| f.get("id")).and_then(|id| id.as_str()) {
+                                        crate::proxy::SignatureCache::global().cache_tool_signature(call_id, sig.to_string());
+                                    }
                                     debug!("[Gemini-Response] Cached signature (len: {}) for session: {}", sig.len(), session_id);
                                 }
                             }
@@ -682,6 +714,7 @@ pub async fn handle_generate(
                 }
             }
 
+            crate::proxy::thinking_store::capture_gemini_response(&session_id, &gemini_resp);
             let unwrapped = unwrap_response(&gemini_resp);
             return Ok((
                 StatusCode::OK,
@@ -963,8 +996,11 @@ pub async fn handle_count_tokens(
 pub async fn execute_count_tokens(
     state: AppState,
     model_name: String,
-    body: Value,
+    mut body: Value,
 ) -> Response {
+    // [DEFENSE] 净化 Gemini 原生请求体中的所有 inlineData (过滤或降级空数据/损坏图片)
+    crate::proxy::mappers::common_utils::sanitize_gemini_payload_inline_data(&mut body);
+
     // 1. 模型路由解析
     let mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
         &model_name,

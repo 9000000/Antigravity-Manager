@@ -1741,6 +1741,7 @@ fn prefix_with_step_marker(_marker: Option<String>, content: String) -> String {
 pub async fn handle_chat_completions(
     State(state): State<AppState>,
     headers: HeaderMap, // [CHANGED] Extract headers
+    upstream_recorder: Option<axum::extract::Extension<crate::proxy::monitor::UpstreamRequestBodyHolder>>,
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     // [NEW] Check for Image Model Redirection
@@ -1905,19 +1906,38 @@ pub async fn handle_chat_completions(
     // Replace the client's model/thinking/max_tokens with verified real values so the
     // forwarded request matches the expected upstream format. OpenCode encodes the variant as
     // thinking.budget_tokens; we infer the tier from its magnitude.
-    let client_budget = openai_req.thinking.as_ref().and_then(|t| t.budget_tokens);
+    let model_lower = openai_req.model.to_lowercase();
+    let is_v3_or_above = crate::proxy::model_specs::is_gemini_v3_or_above(&openai_req.model);
+    let is_explicit_tier_model = model_lower.ends_with("-high")
+        || model_lower.ends_with("-medium")
+        || model_lower.ends_with("-low")
+        || model_lower.ends_with("-extra-low");
+    let client_budget = if is_v3_or_above || is_explicit_tier_model {
+        if let Some(ref mut t) = openai_req.thinking {
+            t.budget_tokens = None; // 清理客户端 budget_tokens，防止污染
+        }
+        None
+    } else {
+        openai_req.thinking.as_ref().and_then(|t| t.budget_tokens)
+    };
+    let effective_budget_hint = if is_explicit_tier_model || is_v3_or_above {
+        None
+    } else {
+        client_budget
+    };
+
     let variant_spec =
         if crate::proxy::mappers::openai::request::is_tiered_flash_model(&openai_req.model) {
             None
         } else {
-            crate::proxy::common::variant_mapping::resolve(&openai_req.model, client_budget)
+            crate::proxy::common::variant_mapping::resolve(&openai_req.model, effective_budget_hint)
         };
     if let Some(spec) = variant_spec {
         tracing::info!(
             "[{}] [Variant] canonical='{}' budget_hint={:?} -> real_model='{}' budget={} maxOut={}",
             trace_id,
             openai_req.model,
-            client_budget,
+            effective_budget_hint,
             spec.id,
             spec.thinking_budget,
             spec.max_output_tokens
@@ -1933,7 +1953,7 @@ pub async fn handle_chat_completions(
         } else {
             openai_req.thinking = Some(crate::proxy::mappers::openai::models::ThinkingConfig {
                 thinking_type: Some("enabled".to_string()),
-                budget_tokens: Some(spec.effective_thinking_budget(client_budget)),
+                budget_tokens: Some(spec.thinking_budget),
                 effort: None,
             });
         }
@@ -1964,6 +1984,14 @@ pub async fn handle_chat_completions(
         &openai_req.model,
         &*state.custom_mapping.read().await,
     );
+    let fallback_sid = SessionManager::extract_openai_session_id(&openai_req);
+    let session_scope = crate::proxy::thinking_store::SessionScope::from_headers_and_body(
+        &headers,
+        original_body.as_ref(),
+        fallback_sid,
+    );
+    openai_req.session_id = Some(session_scope.store_key.clone());
+    let client_session_id = session_scope.client_id.clone();
 
     while let Some(attempt) = next_rotation_attempt(
         &mut used_attempts,
@@ -1986,7 +2014,7 @@ pub async fn handle_chat_completions(
         );
 
         // 3. 提取 SessionId (粘性指纹)
-        let session_id = SessionManager::extract_openai_session_id(&openai_req);
+        let session_id = session_scope.store_key.clone();
 
         // 4. 获取 Token (使用准确的 request_type)
         // 关键：在重试尝试时根据 force_rotate 决定是否轮换账号
@@ -2053,12 +2081,19 @@ pub async fn handle_chat_completions(
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
         // 4. 转换请求 (返回内容包含 session_id, message_count, prefix_hash)
-        let (gemini_body, session_id, message_count, _prefix_hash) = transform_openai_request(
+        let (mut gemini_body, session_id, message_count, _prefix_hash) = transform_openai_request(
             &openai_req,
             &project_id,
             &mapped_model,
             proxy_token.as_ref(),
         );
+        let _ = crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
+            &mut gemini_body,
+            &mapped_model,
+        );
+        if let Some(ref recorder) = upstream_recorder {
+            recorder.set_value(&gemini_body);
+        }
         let gemini_body_for_debug = debug_logger::is_enabled(&debug_cfg)
             .then(|| debug_value_without_inline_data(&gemini_body));
 
@@ -2398,6 +2433,8 @@ pub async fn handle_chat_completions(
                         .header("X-Accel-Buffering", "no")
                         .header("X-Account-Email", &email)
                         .header("X-Mapped-Model", &mapped_model)
+                        .header("X-Session-Id", &client_session_id)
+                        .header("X-Antigravity-Session-Id", &client_session_id)
                         .body(body)
                         .unwrap()
                         .into_response());
@@ -2436,6 +2473,8 @@ pub async fn handle_chat_completions(
                                 [
                                     ("X-Account-Email", email.as_str()),
                                     ("X-Mapped-Model", mapped_model.as_str()),
+                                    ("X-Session-Id", client_session_id.as_str()),
+                                    ("X-Antigravity-Session-Id", client_session_id.as_str()),
                                 ],
                                 Json(full_response),
                             )
@@ -2895,6 +2934,8 @@ fn responses_store_enabled(body: &Value) -> bool {
 pub async fn handle_completions(
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
     State(state): State<AppState>,
+    headers: HeaderMap,
+    upstream_recorder: Option<axum::extract::Extension<crate::proxy::monitor::UpstreamRequestBodyHolder>>,
     Json(mut body): Json<Value>,
 ) -> Response {
     debug!(
@@ -3527,11 +3568,18 @@ pub async fn handle_completions(
     }
 
     // [NEW v4.2.0] Context Management & Reasoning Replay
-    let session_id_str = if is_responses_api {
+    let fallback_sid = if is_responses_api {
         routing_session_id.clone()
     } else {
         SessionManager::extract_openai_session_id(&openai_req)
     };
+    let session_scope = crate::proxy::thinking_store::SessionScope::from_headers_and_body(
+        &headers,
+        original_body.as_ref(),
+        fallback_sid,
+    );
+    openai_req.session_id = Some(session_scope.store_key.clone());
+    let session_id_str = session_scope.store_key.clone();
     let signature_session_id_str = if is_responses_api {
         previous_response_id
             .clone()
@@ -3842,7 +3890,7 @@ pub async fn handle_completions(
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
         let proxy_token = token_manager.get_token_by_id(&account_id);
-        let (gemini_body, session_id, message_count, _prefix_hash) = if is_responses_api {
+        let (mut gemini_body, session_id, message_count, _prefix_hash) = if is_responses_api {
             transform_openai_request_with_session(
                 &openai_req,
                 &project_id,
@@ -3859,6 +3907,13 @@ pub async fn handle_completions(
                 proxy_token.as_ref(),
             )
         };
+        let _ = crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
+            &mut gemini_body,
+            &mapped_model,
+        );
+        if let Some(ref recorder) = upstream_recorder {
+            recorder.set_value(&gemini_body);
+        }
         let gemini_body_for_debug = debug_logger::is_enabled(&debug_cfg)
             .then(|| debug_value_without_inline_data(&gemini_body));
         if debug_logger::is_enabled(&debug_cfg) {
@@ -4004,7 +4059,7 @@ pub async fn handle_completions(
                         create_codex_sse_stream(
                             gemini_stream,
                             openai_req.model.clone(),
-                            response_id_for_save.clone(),
+                            session_id_str.clone(),
                             message_count,
                             assistant_turn_index,
                             response_id_for_save.clone(),
@@ -4132,6 +4187,8 @@ pub async fn handle_completions(
                         .header("Connection", "keep-alive")
                         .header("X-Account-Email", &email)
                         .header("X-Mapped-Model", &mapped_model)
+                        .header("X-Session-Id", &session_scope.client_id)
+                        .header("X-Antigravity-Session-Id", &session_scope.client_id)
                         .body(Body::from_stream(combined_stream))
                         .unwrap()
                         .into_response();
@@ -4281,6 +4338,8 @@ pub async fn handle_completions(
                                     [
                                         ("X-Account-Email", email.as_str()),
                                         ("X-Mapped-Model", mapped_model.as_str()),
+                                        ("X-Session-Id", session_scope.client_id.as_str()),
+                                        ("X-Antigravity-Session-Id", session_scope.client_id.as_str()),
                                     ],
                                     Json(resp),
                                 )
@@ -4588,9 +4647,10 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
 pub async fn handle_chat_redirection(
     State(state): State<AppState>,
     headers: HeaderMap,
+    upstream_recorder: Option<axum::extract::Extension<crate::proxy::monitor::UpstreamRequestBodyHolder>>,
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    handle_chat_completions(State(state), headers, Json(body)).await
+    handle_chat_completions(State(state), headers, upstream_recorder, Json(body)).await
 }
 
 async fn intercept_chat_to_image(
@@ -5822,7 +5882,7 @@ async fn handle_websocket_session(mut socket: WebSocket, headers: HeaderMap, sta
 
         let openai_body = convert_codex_to_openai_request(normalized);
         let response_result =
-            handle_chat_completions(State(state.clone()), headers.clone(), Json(openai_body)).await;
+            handle_chat_completions(State(state.clone()), headers.clone(), None, Json(openai_body)).await;
 
         let response = match response_result {
             Ok(res) => res.into_response(),

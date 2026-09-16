@@ -234,6 +234,10 @@ pub fn transform_openai_response(
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| format!("{}-{}", final_name, uuid::Uuid::new_v4()));
 
+                        if let Some(sig) = part.get("thoughtSignature").or(part.get("thought_signature")).and_then(|s| s.as_str()) {
+                            crate::proxy::SignatureCache::global().cache_tool_signature(&id, sig.to_string());
+                        }
+
                         tool_calls.push(ToolCall {
                             id,
                             r#type: "function".to_string(),
@@ -289,6 +293,9 @@ pub fn transform_openai_response(
                             ));
                         }
                     }
+                }
+                if let Some(sid) = session_id {
+                    crate::proxy::thinking_store::capture_gemini_parts(sid, parts);
                 }
             }
 
