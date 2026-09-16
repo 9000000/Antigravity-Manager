@@ -1119,25 +1119,25 @@ mod retention_tests {
     #[test]
     fn clears_old_bodies_and_limits_rows() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE request_logs (id TEXT PRIMARY KEY, timestamp INTEGER, request_body TEXT, response_body TEXT)").unwrap();
+        conn.execute_batch("CREATE TABLE request_logs (id TEXT PRIMARY KEY, timestamp INTEGER, request_body TEXT, upstream_request_body TEXT, response_body TEXT)").unwrap();
         let now = chrono::Utc::now().timestamp_millis();
         conn.execute(
-            "INSERT INTO request_logs VALUES ('retained-with-old-body', ?1, 'request', 'response')",
+            "INSERT INTO request_logs VALUES ('retained-with-old-body', ?1, 'request', NULL, 'response')",
             [now - 25 * 3600 * 1000],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO request_logs VALUES ('new-1', ?1, NULL, NULL)",
+            "INSERT INTO request_logs VALUES ('new-1', ?1, NULL, NULL, NULL)",
             [now - 30 * 3600 * 1000],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO request_logs VALUES ('deleted-1', ?1, NULL, NULL)",
+            "INSERT INTO request_logs VALUES ('deleted-1', ?1, NULL, NULL, NULL)",
             [now - 35 * 3600 * 1000],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO request_logs VALUES ('deleted-2', ?1, NULL, NULL)",
+            "INSERT INTO request_logs VALUES ('deleted-2', ?1, NULL, NULL, NULL)",
             [now - 40 * 3600 * 1000],
         )
         .unwrap();
