@@ -1032,9 +1032,11 @@ mod retention_tests {
         assert!(disk_bytes(&conn).unwrap() <= 1024 * 1024);
         save_log(sample_log("oversize", 400_000)).unwrap();
         assert!(get_log_detail("oversize").unwrap().response_body.is_none());
-        config.proxy.log_retention.max_disk_mb = 0;
-        crate::modules::config::save_app_config(&config).unwrap();
-        assert!(save_log(sample_log("no-room", 100)).is_err());
+        let zero_budget_policy = LogRetentionConfig {
+            max_disk_mb: 0,
+            ..config.proxy.log_retention
+        };
+        assert!(save_log_with_connection(&conn, sample_log("no-room", 100), &zero_budget_policy).is_err());
         assert!(get_log_detail("no-room").is_err());
     }
 
