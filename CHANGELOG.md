@@ -26,6 +26,9 @@
             -   **pwsh / bash 强约束双向补齐**: 针对 DSH 严格校验 `command` 与 `description` 为非空字符串的运行时断言，自动在缺失 `description` 时按命令语义提取生成简述（如 `Run: <cmd>`），防止前端卡片渲染因字段缺失抛出异常崩溃。
             -   **真实执行命令精准提取还原**: 修复此前缺失命令时盲目回退为 `echo` 占位导致执行被吞的问题；当模型将真实执行命令输出在 `description` 时，优先识别提取为有效 `command`，保障真实命令准确下发。
             -   **workflow 工具嵌套元数据适配**: 适配 DSH `tool-workflow` 的 `{ script, meta: { name, description } }` 嵌套规范；当模型将字段平铺返回时，自动归拢并组装合法 `meta` 对象，彻底解决 DSH workflow 解析异常。
+        -   **[Claude 客户端与多工具风控规避] 过滤 Claude Desktop 注入的私有计费元数据以解决 Gemini 429 报错 (Issue #3452)**:
+            -   **过滤客户端专属追踪元数据**: 当请求目标为 Gemini 模型且携带大量工具（如 99 个 MCP 工具）时，自动识别并过滤 Claude Desktop 在系统提示词中注入的单行计费与入口声明（`x-anthropic-billing-header:`）。
+            -   **精准隔离与多行保护**: 仅对单行且匹配指定前缀的独立元数据行进行过滤，严格保留多行指令、引用提及、工具声明、缓存标记及非 Gemini 目标的原始行为，消除触发 Google 服务端风控导致的虚假 `RESOURCE_EXHAUSTED` 429 报错。
     *   **v4.7.2 (2026-09-15)**:
         -   **[OpenAI / Codex 适配] 修复 Codex 客户端中 Gemini 模型思考过程未作为 reasoning summary 显示的问题 (PR #3439, Issue #3438)**:
             -   **标准化 Reasoning Summary 事件**: 使用流式 `POST /v1/responses` 时，将 Gemini 的 `thought: true` 思考分片调整为标准 `rs_...` 项（`type: reasoning`），并通过 `response.reasoning_summary_part.*` 与 `response.reasoning_summary_text.*` 规范事件流输出，使 Codex 可以在合适位置正规渲染思考摘要。
