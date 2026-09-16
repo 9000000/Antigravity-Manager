@@ -1003,8 +1003,12 @@ pub fn finalize_gemini_contents_thinking(
                     // 统一清洗向 Google 发送的非标准蛇形字段
                     obj.remove("thought_signature");
                 }
+                // 严格排除工具调用/返回：functionCall 也会带 thoughtSignature，
+                // 绝不能仅凭签名就判定为思考块，否则会漏补首位 thought、关思考时误删工具。
                 let is_thought = part.get("thought").and_then(|v| v.as_bool()).unwrap_or(false)
-                    || part.get("thoughtSignature").is_some();
+                    || (part.get("thoughtSignature").is_some()
+                        && part.get("functionCall").is_none()
+                        && part.get("functionResponse").is_none());
                 if is_thought {
                     thinking_parts.push(part);
                 } else {
@@ -2140,6 +2144,54 @@ mod tests {
         let (turns, _) = store.session_stats(key).unwrap();
         assert_eq!(turns, 12, "placeholder fill must not prune live tool turns");
         let _ = crate::modules::proxy_db::delete_thinking_records_for_session(key);
+    }
+
+    #[test]
+    fn signed_function_call_is_not_mistaken_for_thinking_block() {
+        let real_sig = "Ep4MCpsMARFNMg9NDlK9RXXz5Mzq9mniX9KSQBBzbUx3k85w/qDgtcE+28NH+1EvPeULAprqUquvYXGMzUXGy1xJoMnqdkC4vqebuhyd2Xhs0oz+OhqcOTwLhGYOG0KBKQ87Hfw4q/sMCSgf2gz4vFMa6V6kKMJepYlPXKFJJF4ok+W6lUt3PfYln8K9Dh7wB/40iHiZ2BnJd++6hfUwu9Bz1n795S50l0yCj84EaSCDDF334Erxq7Fo";
+
+        // Case 1: thinking enabled, only signed functionCall → must prepend real thought block
+        let mut contents = vec![json!({
+            "role": "model",
+            "parts": [
+                {
+                    "functionCall": {
+                        "name": "read_file",
+                        "id": "call_1",
+                        "args": { "path": "a.rs" }
+                    },
+                    "thoughtSignature": real_sig
+                }
+            ]
+        })];
+        finalize_gemini_contents_thinking(&mut contents, true);
+        let parts = contents[0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["thought"], true, "thought must be parts[0]");
+        assert_eq!(parts[0]["text"], "...");
+        assert_eq!(parts[0]["thoughtSignature"], real_sig);
+        assert!(parts[1].get("functionCall").is_some());
+        assert_eq!(parts[1]["thoughtSignature"], real_sig);
+
+        // Case 2: thinking disabled → signed functionCall must survive (not discarded as thought)
+        let mut contents_off = vec![json!({
+            "role": "model",
+            "parts": [
+                {
+                    "functionCall": {
+                        "name": "bash",
+                        "id": "call_9",
+                        "args": {}
+                    },
+                    "thoughtSignature": real_sig
+                }
+            ]
+        })];
+        finalize_gemini_contents_thinking(&mut contents_off, false);
+        let parts_off = contents_off[0]["parts"].as_array().unwrap();
+        assert_eq!(parts_off.len(), 1, "functionCall must not be dropped when thinking is off");
+        assert!(parts_off[0].get("functionCall").is_some());
+        assert!(parts_off[0].get("thoughtSignature").is_none());
     }
 }
 
