@@ -2033,7 +2033,7 @@ async fn admin_set_proxy_monitor_enabled(
 async fn admin_get_proxy_logs_count_filtered(
     Query(params): Query<LogsRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let res = tokio::task::spawn_blocking(move || {
+    let res: Result<Result<u64, String>, tokio::task::JoinError> = tokio::task::spawn_blocking(move || {
         proxy_db::get_logs_count_filtered(&params.filter, params.errors_only)
     })
     .await;
@@ -2067,7 +2067,7 @@ async fn admin_clear_proxy_logs() -> impl IntoResponse {
 async fn admin_get_proxy_log_detail(
     Path(log_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let res =
+    let res: Result<Result<crate::proxy::monitor::ProxyRequestLog, String>, tokio::task::JoinError> =
         tokio::task::spawn_blocking(move || crate::modules::proxy_db::get_log_detail(&log_id))
             .await;
 
@@ -2102,7 +2102,7 @@ struct LogsFilterQuery {
 async fn admin_get_proxy_logs_filtered(
     Query(params): Query<LogsFilterQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let res = tokio::task::spawn_blocking(move || {
+    let res: Result<Result<Vec<crate::proxy::monitor::ProxyRequestLog>, String>, tokio::task::JoinError> = tokio::task::spawn_blocking(move || {
         crate::modules::proxy_db::get_logs_filtered(
             &params.filter,
             params.errors_only,

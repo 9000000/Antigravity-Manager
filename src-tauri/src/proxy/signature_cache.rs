@@ -131,6 +131,7 @@ impl SignatureCache {
 
         // 2. 内存未命中（如代理重启过），从 SQLite L2 数据库恢复
         if let Ok(Some(sig)) = crate::modules::proxy_db::load_tool_signature(tool_use_id) {
+            let sig: String = sig;
             if let Ok(mut cache) = self.tool_signatures.lock() {
                 cache.insert(tool_use_id.to_string(), CacheEntry::new(sig.clone()));
             }

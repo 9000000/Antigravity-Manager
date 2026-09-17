@@ -495,19 +495,19 @@ pub fn transform_claude_request_in_timed(
         }
     }
 
-    // 1. System Instruction (透传系统提示词分块)
-    let system_instruction = build_system_instruction(
-        &claude_req.system,
-        &claude_req.model,
-        &extra_system_messages,
-    );
-
     //  Map model name (Use standard mapping)
     // [IMPROVED] 提取 web search 模型为常量，便于维护
     const WEB_SEARCH_FALLBACK_MODEL: &str = "gemini-2.5-flash";
 
     let mapped_model =
         crate::proxy::common::model_mapping::map_claude_model_to_gemini(&claude_req.model);
+
+    // 1. System Instruction (透传系统提示词分块，若目标为 Gemini 则自动过滤无用计费元数据 #3452)
+    let system_instruction = build_system_instruction(
+        &claude_req.system,
+        &mapped_model,
+        &extra_system_messages,
+    );
 
     // 将 Claude 工具转为 Value 数组以便探测联网
     let tools_val: Option<Vec<Value>> = claude_req.tools.as_ref().map(|list| {
@@ -925,10 +925,18 @@ fn clean_system_prompt_text(text: &str) -> String {
     s.trim().to_string()
 }
 
+fn is_gemini_client_billing_metadata(model: &str, text: &str) -> bool {
+    let text = text.trim();
+    model.starts_with("gemini-")
+        && text.starts_with("x-anthropic-billing-header:")
+        && !text.contains('\n')
+        && !text.contains('\r')
+}
+
 /// 构建 System Instruction (支持动态身份映射与 Prompt 隔离)
 fn build_system_instruction(
     system: &Option<SystemPrompt>,
-    _model_name: &str,
+    model_name: &str,
     extra_system_messages: &[String],
 ) -> Option<Value> {
     let mut parts = Vec::new();
@@ -947,15 +955,22 @@ fn build_system_instruction(
     if let Some(sys) = system {
         match sys {
             SystemPrompt::String(text) => {
-                let norm = normalize_claude_client_identity(text);
-                let cleaned = clean_system_prompt_text(norm);
-                if !cleaned.is_empty() {
-                    parts.push(json!({"text": cleaned}));
+                // [Issue #3452] 过滤 Claude Desktop 注入的单行计费元数据，防止与大量工具组合时触发 Google 上游 429 RESOURCE_EXHAUSTED
+                if !is_gemini_client_billing_metadata(model_name, text) {
+                    let norm = normalize_claude_client_identity(text);
+                    let cleaned = clean_system_prompt_text(norm);
+                    if !cleaned.is_empty() {
+                        parts.push(json!({"text": cleaned}));
+                    }
                 }
             }
             SystemPrompt::Array(blocks) => {
                 for block in blocks {
                     if block.block_type == "text" {
+                        // [Issue #3452] 过滤 Claude Desktop 注入的单行计费元数据
+                        if is_gemini_client_billing_metadata(model_name, &block.text) {
+                            continue;
+                        }
                         let norm = normalize_claude_client_identity(&block.text);
                         let cleaned = clean_system_prompt_text(norm);
                         if !cleaned.is_empty() {
@@ -971,6 +986,9 @@ fn build_system_instruction(
 
     // 3. 添加提取出来的 role == "system" 消息
     for extra_text in extra_system_messages {
+        if is_gemini_client_billing_metadata(model_name, extra_text) {
+            continue;
+        }
         let cleaned = clean_system_prompt_text(extra_text);
         if !cleaned.is_empty() {
             parts.push(json!({"text": format!("\n{}", cleaned)}));
@@ -3501,5 +3519,71 @@ mod tests {
             thinking_config["thinkingBudget"], 10000,
             "Client budget (99999) must be ignored in favor of tier dictionary budget (10000)"
         );
+    }
+
+    #[test]
+    fn test_gemini_client_billing_metadata_filtering() {
+        // [Issue #3452] Standalone billing header line should be filtered for Gemini targets
+        assert!(is_gemini_client_billing_metadata(
+            "gemini-3.8-flash-high",
+            "x-anthropic-billing-header: cc_version=2.1.270.ffc; cc_entrypoint=claude-desktop-3p;"
+        ));
+        assert!(is_gemini_client_billing_metadata(
+            "gemini-2.5-flash",
+            "  x-anthropic-billing-header: cc_entrypoint=desktop; \n"
+        ));
+
+        // Non-Gemini model (e.g. claude-sonnet-4-6) should NOT filter
+        assert!(!is_gemini_client_billing_metadata(
+            "claude-sonnet-4-6",
+            "x-anthropic-billing-header: cc_version=2.1.270.ffc;"
+        ));
+
+        // Multiline text should NOT be filtered
+        assert!(!is_gemini_client_billing_metadata(
+            "gemini-3.8-flash-high",
+            "x-anthropic-billing-header: test;\nSecond line prompt instruction"
+        ));
+
+        // Unrelated system prompt should NOT be filtered
+        assert!(!is_gemini_client_billing_metadata(
+            "gemini-3.8-flash-high",
+            "You are an expert coder."
+        ));
+    }
+
+    #[test]
+    fn test_claude_desktop_billing_metadata_filtered_in_transform_for_gemini() {
+        let req: ClaudeRequest = serde_json::from_value(json!({
+            "model": "gemini-3.8-flash-high",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "system": [
+                {
+                    "type": "text",
+                    "text": "x-anthropic-billing-header: cc_version=2.1.270.ffc; cc_entrypoint=claude-desktop-3p;"
+                },
+                {
+                    "type": "text",
+                    "text": "You are a helpful assistant."
+                }
+            ]
+        }))
+        .expect("ClaudeRequest should deserialize");
+
+        let body =
+            transform_claude_request_in(&req, "test-project", false, None, "test-session", None)
+                .expect("Request should transform");
+        let system_parts = body["request"]["systemInstruction"]["parts"]
+            .as_array()
+            .expect("system instruction should contain parts");
+        let system_texts = system_parts
+            .iter()
+            .filter_map(|part| part["text"].as_str())
+            .collect::<Vec<_>>();
+
+        // Billing header must be filtered out to avoid Gemini 429 RESOURCE_EXHAUSTED (#3452)
+        assert!(!system_texts.iter().any(|t| t.contains("x-anthropic-billing-header:")));
+        // Normal prompt must be preserved
+        assert!(system_texts.contains(&"You are a helpful assistant."));
     }
 }
