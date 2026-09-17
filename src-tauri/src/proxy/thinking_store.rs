@@ -158,6 +158,18 @@ impl ThinkingStore {
 
         self.maybe_evict(store_key);
 
+        // Always hydrate L2 before appending. Otherwise the first capture after a
+        // process start can mark l2_loaded=true with only the new turn and permanently
+        // shadow older SQLite history on subsequent hydrate/restore calls.
+        let needs_l2 = self
+            .sessions
+            .get(store_key)
+            .map(|e| !e.l2_loaded)
+            .unwrap_or(true);
+        if needs_l2 {
+            let _ = self.load_turns(store_key);
+        }
+
         let persist = {
             let mut entry = self
                 .sessions
@@ -247,7 +259,9 @@ impl ThinkingStore {
 
     fn load_turns(&self, store_key: &str) -> Vec<Arc<ThinkingRecord>> {
         if let Some(e) = self.sessions.get(store_key) {
-            if e.l2_loaded {
+            // Trust warm non-empty memory. An empty l2_loaded entry is treated as
+            // stale (e.g. first hydrate before any capture) and reloads from SQLite.
+            if e.l2_loaded && !e.turns.is_empty() {
                 let turns = e.turns.clone();
                 drop(e);
                 if let Some(mut entry) = self.sessions.get_mut(store_key) {
@@ -263,7 +277,7 @@ impl ThinkingStore {
             .sessions
             .entry(store_key.to_string())
             .or_insert_with(SessionEntry::new);
-        if !entry.l2_loaded && entry.turns.is_empty() && !persisted.is_empty() {
+        if entry.turns.is_empty() && !persisted.is_empty() {
             for p in persisted {
                 let rec = ThinkingRecord {
                     fingerprint: p.fingerprint,
@@ -1017,17 +1031,22 @@ pub fn finalize_gemini_contents_thinking(
             }
 
             if is_thinking_enabled {
+                // Prefer a real tool signature from this turn when aligning placeholder thoughts.
+                let turn_real_sig: Option<String> = other_parts.iter().find_map(|p| {
+                    if p.get("functionCall").is_some() {
+                        p.get("thoughtSignature")
+                            .and_then(|s| s.as_str())
+                            .filter(|s| is_real_signature(s))
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                });
+
                 if thinking_parts.is_empty() {
                     // 优先继承本轮工具调用身上的真实加密签名
-                    let turn_sig = other_parts
-                        .iter()
-                        .find_map(|p| {
-                            if p.get("functionCall").is_some() {
-                                p.get("thoughtSignature").and_then(|s| s.as_str())
-                            } else {
-                                None
-                            }
-                        })
+                    let turn_sig = turn_real_sig
+                        .as_deref()
                         .unwrap_or(SENTINEL_SIGNATURE);
 
                     thinking_parts.push(json!({
@@ -1035,6 +1054,19 @@ pub fn finalize_gemini_contents_thinking(
                         "thought": true,
                         "thoughtSignature": turn_sig,
                     }));
+                } else if let Some(ref real_sig) = turn_real_sig {
+                    // Thought placeholder/sentinel must not block a real tool signature that
+                    // SignatureCache or ThinkingStore already placed on functionCall.
+                    for tp in thinking_parts.iter_mut() {
+                        let valid = tp
+                            .get("thoughtSignature")
+                            .and_then(|s| s.as_str())
+                            .map(is_real_signature)
+                            .unwrap_or(false);
+                        if !valid {
+                            tp["thoughtSignature"] = json!(real_sig);
+                        }
+                    }
                 }
 
                 // 为所有缺失签名的工具调用打上保底哨兵
@@ -1376,6 +1408,17 @@ fn hash_normalized_ws(hasher: &mut impl Digest, s: &str) {
 
 fn turn_needs_restore(parts: &[Value], existing_thought: &str) -> bool {
     if is_placeholder_thought(existing_thought) {
+        return true;
+    }
+    // Sentinel / missing thought signature still needs ThinkingStore or tool-sig alignment.
+    let thought_sig_ok = parts.iter().any(|p| {
+        p.get("thought").and_then(|v| v.as_bool()).unwrap_or(false)
+            && p.get("thoughtSignature")
+                .or_else(|| p.get("thought_signature"))
+                .and_then(|s| s.as_str())
+                .is_some_and(is_real_signature)
+    });
+    if !thought_sig_ok {
         return true;
     }
     let mut saw_function_call = false;
@@ -2192,6 +2235,53 @@ mod tests {
         assert_eq!(parts_off.len(), 1, "functionCall must not be dropped when thinking is off");
         assert!(parts_off[0].get("functionCall").is_some());
         assert!(parts_off[0].get("thoughtSignature").is_none());
+    }
+
+    #[test]
+    fn finalize_upgrades_sentinel_thought_from_tool_real_signature() {
+        let real_sig = "Ep4MCpsMARFNMg9NDlK9RXXz5Mzq9mniX9KSQBBzbUx3k85w/qDgtcE+28NH+1EvPeULAprqUquvYXGMzUXGy1xJoMnqdkC4vqebuhyd2Xhs0oz+OhqcOTwLhGYOG0KBKQ87Hfw4q/sMCSgf2gz4vFMa6V6kKMJepYlPXKFJJF4ok+W6lUt3PfYln8K9Dh7wB/40iHiZ2BnJd++6hfUwu9Bz1n795S50l0yCj84EaSCDDF334Erxq7Fo";
+        let mut contents = vec![json!({
+            "role": "model",
+            "parts": [
+                {
+                    "text": "...",
+                    "thought": true,
+                    "thoughtSignature": SENTINEL_SIGNATURE
+                },
+                {
+                    "functionCall": {
+                        "name": "read_file",
+                        "id": "call_upgrade",
+                        "args": {}
+                    },
+                    "thoughtSignature": real_sig
+                }
+            ]
+        })];
+        finalize_gemini_contents_thinking(&mut contents, true);
+        let parts = contents[0]["parts"].as_array().unwrap();
+        assert_eq!(parts[0]["thought"], true);
+        assert_eq!(parts[0]["thoughtSignature"], real_sig, "sentinel thought must inherit tool real sig");
+        assert_eq!(parts[1]["thoughtSignature"], real_sig);
+    }
+
+    #[test]
+    fn turn_needs_restore_when_thought_signature_is_sentinel() {
+        let parts = vec![
+            json!({
+                "text": "some real looking text that is not a placeholder",
+                "thought": true,
+                "thoughtSignature": SENTINEL_SIGNATURE
+            }),
+            json!({
+                "functionCall": { "name": "shell", "id": "call_x", "args": {} },
+                "thoughtSignature": SENTINEL_SIGNATURE
+            }),
+        ];
+        assert!(
+            turn_needs_restore(&parts, "some real looking text that is not a placeholder"),
+            "sentinel thought signature must still request restore"
+        );
     }
 }
 

@@ -17,15 +17,6 @@ pub(crate) fn is_tiered_flash_model(model: &str) -> bool {
         .is_some_and(|version| !version.is_empty())
 }
 
-fn tiered_flash_thinking_level(effort: Option<&str>) -> Option<&'static str> {
-    match effort {
-        Some("low") => Some("LOW"),
-        Some("medium") => Some("MEDIUM"),
-        Some("high") => Some("HIGH"),
-        _ => None,
-    }
-}
-
 /// 清洗 system instruction 中的动态内容，确保跨请求的前缀字节一致性
 /// 以便触发 Gemini 隐式前缀缓存（Prefix Cache）。
 ///
@@ -292,6 +283,16 @@ pub fn transform_openai_request_with_session(
     }
 
     let session_id = routing_session_id.to_string();
+    // ThinkingStore must use the stable tenant-scoped store_key (request.session_id),
+    // not the Responses routing / previous_response_id chain. Capture already writes
+    // to store_key; hydrating with a different key leaves history as placeholder+sentinel.
+    let thinking_store_key = request
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(routing_session_id)
+        .to_string();
     let message_count = request.messages.len();
     // 将 OpenAI 工具转为 Value 数组以便探测
     let tools_val = request
@@ -331,16 +332,18 @@ pub fn transform_openai_request_with_session(
             || mapped_model_lower.contains("-flash-")
             || mapped_model_lower.contains("-flash-agent"))
         && !mapped_model_lower.contains("claude");
-    let user_enabled_thinking = request
+    // Client thinking flags/budgets are ignored for enablement and fill.
+    // Server authority: model-id heuristics + ThinkingStore hydrate/finalize only.
+    let _user_enabled_thinking = request
         .thinking
         .as_ref()
         .map(|t| t.thinking_type.as_deref() == Some("enabled"))
         .unwrap_or(false);
-    let user_thinking_budget = request.thinking.as_ref().and_then(|t| t.budget_tokens);
+    let _user_thinking_budget = request.thinking.as_ref().and_then(|t| t.budget_tokens);
 
     let is_claude_model = mapped_model_lower.contains("claude");
     let is_claude_thinking = mapped_model_lower.ends_with("-thinking")
-        || (is_claude_model && user_enabled_thinking);
+        || (is_claude_model && mapped_model_lower.contains("thinking"));
     let force_server_thinking = !is_under_v3
         && crate::proxy::thinking_store::any_model_forces_server_thinking(&[
             request.model.as_str(),
@@ -351,38 +354,29 @@ pub fn transform_openai_request_with_session(
         || is_gemini_flash_thinking
         || force_server_thinking;
 
-    // [NEW] 检查历史消息是否兼容思维模型 (是否有 Assistant 消息缺失 reasoning_content)
-    let has_incompatible_assistant_history = request.messages.iter().any(|msg| {
-        msg.role == "assistant"
-            && (msg.reasoning_content.is_none()
-                || msg
-                    .reasoning_content
-                    .as_ref()
-                    .map_or(false, |r| r.is_empty()))
-    });
-
-    // 检查历史中是否有工具调用
-    let has_tool_calls_in_history = request
-        .messages
-        .iter()
-        .any(|msg| msg.role == "tool" || msg.role == "function" || msg.tool_calls.is_some());
-
-    // [NEW] 决定是否开启 Thinking 功能:
-    // 1. 模型名包含 -thinking 时自动开启
-    // 2. 用户在请求中显式设置 thinking.type = "enabled" 时开启
-    // 3. 若为 Gemini < 3 模型，保底强制关闭 thinking
-    let mut actual_include_thinking = !is_under_v3
-        && (is_thinking_model || user_enabled_thinking || force_server_thinking);
+    // [NEW] 决定是否开启 Thinking 功能（纯服务端权威）:
+    // 仅按映射后的模型 ID / 强制思考启发式开启，忽略客户端 thinking.type / budget / effort。
+    let mut actual_include_thinking =
+        !is_under_v3 && (is_thinking_model || force_server_thinking);
 
     // [REFACTORED] 使用 SignatureCache 获取 Session 级别的签名
+    // Responses may pass previous_response_id as signature_read_key; always fall back to
+    // the stable ThinkingStore key so chat/responses share the same signature namespace.
     let session_thought_sig = signature_read_key
-        .and_then(|key| crate::proxy::SignatureCache::global().get_session_signature(key));
+        .and_then(|key| crate::proxy::SignatureCache::global().get_session_signature(key))
+        .or_else(|| {
+            if signature_read_key == Some(thinking_store_key.as_str()) {
+                None
+            } else {
+                crate::proxy::SignatureCache::global().get_session_signature(&thinking_store_key)
+            }
+        });
 
-    // [NEW] 日志：用户显式设置 thinking
-    if user_enabled_thinking {
-        tracing::info!(
-            "[OpenAI-Thinking] User explicitly enabled thinking with budget: {:?}",
-            user_thinking_budget
+    if _user_enabled_thinking || _user_thinking_budget.is_some() {
+        tracing::debug!(
+            "[OpenAI-Thinking] Ignoring client thinking enable/budget (enabled={}, budget={:?}); server model heuristics decide fill",
+            _user_enabled_thinking,
+            _user_thinking_budget
         );
     }
 
@@ -514,45 +508,15 @@ pub fn transform_openai_request_with_session(
 
             let mut parts = Vec::new();
 
-            // Handle reasoning_content (thinking)
-            // [FIX #3325] Only include full reasoning_content text for the most recent messages (recent window).
-            // For older messages, strip the long thought text while keeping the thoughtSignature on the tool call
-            // to avoid blowing through the 1M token context limit during multi-turn agent loops.
-            if let Some(reasoning) = &msg.reasoning_content {
-                // [FIX #1506] 增强对占位符 [undefined] 的识别
-                let is_invalid_placeholder = reasoning == "[undefined]" || reasoning.is_empty();
-
-                if !is_invalid_placeholder {
-                    if is_latest {
-                        let thought_part = json!({
-                            "text": reasoning,
-                            "thought": true,
-                        });
-                        parts.push(thought_part);
-                    } else {
-                        // [FIX #3382] For older turns, keep a minimal thought block placeholder
-                        // to satisfy the schema requirement (parts[0] must be thought if thinking enabled)
-                        // without repeating thousands of tokens. The tool call retains thoughtSignature.
-                        let thought_part = json!({
-                            "text": "...",
-                            "thought": true,
-                        });
-                        parts.push(thought_part);
-                    }
-                }
-            } else if actual_include_thinking && role == "model" {
-                // [FIX] 解决 Gemini / Claude 等思考模型的强制性校验:
-                // Vertex AI / Gemini 要求开启思考时，assistant 消息必须以思考块开始并携带有效签名。
-                // 历史消息缺失 reasoning_content 时，先注入保底哨兵思考块，
-                // 后续 restore_gemini_contents 会从 ThinkingStore 尝试恢复真实的思维和签名。
-                tracing::debug!("[OpenAI-Thinking] Injecting placeholder thinking block for assistant message");
-                let thought_part = json!({
+            // Server-authoritative thinking fill: ignore client reasoning_content entirely.
+            // Every model turn gets a placeholder; ThinkingStore hydrate + finalize restore
+            // real text/signatures (tool turns) or keep "..." + sentinel (pure text).
+            if actual_include_thinking && role == "model" {
+                parts.push(json!({
                     "text": "...",
                     "thought": true,
                     "thoughtSignature": crate::proxy::thinking_store::SENTINEL_SIGNATURE,
-                });
-
-                parts.push(thought_part);
+                }));
             }
 
             // Handle content (multimodal or text)
@@ -871,7 +835,7 @@ pub fn transform_openai_request_with_session(
         merged_contents.push(msg);
     }
     if actual_include_thinking {
-        crate::proxy::thinking_store::hydrate_gemini_contents(&session_id, &mut merged_contents);
+        crate::proxy::thinking_store::hydrate_gemini_contents(&thinking_store_key, &mut merged_contents);
     }
     let mut contents = merged_contents;
 
@@ -947,33 +911,21 @@ pub fn transform_openai_request_with_session(
                 "includeThoughts": false
             });
         } else {
-            // [CONFIGURABLE] 思考预算配置与防污染处理
+            // [CONFIGURABLE] 思考预算：纯服务端权威（模型 ID 启发式 + 可选 Custom 盖帽）
+            // 忽略客户端 budget_tokens；Passthrough 不再透传客户端值。
             let default_budget = model_specs::get_thinking_budget(mapped_model, token) as i64;
             let tb_config = crate::proxy::config::get_thinking_budget_config();
-            let is_v3_or_above = model_specs::is_gemini_v3_or_above(mapped_model)
-                || model_specs::is_gemini_v3_or_above(&request.model);
-            let is_explicit_tier = mapped_model_lower.ends_with("-high")
-                || mapped_model_lower.ends_with("-medium")
-                || mapped_model_lower.ends_with("-low")
-                || mapped_model_lower.ends_with("-extra-low");
-            // [ANTI-POLLUTION] 对齐 Anthropic：对于 Gemini >= 3 或显式档位模型，彻底忽略客户端过小预算，绝不被客户端 1024 或 low 污染
-            let final_budget = if is_v3_or_above || is_explicit_tier {
-                default_budget
-            } else {
-                match tb_config.mode {
-                    crate::proxy::config::ThinkingBudgetMode::Passthrough => {
-                        user_thinking_budget.map(|b| b as i64).unwrap_or(default_budget)
+            let final_budget = match tb_config.mode {
+                crate::proxy::config::ThinkingBudgetMode::Custom => {
+                    let custom_value = tb_config.custom_value as i64;
+                    if custom_value > default_budget {
+                        default_budget
+                    } else {
+                        custom_value
                     }
-                    crate::proxy::config::ThinkingBudgetMode::Custom => {
-                        let custom_value = tb_config.custom_value as i64;
-                        if custom_value > default_budget {
-                            default_budget
-                        } else {
-                            custom_value
-                        }
-                    }
-                    _ => default_budget,
                 }
+                // Auto / Passthrough / anything else: authoritative model_specs budget
+                _ => default_budget,
             };
 
             gen_config["thinkingConfig"] = json!({
@@ -1022,19 +974,10 @@ pub fn transform_openai_request_with_session(
         }
     }
 
-    // Tiered Flash models select the upstream thinking level directly. This intentionally
-    // replaces the budget-based config above and leaves the upstream model ID untouched.
+    // Tiered Flash models: includeThoughts only. Client reasoning.effort is ignored;
+    // thinking level/budget come from server model-id heuristics elsewhere.
     if is_tiered_flash_model(mapped_model) {
-        let mut thinking_config = json!({ "includeThoughts": true });
-        if let Some(level) = tiered_flash_thinking_level(
-            request
-                .reasoning
-                .as_ref()
-                .and_then(|reasoning| reasoning.effort.as_deref()),
-        ) {
-            thinking_config["thinkingLevel"] = json!(level);
-        }
-        gen_config["thinkingConfig"] = thinking_config;
+        gen_config["thinkingConfig"] = json!({ "includeThoughts": true });
     }
 
     // [FIX] Cap maxOutputTokens to prevent 400 Invalid Argument
@@ -1548,38 +1491,19 @@ mod tests {
     }
 
     #[test]
-    fn tiered_flash_maps_supported_effort_to_thinking_level_without_rewriting_model() {
+    fn tiered_flash_ignores_client_effort_and_keeps_include_thoughts_only() {
+        // Server-authoritative: client reasoning.effort must not set thinkingLevel.
         for model in ["gemini-3.8-flash-tiered", "gemini-9.9-flash-tiered"] {
             assert!(is_tiered_flash_model(model));
-            for (effort, expected_level) in [("low", "LOW"), ("medium", "MEDIUM"), ("high", "HIGH")]
-            {
-                let body = tiered_request_body(model, Some(effort));
+            for effort in [None, Some("low"), Some("medium"), Some("high"), Some("xhigh")] {
+                let body = tiered_request_body(model, effort);
                 let thinking = &body["request"]["generationConfig"]["thinkingConfig"];
 
                 assert_eq!(body["model"], model);
                 assert_eq!(thinking["includeThoughts"], true);
-                assert_eq!(thinking["thinkingLevel"], expected_level);
+                assert!(thinking.get("thinkingLevel").is_none());
                 assert!(thinking.get("thinkingBudget").is_none());
             }
-        }
-    }
-
-    #[test]
-    fn tiered_flash_leaves_level_unset_for_missing_or_unsupported_effort() {
-        for effort in [
-            None,
-            Some("none"),
-            Some("xhigh"),
-            Some("max"),
-            Some("custom"),
-        ] {
-            let body = tiered_request_body("gemini-3.8-flash-tiered", effort);
-            let thinking = &body["request"]["generationConfig"]["thinkingConfig"];
-
-            assert_eq!(body["model"], "gemini-3.8-flash-tiered");
-            assert_eq!(thinking["includeThoughts"], true);
-            assert!(thinking.get("thinkingLevel").is_none());
-            assert!(thinking.get("thinkingBudget").is_none());
         }
     }
 
@@ -1940,7 +1864,7 @@ mod tests {
             }],
             stream: false,
             n: None,
-            // User enabled thinking
+            // Client enable + budget must be ignored under server-authoritative policy
             thinking: Some(ThinkingConfig {
                 thinking_type: Some("enabled".to_string()),
                 budget_tokens: Some(16000),
@@ -1955,7 +1879,7 @@ mod tests {
         };
 
         let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // Set passthrough mode so user-specified budget is retained
+        // Even Passthrough must NOT honor client budget anymore
         crate::proxy::config::update_thinking_budget_config(crate::proxy::config::ThinkingBudgetConfig {
             mode: crate::proxy::config::ThinkingBudgetMode::Passthrough,
             custom_value: 16000,
@@ -1983,7 +1907,7 @@ mod tests {
         let budget = gen_config["thinkingConfig"]["thinkingBudget"]
             .as_u64()
             .unwrap();
-        // [ANTI-POLLUTION] Gemini 3 Pro unconditionally locks to authoritative default budget (49152)
+        // [ANTI-POLLUTION] model_specs budget only; client 16000 + Passthrough ignored
         assert_eq!(budget, 49152);
     }
     #[test]
@@ -2361,9 +2285,8 @@ mod tests {
 
     #[test]
     fn test_issue_3391_claude_without_thinking_suffix_incompatible_history() {
-        // [FIX #3391] 当客户端使用不带 -thinking 后缀的 Claude 模型（如 claude-sonnet-4-6）
-        // 且显式传入 thinking 配置，但在多轮对话中有纯文本 assistant 消息（缺少 reasoning_content）时，
-        // 系统应当安全禁用 thinking，并且不插入无签名的思考占位块，避免 Claude 上游报 400 thinking.signature 错误。
+        // claude-sonnet-4-6 forces server thinking by model heuristic (not client enable).
+        // Missing client reasoning_content still gets "..." + sentinel placeholder.
         let req = OpenAIRequest {
             model: "claude-sonnet-4-6".to_string(),
             messages: vec![
@@ -2375,7 +2298,7 @@ mod tests {
                 OpenAIMessage {
                     role: "assistant".to_string(),
                     content: Some(OpenAIContent::String("Hi there!".to_string())),
-                    reasoning_content: None, // 模拟 AstrBot/SillyTavern 等客户端历史消息缺失思考内容
+                    reasoning_content: None,
                     ..Default::default()
                 },
                 OpenAIMessage {
@@ -2396,21 +2319,134 @@ mod tests {
             transform_openai_request(&req, "test-proj", "claude-sonnet-4-6", None);
 
         let gen_config = &result["request"]["generationConfig"];
-        // 验证 thinkingConfig 被保留（即使历史缺失 reasoning_content，也不再降级禁用）
         assert!(
             gen_config.get("thinkingConfig").is_some(),
-            "thinkingConfig must be preserved per server-side thinking persistence policy"
+            "thinkingConfig must be present via server model heuristics"
         );
 
-        // 验证 assistant 消息中具有思考块（补齐保底或从 ThinkingStore 恢复，避免上游 400）
         let contents = result["request"]["contents"].as_array().unwrap();
         let assistant_msg = contents
             .iter()
             .find(|m| m["role"] == "model")
             .expect("Should have model message");
         let parts = assistant_msg["parts"].as_array().unwrap();
-        let has_thought_part = parts.iter().any(|p| p.get("thought") == Some(&serde_json::json!(true)));
-        assert!(has_thought_part, "Should ensure thinking block is present in assistant message for Claude");
+        let thought = parts
+            .iter()
+            .find(|p| p.get("thought") == Some(&serde_json::json!(true)))
+            .expect("Should ensure thinking block is present in assistant message for Claude");
+        assert_eq!(thought["text"], "...");
+        assert_eq!(
+            thought["thoughtSignature"].as_str(),
+            Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE)
+        );
+    }
+
+    #[test]
+    fn server_authoritative_ignores_client_reasoning_content_and_budget() {
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::proxy::config::update_thinking_budget_config(
+            crate::proxy::config::ThinkingBudgetConfig {
+                mode: crate::proxy::config::ThinkingBudgetMode::Passthrough,
+                custom_value: 99999,
+                effort: None,
+            },
+        );
+        struct ResetGuard;
+        impl Drop for ResetGuard {
+            fn drop(&mut self) {
+                crate::proxy::config::update_thinking_budget_config(
+                    crate::proxy::config::ThinkingBudgetConfig::default(),
+                );
+            }
+        }
+        let _guard = ResetGuard;
+
+        let client_thought = "CLIENT_FULL_REASONING_SHOULD_NEVER_APPEAR_UPSTREAM";
+        let req = OpenAIRequest {
+            model: "gemini-3.8-flash-high".to_string(),
+            messages: vec![
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    content: Some(OpenAIContent::String("q1".to_string())),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "assistant".to_string(),
+                    content: Some(OpenAIContent::String("a1".to_string())),
+                    reasoning_content: Some(client_thought.to_string()),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    content: Some(OpenAIContent::String("q2".to_string())),
+                    ..Default::default()
+                },
+            ],
+            thinking: Some(ThinkingConfig {
+                thinking_type: Some("enabled".to_string()),
+                budget_tokens: Some(16000),
+                effort: Some("high".to_string()),
+            }),
+            ..Default::default()
+        };
+
+        let (result, _sid, _msg_count, _) =
+            transform_openai_request(&req, "test-proj", "gemini-3.8-flash-high", None);
+
+        let budget = result["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
+            .as_u64()
+            .expect("thinkingBudget from model_specs");
+        assert_eq!(budget, 10000, "client budget + Passthrough must be ignored");
+
+        let contents = result["request"]["contents"].as_array().unwrap();
+        let model_msg = contents
+            .iter()
+            .find(|c| c["role"] == "model")
+            .expect("model turn");
+        let thought = model_msg["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p.get("thought") == Some(&serde_json::json!(true)))
+            .expect("placeholder thought part");
+        assert_eq!(thought["text"], "...");
+        assert_eq!(
+            thought["thoughtSignature"].as_str(),
+            Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE)
+        );
+        let dumped = serde_json::to_string(&result).unwrap();
+        assert!(
+            !dumped.contains(client_thought),
+            "client reasoning_content must not leak into upstream body"
+        );
+    }
+
+    #[test]
+    fn client_thinking_enable_ignored_for_non_thinking_model() {
+        let req = OpenAIRequest {
+            model: "gpt-4o".to_string(),
+            messages: vec![OpenAIMessage {
+                role: "user".to_string(),
+                content: Some(OpenAIContent::String("hi".to_string())),
+                ..Default::default()
+            }],
+            thinking: Some(ThinkingConfig {
+                thinking_type: Some("enabled".to_string()),
+                budget_tokens: Some(8000),
+                effort: Some("high".to_string()),
+            }),
+            ..Default::default()
+        };
+
+        let (result, _sid, _msg_count, _) =
+            transform_openai_request(&req, "test-proj", "gpt-4o", None);
+        let gen_config = &result["request"]["generationConfig"];
+        assert!(
+            gen_config.get("thinkingConfig").is_none(),
+            "non-thinking model must not enable thinking from client flags"
+        );
     }
 
     #[test]

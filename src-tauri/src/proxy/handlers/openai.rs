@@ -3622,10 +3622,9 @@ pub async fn handle_completions(
     let client_tool_names =
         crate::proxy::mappers::openai::request::extract_client_tool_names(&openai_req.tools);
 
-    crate::proxy::mappers::context_manager::ContextManager::restore_openai_reasoning_content(
-        &mut openai_req.messages,
-        &signature_session_id_str,
-    );
+    // Server-authoritative thinking: do NOT prefill messages.reasoning_content from
+    // SignatureCache. OpenAI mapping ignores client/cached reasoning text and fills
+    // placeholders via ThinkingStore hydrate + finalize instead.
 
     let experimental_cfg = state.experimental.read().await;
     let compression_level = if experimental_cfg.compression_level == "disabled" {
