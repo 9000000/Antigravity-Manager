@@ -2667,13 +2667,23 @@ pub async fn handle_chat_completions(
             .await;
         }
 
+        let scheduling_mode = token_manager.get_scheduling_mode().await;
+        let allow_grace = match scheduling_mode {
+            crate::proxy::sticky_config::SchedulingMode::Balance => {
+                token_manager.tokens_count() <= 1
+            }
+            crate::proxy::sticky_config::SchedulingMode::CacheFirst => true,
+            crate::proxy::sticky_config::SchedulingMode::PerformanceFirst => false,
+        };
+
         // 确定重试策略
-        let strategy = retry_state.determine_strategy(
+        let strategy = retry_state.determine_strategy_with_grace(
             &account_id,
             status_code,
             &error_text,
             retry_after.as_deref(),
             false,
+            allow_grace,
         );
         let should_mark_limited =
             status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500;
@@ -2710,6 +2720,12 @@ pub async fn handle_chat_completions(
                     &error_text,
                     Some(&mapped_model),
                 )
+                .await;
+        }
+
+        if status_code == 429 || status_code == 529 {
+            token_manager
+                .unbind_session_and_clear_last_used(Some(&session_id))
                 .await;
         }
 
@@ -4749,12 +4765,28 @@ pub async fn handle_completions(
                 .await;
         }
 
-        let strategy = retry_state.determine_strategy(
+        if status_code == 429 || status_code == 529 {
+            token_manager
+                .unbind_session_and_clear_last_used(Some(&session_id_str))
+                .await;
+        }
+
+        let scheduling_mode = token_manager.get_scheduling_mode().await;
+        let allow_grace = match scheduling_mode {
+            crate::proxy::sticky_config::SchedulingMode::Balance => {
+                token_manager.tokens_count() <= 1
+            }
+            crate::proxy::sticky_config::SchedulingMode::CacheFirst => true,
+            crate::proxy::sticky_config::SchedulingMode::PerformanceFirst => false,
+        };
+
+        let strategy = retry_state.determine_strategy_with_grace(
             &account_id,
             status_code,
             &error_text,
             retry_after.as_deref(),
             false,
+            allow_grace,
         );
 
         // 执行退备
