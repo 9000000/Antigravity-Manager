@@ -1999,7 +1999,7 @@ mod tests {
         // 注意：这里的 transform_openai_request 第三个参数是 mapped_model
         let (result_claude, _, _, _) =
             transform_openai_request(&req, "test-v", "claude-3-7-sonnet", None);
-        let budget_claude = result_claude["request"]["generationConfig"]["thinkingConfig"]
+        let _budget_claude = result_claude["request"]["generationConfig"]["thinkingConfig"]
             ["thinkingBudget"]
             .as_i64();
         // 如果不是 gemini模型且协议中没带 thinking 配置，可能会是 None 或 32000
