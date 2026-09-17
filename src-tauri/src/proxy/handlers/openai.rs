@@ -1843,6 +1843,7 @@ pub async fn handle_chat_completions(
                     " ".to_string(),
                 )),
                 reasoning_content: None,
+                signature: None,
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
@@ -1933,17 +1934,29 @@ pub async fn handle_chat_completions(
         client_budget
     };
 
+    let effort_hint = openai_req
+        .reasoning_effort
+        .as_deref()
+        .or_else(|| openai_req.reasoning.as_ref().and_then(|r| r.effort.as_deref()))
+        .or_else(|| openai_req.thinking.as_ref().and_then(|t| t.effort.as_deref()));
+    let effort_tier = crate::proxy::common::variant_mapping::tier_from_effort(effort_hint);
+
     let variant_spec =
         if crate::proxy::mappers::openai::request::is_tiered_flash_model(&openai_req.model) {
             None
         } else {
-            crate::proxy::common::variant_mapping::resolve(&openai_req.model, effective_budget_hint)
+            crate::proxy::common::variant_mapping::resolve_with_tier(
+                &openai_req.model,
+                effort_tier,
+                effective_budget_hint,
+            )
         };
     if let Some(spec) = variant_spec {
         tracing::info!(
-            "[{}] [Variant] canonical='{}' budget_hint={:?} -> real_model='{}' budget={} maxOut={}",
+            "[{}] [Variant] canonical='{}' effort={:?} budget_hint={:?} -> real_model='{}' budget={} maxOut={}",
             trace_id,
             openai_req.model,
+            effort_hint,
             effective_budget_hint,
             spec.id,
             spec.thinking_budget,
@@ -1961,7 +1974,7 @@ pub async fn handle_chat_completions(
             openai_req.thinking = Some(crate::proxy::mappers::openai::models::ThinkingConfig {
                 thinking_type: Some("enabled".to_string()),
                 budget_tokens: Some(spec.thinking_budget),
-                effort: None,
+                effort: effort_hint.map(|s| s.to_string()),
             });
         }
         openai_req.max_tokens = Some(spec.max_output_tokens);
@@ -2266,12 +2279,18 @@ pub async fn handle_chat_completions(
                 // [P1 FIX] Enhanced Peek logic to handle heartbeats and slow start
                 // Pre-read until we find meaningful content, skip heartbeats
                 use crate::proxy::mappers::openai::streaming::create_openai_sse_stream;
+                let include_usage = openai_req
+                    .stream_options
+                    .as_ref()
+                    .map(|o| o.include_usage)
+                    .unwrap_or(false);
                 let mut openai_stream = create_openai_sse_stream(
                     gemini_stream,
                     openai_req.model.clone(),
                     session_id,
                     message_count,
                     Some(client_tool_names.clone()),
+                    include_usage,
                 );
 
                 let mut first_data_chunk = None;
@@ -3179,14 +3198,25 @@ pub async fn handle_completions(
                             continue;
                         }
 
+                        let reasoning_content = item
+                            .get("reasoning_content")
+                            .or_else(|| item.get("thought"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                        let signature = item
+                            .get("thoughtSignature")
+                            .or_else(|| item.get("thought_signature"))
+                            .or_else(|| item.get("signature"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+
                         // 构造消息内容：如果有图像则使用数组格式
-                        if image_parts.is_empty() {
+                        let mut message = if image_parts.is_empty() {
                             let content = prefix_with_step_marker(step_marker, joined_text);
-                            let message = json!({
+                            json!({
                                 "role": role,
                                 "content": content
-                            });
-                            messages.push(message);
+                            })
                         } else {
                             let mut content_blocks: Vec<Value> = Vec::new();
                             let marker_text = prefix_with_step_marker(step_marker, joined_text);
@@ -3197,12 +3227,55 @@ pub async fn handle_completions(
                                 }));
                             }
                             content_blocks.extend(image_parts);
-                            let message = json!({
+                            json!({
                                 "role": role,
                                 "content": content_blocks
-                            });
-                            messages.push(message);
+                            })
+                        };
+
+                        if let Some(rc) = reasoning_content {
+                            if let Some(obj) = message.as_object_mut() {
+                                obj.insert("reasoning_content".to_string(), json!(rc));
+                            }
                         }
+                        if let Some(sig) = signature {
+                            if let Some(obj) = message.as_object_mut() {
+                                obj.insert("thoughtSignature".to_string(), json!(sig));
+                            }
+                        }
+
+                        messages.push(message);
+                    }
+                    "reasoning" => {
+                        let mut thought_text = String::new();
+                        if let Some(summary_arr) = item.get("summary").and_then(Value::as_array) {
+                            for s in summary_arr {
+                                if let Some(t) = s.get("text").and_then(Value::as_str) {
+                                    thought_text.push_str(t);
+                                }
+                            }
+                        }
+                        if thought_text.is_empty() {
+                            if let Some(t) = item.get("text").or_else(|| item.get("thought")).and_then(Value::as_str) {
+                                thought_text.push_str(t);
+                            }
+                        }
+                        let sig = item
+                            .get("thoughtSignature")
+                            .or_else(|| item.get("thought_signature"))
+                            .or_else(|| item.get("signature"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+
+                        let mut msg_obj = json!({
+                            "role": "assistant",
+                            "content": "",
+                            "reasoning_content": thought_text,
+                        });
+                        if let Some(s) = sig {
+                            msg_obj["thoughtSignature"] = json!(s);
+                        }
+                        messages.push(msg_obj);
                     }
                     "function_call" | "custom_tool_call" | "local_shell_call"
                     | "web_search_call" => {
@@ -3231,16 +3304,12 @@ pub async fn handle_completions(
                             name = "shell";
                             if let Some(action) = item.get("action") {
                                 if let Some(exec) = action.get("exec") {
-                                    // Map to ShellCommandToolCallParams (string command) or ShellToolCallParams (array command)
-                                    // Most LLMs prefer a single string for shell
                                     let mut args_obj = serde_json::Map::new();
                                     if let Some(cmd) = exec.get("command") {
-                                        // CRITICAL FIX: The 'shell' tool schema defines 'command' as an ARRAY of strings.
-                                        // We MUST pass it as an array, not a joined string, otherwise Gemini rejects with 400 INVALID_ARGUMENT.
                                         let cmd_val = if cmd.is_string() {
-                                            json!([cmd]) // Wrap in array
+                                            json!([cmd])
                                         } else {
-                                            cmd.clone() // Assume already array
+                                            cmd.clone()
                                         };
                                         args_obj.insert("command".to_string(), cmd_val);
                                     }
@@ -3265,20 +3334,33 @@ pub async fn handle_completions(
                             }
                         }
 
-                        let message = json!({
+                        let tool_sig = item
+                            .get("thoughtSignature")
+                            .or_else(|| item.get("thought_signature"))
+                            .or_else(|| item.get("signature"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+
+                        let mut tc_obj = json!({
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": args_str
+                            }
+                        });
+                        if let Some(ref s) = tool_sig {
+                            tc_obj["thoughtSignature"] = json!(s);
+                        }
+
+                        let mut message = json!({
                             "role": "assistant",
                             "content": "",
-                            "tool_calls": [
-                                {
-                                    "id": call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": name,
-                                        "arguments": args_str
-                                    }
-                                }
-                            ]
+                            "tool_calls": [ tc_obj ]
                         });
+                        if let Some(ref s) = tool_sig {
+                            message["thoughtSignature"] = json!(s);
+                        }
                         messages.push(message);
                     }
                     "function_call_output" | "custom_tool_call_output" => {
@@ -3591,6 +3673,7 @@ pub async fn handle_completions(
                     " ".to_string(),
                 )),
                 reasoning_content: None,
+                signature: None,
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
@@ -3935,6 +4018,7 @@ pub async fn handle_completions(
                 proxy_token.as_ref(),
                 &routing_session_id,
                 signature_read_key.as_deref(),
+                true, // is_responses_api
             )
         } else {
             transform_openai_request(
@@ -4255,6 +4339,7 @@ pub async fn handle_completions(
                         },
                         message_count,
                         Some(client_tool_names.clone()),
+                        true,
                     );
 
                     // Peek Logic (Repeated for safety/correctness on this stream type)
@@ -7218,6 +7303,7 @@ async fn try_compress_openai_with_summary(
         ),
         refusal: None,
         reasoning_content: None,
+        signature: None,
         tool_calls: None,
         tool_call_id: None,
         name: None,
@@ -7258,6 +7344,7 @@ async fn try_compress_openai_with_summary(
             ))),
             refusal: None,
             reasoning_content: None,
+            signature: None,
             tool_calls: None,
             tool_call_id: None,
             name: None,
@@ -7269,6 +7356,7 @@ async fn try_compress_openai_with_summary(
             )),
             refusal: None,
             reasoning_content: None,
+            signature: None,
             tool_calls: None,
             tool_call_id: None,
             name: None,

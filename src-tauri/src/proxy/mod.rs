@@ -51,3 +51,4 @@ pub use token_manager::TokenManager;
 pub mod tests;
 
 pub mod adapters;
+pub mod pipeline;

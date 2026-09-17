@@ -1427,3 +1427,60 @@ pub fn sanitize_gemini_payload_inline_data(body: &mut Value) -> usize {
 
     total_sanitized
 }
+
+/// Check if two model strings are compatible (same family)
+pub fn is_model_compatible(cached: &str, target: &str) -> bool {
+    let c = cached.to_lowercase();
+    let t = target.to_lowercase();
+
+    if c == t {
+        return true;
+    }
+
+    // Grouped family match (Claude models are more permissive)
+    if c.contains("claude-3-5") && t.contains("claude-3-5") {
+        return true;
+    }
+    if c.contains("claude-3-7") && t.contains("claude-3-7") {
+        return true;
+    }
+
+    // Gemini models: strict family match required for signatures
+    if c.contains("gemini-1.5-pro") && t.contains("gemini-1.5-pro") {
+        return true;
+    }
+    if c.contains("gemini-1.5-flash") && t.contains("gemini-1.5-flash") {
+        return true;
+    }
+    if c.contains("gemini-2.0-flash") && t.contains("gemini-2.0-flash") {
+        return true;
+    }
+    if c.contains("gemini-2.0-pro") && t.contains("gemini-2.0-pro") {
+        return true;
+    }
+    if c.contains("gemini-3") && t.contains("gemini-3") {
+        let c_flash = c.contains("flash");
+        let t_flash = t.contains("flash");
+        let c_pro = c.contains("pro");
+        let t_pro = t.contains("pro");
+        if c_flash == t_flash && c_pro == t_pro {
+            return true;
+        }
+        if c_flash && t_flash {
+            return true;
+        }
+        if c_pro && t_pro {
+            return true;
+        }
+    }
+    if c.contains("gemini-3.7") && t.contains("gemini-3.7") {
+        return true;
+    }
+
+    false
+}
+
+pub fn model_keeps_thinking_without_signature(mapped_model: &str) -> bool {
+    let m = mapped_model.to_lowercase();
+    m.contains("flash") || m.contains("gemini-pro-agent")
+}

@@ -542,6 +542,7 @@ impl ThinkingStore {
                     if norm_rec == norm_vis
                         || norm_rec.starts_with(norm_vis)
                         || norm_vis.starts_with(norm_rec)
+                        || (norm_rec.len() >= 20 && norm_vis.ends_with(norm_rec))
                     {
                         turn.matched_record_idx = Some(rec_idx);
                         used[rec_idx] = true;
@@ -1004,10 +1005,27 @@ pub fn finalize_gemini_contents_thinking(
     is_thinking_enabled: bool,
 ) {
     for msg in contents.iter_mut() {
-        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
-        if role != "model" && role != "assistant" {
+        let is_model = matches!(
+            msg.get("role").and_then(|r| r.as_str()),
+            Some("model") | Some("assistant")
+        );
+
+        if !is_thinking_enabled {
+            // 当思考模式为关时，清洗所有角色部件（包括 functionResponse）上的签名
+            if let Some(parts) = msg.get_mut("parts").and_then(|p| p.as_array_mut()) {
+                for part in parts.iter_mut() {
+                    if let Some(obj) = part.as_object_mut() {
+                        obj.remove("thought_signature");
+                        obj.remove("thoughtSignature");
+                    }
+                }
+            }
+        }
+
+        if !is_model {
             continue;
         }
+
         if let Some(parts) = msg.get_mut("parts").and_then(|p| p.as_array_mut()) {
             let mut thinking_parts = Vec::new();
             let mut other_parts = Vec::new();
@@ -1067,6 +1085,12 @@ pub fn finalize_gemini_contents_thinking(
                             tp["thoughtSignature"] = json!(real_sig);
                         }
                     }
+                } else {
+                    for tp in thinking_parts.iter_mut() {
+                        if tp.get("thoughtSignature").is_none() {
+                            tp["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                        }
+                    }
                 }
 
                 // 为所有缺失签名的工具调用打上保底哨兵
@@ -1081,10 +1105,17 @@ pub fn finalize_gemini_contents_thinking(
                 // 思考块始终强制排在最前面，其他部件紧随其后
                 parts.extend(thinking_parts);
             } else {
-                // 当思考模式为关时，不应补充或保留任何思考块，清洗所有 functionCall 上的 thoughtSignature
+                // 当思考模式为关时，清洗所有 functionCall 上的 thoughtSignature
                 for part in other_parts.iter_mut() {
                     if let Some(obj) = part.as_object_mut() {
                         obj.remove("thoughtSignature");
+                    }
+                }
+                // 若含有实质性思考内容的思考块，单次出站降级为普通文本以防丢失语义；纯占位符（如 "..."）则直接剔除
+                for tp in thinking_parts {
+                    let text = tp.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                    if is_meaningful_thought(text) {
+                        parts.push(json!({ "text": text }));
                     }
                 }
             }
@@ -1332,11 +1363,35 @@ pub fn is_placeholder_thought(s: &str) -> bool {
         || t.chars().all(|c| c == '.' || c == '·' || c == '…')
 }
 
+pub fn is_meaningful_thought(thought: &str) -> bool {
+    let t = thought.trim();
+    if t.is_empty() || is_placeholder_thought(t) {
+        return false;
+    }
+    // 拦截伪思考标签与客户端占位脏数据
+    let stripped = t
+        .trim_start_matches("<think>")
+        .trim_end_matches("</think>")
+        .trim_start_matches("Thinking Process:")
+        .trim_start_matches("Thinking Process")
+        .trim_start_matches("[Thinking]")
+        .trim();
+    if stripped.is_empty()
+        || stripped.eq_ignore_ascii_case("none")
+        || stripped.eq_ignore_ascii_case("null")
+        || stripped.eq_ignore_ascii_case("undefined")
+        || is_placeholder_thought(stripped)
+    {
+        return false;
+    }
+    true
+}
+
 fn is_capturable_thought(thought: &str, signature: Option<&str>) -> bool {
     if signature.is_some_and(is_real_signature) {
         return true;
     }
-    !is_placeholder_thought(thought)
+    is_meaningful_thought(thought)
 }
 
 fn record_bytes(rec: &ThinkingRecord) -> usize {
@@ -1628,13 +1683,15 @@ mod tests {
     #[test]
     fn same_fingerprint_updates_in_place() {
         let store = ThinkingStore::new();
-        store.record("t:s1", rec("short", "same", None));
-        store.record("t:s1", rec("much longer thought", "same", None));
-        let stats = store.session_stats("t:s1").unwrap();
+        let key = format!("t:s1-{}", uuid::Uuid::new_v4());
+        store.record(&key, rec("short", "same", None));
+        store.record(&key, rec("much longer thought", "same", None));
+        let stats = store.session_stats(&key).unwrap();
         assert_eq!(stats.0, 1);
         let mut contents = vec![json!({"role":"model","parts":[{"text":"same"}]})];
-        store.restore_gemini_contents("t:s1", &mut contents);
+        store.restore_gemini_contents(&key, &mut contents);
         assert_eq!(contents[0]["parts"][0]["text"], "much longer thought");
+        store.end_session(&key);
     }
 
     #[test]
@@ -1984,7 +2041,8 @@ mod tests {
     #[test]
     fn capture_from_client_history_and_prune_compressed_turns() {
         let store = ThinkingStore::new();
-        let key = "t:compress-session";
+        let session_key = format!("t:compress-{}", uuid::Uuid::new_v4());
+        let key = &session_key;
         store.record(key, rec("thought-old-1", "old visible one", Some("call_old_1")));
         store.record(key, rec("thought-old-2", "old visible two", Some("call_old_2")));
         store.record(key, rec("thought-old-3", "old visible three", Some("call_old_3")));
@@ -2007,6 +2065,7 @@ mod tests {
         assert!(turns <= 3, "orphaned compressed turns should be pruned, got {turns}");
         let parts = contents[0]["parts"].as_array().unwrap();
         assert_eq!(parts[0]["text"], "thought-keep");
+        store.end_session(key);
     }
 
     #[test]
@@ -2282,6 +2341,105 @@ mod tests {
             turn_needs_restore(&parts, "some real looking text that is not a placeholder"),
             "sentinel thought signature must still request restore"
         );
+    }
+
+    #[test]
+    fn test_is_meaningful_thought_sanitizer() {
+        // Placeholders & empty must fail
+        assert!(!is_meaningful_thought(""));
+        assert!(!is_meaningful_thought("   "));
+        assert!(!is_meaningful_thought("..."));
+        assert!(!is_meaningful_thought("···"));
+        assert!(!is_meaningful_thought("."));
+
+        // Pseudo-thinking tags & placeholders must fail
+        assert!(!is_meaningful_thought("<think></think>"));
+        assert!(!is_meaningful_thought("<think>\n\n</think>"));
+        assert!(!is_meaningful_thought("Thinking Process:\n"));
+        assert!(!is_meaningful_thought("[Thinking]"));
+        assert!(!is_meaningful_thought("None"));
+        assert!(!is_meaningful_thought("none"));
+        assert!(!is_meaningful_thought("null"));
+        assert!(!is_meaningful_thought("undefined"));
+        assert!(!is_meaningful_thought("[Thinking]\n..."));
+
+        // Real thoughts must pass
+        assert!(is_meaningful_thought("Let's analyze the problem step by step."));
+        assert!(is_meaningful_thought("<think>First compute the square root of 16, which is 4.</think>"));
+        assert!(is_meaningful_thought("Thinking Process:\n1. Check file existence\n2. Open file"));
+    }
+
+    #[test]
+    fn test_finalize_thinking_disabled_downgrades_meaningful_thought_and_strips_placeholders() {
+        let mut contents = vec![
+            json!({
+                "role": "model",
+                "parts": [
+                    {
+                        "text": "...",
+                        "thought": true,
+                        "thoughtSignature": SENTINEL_SIGNATURE
+                    },
+                    {
+                        "text": "Hello, how can I help?"
+                    }
+                ]
+            }),
+            json!({
+                "role": "model",
+                "parts": [
+                    {
+                        "text": "Real thought: solving user query carefully.",
+                        "thought": true,
+                        "thoughtSignature": "some_sig"
+                    },
+                    {
+                        "text": "Here is the answer."
+                    }
+                ]
+            }),
+        ];
+
+        finalize_gemini_contents_thinking(&mut contents, false);
+
+        // Turn 1: placeholder "..." thought is dropped, only visible text survives
+        let parts1 = contents[0]["parts"].as_array().unwrap();
+        assert_eq!(parts1.len(), 1);
+        assert_eq!(parts1[0]["text"], "Hello, how can I help?");
+        assert!(parts1[0].get("thought").is_none());
+
+        // Turn 2: meaningful thought is downgraded to text {"text": "Real thought: ..."}
+        let parts2 = contents[1]["parts"].as_array().unwrap();
+        assert_eq!(parts2.len(), 2);
+        assert_eq!(parts2[0]["text"], "Real thought: solving user query carefully.");
+        assert!(parts2[0].get("thought").is_none());
+        assert!(parts2[0].get("thoughtSignature").is_none());
+        assert_eq!(parts2[1]["text"], "Here is the answer.");
+    }
+
+    #[test]
+    fn test_finalize_thinking_disabled_cleans_user_function_response_signature() {
+        let mut contents = vec![
+            json!({
+                "role": "user",
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "name": "calc",
+                            "response": { "result": 42 }
+                        },
+                        "thoughtSignature": "sig_to_be_cleaned"
+                    }
+                ]
+            })
+        ];
+
+        finalize_gemini_contents_thinking(&mut contents, false);
+
+        let parts = contents[0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 1);
+        assert!(parts[0].get("functionResponse").is_some());
+        assert!(parts[0].get("thoughtSignature").is_none(), "thoughtSignature must be removed from functionResponse when thinking is disabled");
     }
 }
 

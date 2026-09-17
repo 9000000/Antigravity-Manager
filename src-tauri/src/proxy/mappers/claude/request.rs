@@ -1714,13 +1714,13 @@ fn build_google_contents(
         is_thinking_enabled && !crate::proxy::model_specs::is_gemini_under_v3(mapped_model);
 
     let think_start = std::time::Instant::now();
-    if should_finalize_thinking {
-        crate::proxy::thinking_store::hydrate_gemini_contents(session_id, &mut merged_contents);
-    }
-
-    crate::proxy::thinking_store::finalize_gemini_contents_thinking(
+    crate::proxy::pipeline::InboundThinkingPipeline::process_contents(
         &mut merged_contents,
+        crate::proxy::pipeline::ProxyProtocol::AnthropicClaude,
+        mapped_model,
         should_finalize_thinking,
+        Some(session_id),
+        false,
     );
     timing.think_fill_micros = think_start.elapsed().as_micros() as u64;
 
@@ -1867,7 +1867,6 @@ fn build_generation_config(
     // Thinking 配置
     if is_thinking_enabled && !crate::proxy::model_specs::is_gemini_under_v3(mapped_model) {
         let mut thinking_config = json!({"includeThoughts": true});
-        let budget = crate::proxy::model_specs::get_thinking_budget(mapped_model, token);
 
         let tb_config = crate::proxy::config::get_thinking_budget_config();
         let global_mode_is_adaptive = matches!(
@@ -1888,6 +1887,13 @@ fn build_generation_config(
             .and_then(|c| c.effort.as_ref())
             .or_else(|| claude_req.thinking.as_ref().and_then(|t| t.effort.as_ref()))
             .or_else(|| tb_config.effort.as_ref());
+
+        let budget = crate::proxy::model_specs::resolve_authoritative_thinking_budget(
+            mapped_model,
+            effort.map(|s| s.as_str()),
+            claude_req.thinking.as_ref().and_then(|t| t.budget_tokens.map(|b| b as u64)),
+            token,
+        );
 
         if should_use_adaptive {
             let mapped_level = match effort.map(|e| e.to_lowercase()).as_deref() {
@@ -2031,75 +2037,7 @@ pub fn clean_thinking_fields_recursive(val: &mut Value) {
     }
 }
 
-/// Check if two model strings are compatible (same family)
-fn is_model_compatible(cached: &str, target: &str) -> bool {
-    // Simple heuristic: check if they share the same base prefix
-    // e.g. "gemini-1.5-pro" vs "gemini-1.5-pro-002" -> Compatible
-    // "gemini-1.5-pro" vs "gemini-2.0-flash" -> Incompatible
-
-    // Normalize
-    let c = cached.to_lowercase();
-    let t = target.to_lowercase();
-
-    if c == t {
-        return true;
-    }
-
-    // Check specific families
-    // Vertex AI signatures are very strict. 1.5-pro vs 1.5-flash are NOT cross-compatible.
-    // 2.0-flash vs 2.0-pro are also NOT cross-compatible.
-
-    // Exact model string match (already handled by c == t)
-
-    // Grouped family match (Claude models are more permissive)
-    if c.contains("claude-3-5") && t.contains("claude-3-5") {
-        return true;
-    }
-    if c.contains("claude-3-7") && t.contains("claude-3-7") {
-        return true;
-    }
-
-    // Gemini models: strict family match required for signatures
-    if c.contains("gemini-1.5-pro") && t.contains("gemini-1.5-pro") {
-        return true;
-    }
-    if c.contains("gemini-1.5-flash") && t.contains("gemini-1.5-flash") {
-        return true;
-    }
-    if c.contains("gemini-2.0-flash") && t.contains("gemini-2.0-flash") {
-        return true;
-    }
-    if c.contains("gemini-2.0-pro") && t.contains("gemini-2.0-pro") {
-        return true;
-    }
-    // [FIX 2026-08-28] gemini-3.x / 3.5 / 3.6 / 3.7 families (flash vs pro vs agent)
-    // Flash signatures are interchangeable within flash sub-family, pro within pro.
-    // This covers your failing case: gemini-3.7-flash-high (mapped internally to flash family)
-    if c.contains("gemini-3") && t.contains("gemini-3") {
-        let c_flash = c.contains("flash");
-        let t_flash = t.contains("flash");
-        let c_pro = c.contains("pro");
-        let t_pro = t.contains("pro");
-        // Same sub-family (both flash or both pro/agent)
-        if c_flash == t_flash && c_pro == t_pro {
-            return true;
-        }
-        // Allow cross patch versions: 3.5-flash <-> 3.7-flash are compatible (same thinking crypto)
-        if c_flash && t_flash {
-            return true;
-        }
-        if c_pro && t_pro {
-            return true;
-        }
-    }
-    // gemini-3.7 explicit (fallback for any remaining 3.7 mismatch)
-    if c.contains("gemini-3.7") && t.contains("gemini-3.7") {
-        return true;
-    }
-
-    // Fallback: strict match required
-    false
-}
+use crate::proxy::mappers::common_utils::is_model_compatible;
 
 #[cfg(test)]
 mod tests {
@@ -2953,8 +2891,8 @@ mod tests {
         let budget = gen_config["thinkingConfig"]["thinkingBudget"]
             .as_u64()
             .unwrap();
-        // In Auto mode, client's budget is ignored and model specs budget for gemini-3-pro is 49152
-        assert_eq!(budget, 49152);
+        // In Auto mode, client's budget is ignored and bare gemini-3-pro defaults to 10001
+        assert_eq!(budget, 10001);
     }
 
     #[test]

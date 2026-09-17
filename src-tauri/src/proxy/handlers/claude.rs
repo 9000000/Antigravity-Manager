@@ -295,9 +295,9 @@ mod variant_tests {
     #[test]
     fn invalid_effort_falls_back_to_budget_tokens_for_gemini_3_model() {
         // Given a Gemini 3 model ("gemini-3-flash") with an unrecognized
-        // effort value ("max"), tier_from_effort returns None, so
+        // effort value ("unrecognized"), tier_from_effort returns None, so
         // apply_variant falls back to budget-based tier inference.
-        let mut request = request_with_effort("gemini-3-flash", "max", 4_000);
+        let mut request = request_with_effort("gemini-3-flash", "unrecognized", 4_000);
         let effort = crate::proxy::common::variant_mapping::tier_from_effort(
             request
                 .output_config
@@ -305,7 +305,7 @@ mod variant_tests {
                 .and_then(|config| config.effort.as_deref()),
         );
 
-        // tier_from_effort(Some("max")) → None (invalid value)
+        // tier_from_effort(Some("unrecognized")) → None (invalid value)
         assert_eq!(effort, None);
 
         // With effort=None and budget=4_000, infer_tier → Medium →
@@ -320,6 +320,27 @@ mod variant_tests {
         assert_eq!(
             request.thinking.as_ref().and_then(|t| t.budget_tokens),
             Some(4_000)
+        );
+    }
+
+    #[test]
+    fn max_effort_maps_to_high_tier_for_gemini_3_flash() {
+        let mut request = request_with_effort("gemini-3-flash", "max", 1_000);
+        let effort = crate::proxy::common::variant_mapping::tier_from_effort(
+            request
+                .output_config
+                .as_ref()
+                .and_then(|config| config.effort.as_deref()),
+        );
+        assert_eq!(effort, Some(crate::proxy::common::variant_mapping::VariantTier::High));
+
+        apply_variant(&mut request, effort, Some(1_000))
+            .expect("gemini-3-flash must resolve with max effort");
+
+        assert_eq!(request.model, "gemini-3-flash-agent");
+        assert_eq!(
+            request.thinking.as_ref().and_then(|t| t.budget_tokens),
+            Some(10_000)
         );
     }
 
@@ -459,16 +480,13 @@ pub async fn handle_messages(
 
     // [USER RULE] 对于 Gemini >= 3 或显式指定档位的模型，进站阶段彻底忽略客户端思考与预算参数，绝不被客户端 1024 或 low 污染
     if is_v3_or_above || is_explicit_tier_model {
-        // 如果客户端未显式提供 thinking 结构体，或者需要开启思考，初始化为 enabled，但绝不填客户端 budget
-        if request.thinking.is_none() {
-            request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
-                type_: "enabled".to_string(),
-                budget_tokens: None,
-                effort: None,
-            });
-        } else if let Some(ref mut t) = request.thinking {
-            t.budget_tokens = None; // 清理客户端 budget_tokens，防止污染
-        }
+        // 无论客户端未提供 thinking，或者传了 disabled，只要是 3+ 或显式模型，强制矫正为 enabled，清理客户端 budget_tokens
+        let effort_in_thinking = request.thinking.as_ref().and_then(|t| t.effort.clone());
+        request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
+            type_: "enabled".to_string(),
+            budget_tokens: None,
+            effort: effort_in_thinking,
+        });
     } else {
         // 由于此时还没拿到账号，先用模型默认限额兜底
         let temp_cap = model_specs::get_thinking_budget(&request.model, None);
@@ -839,8 +857,8 @@ pub async fn handle_messages(
     let mut force_rotate = false;
 
     // [Stage Timing] 阶段耗时度量变量 (毫秒，保留微秒级浮点精度)
-    let mut clean_micros = clean_start.elapsed().as_micros() as u64;
-    let mut clean_ms: f64 = clean_micros as f64 / 1000.0;
+    let clean_micros = clean_start.elapsed().as_micros() as u64;
+    let clean_ms: f64 = clean_micros as f64 / 1000.0;
     let mut norm_ms: f64 = 0.0;
     let mut think_fill_ms: f64 = 0.0;
     let mut ttft_ms: f64 = 0.0;

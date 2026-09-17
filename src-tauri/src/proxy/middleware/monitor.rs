@@ -280,94 +280,45 @@ fn record_user_token_usage(
 }
 
 fn extract_cached_tokens(usage: &Value) -> Option<u32> {
-    usage
-        .get("cache_read_input_tokens")
-        .or_else(|| usage.get("total_cached_tokens"))
-        .or_else(|| usage.get("cachedContentTokenCount"))
-        .or_else(|| {
-            usage
-                .get("prompt_tokens_details")
-                .and_then(|details| details.get("cached_tokens"))
-        })
-        .or_else(|| {
-            usage
-                .get("input_tokens_details")
-                .and_then(|details| details.get("cached_tokens"))
-        })
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u32)
-}
-
-fn value_as_u32(value: Option<&Value>) -> Option<u32> {
-    value.and_then(|v| v.as_u64()).map(|v| v as u32)
+    let c = crate::proxy::pipeline::CanonicalUsage::from_gemini(usage);
+    if c.cached_tokens > 0 {
+        Some(c.cached_tokens)
+    } else {
+        None
+    }
 }
 
 fn extract_input_tokens(usage: &Value) -> Option<u32> {
-    let raw_input = value_as_u32(
-        usage
-            .get("prompt_tokens")
-            .or_else(|| usage.get("input_tokens"))
-            .or_else(|| usage.get("total_input_tokens"))
-            .or_else(|| usage.get("promptTokenCount")),
-    );
-
-    // In Anthropic Claude protocol, `input_tokens` represents only the UNCACHED portion of prompt tokens.
-    // `cache_read_input_tokens` (and optional `cache_creation_input_tokens`) are reported separately.
-    // Therefore, Anthropic total prompt tokens = input_tokens + cache_read_input_tokens + cache_creation_input_tokens.
-    // In contrast, OpenAI Chat (`prompt_tokens`), OpenAI Responses (`input_tokens` + `input_tokens_details.cached_tokens`),
-    // and Gemini (`promptTokenCount`) already include cached tokens in their prompt/input token count.
-    if let Some(cache_read) = value_as_u32(usage.get("cache_read_input_tokens")) {
-        let cache_creation = value_as_u32(usage.get("cache_creation_input_tokens")).unwrap_or(0);
-        if let Some(inp) = raw_input {
-            return Some(inp + cache_read + cache_creation);
-        }
+    let has_field = usage.get("prompt_tokens").is_some()
+        || usage.get("input_tokens").is_some()
+        || usage.get("total_input_tokens").is_some()
+        || usage.get("promptTokenCount").is_some();
+    if !has_field {
+        return None;
     }
-
-    raw_input
+    let c = crate::proxy::pipeline::CanonicalUsage::from_gemini(usage);
+    Some(c.total_input_tokens)
 }
 
 fn extract_reasoning_tokens(usage: &Value) -> Option<u32> {
-    value_as_u32(
-        usage
-            .get("reasoning_tokens")
-            .or_else(|| {
-                usage
-                    .get("output_tokens_details")
-                    .and_then(|details| details.get("reasoning_tokens"))
-            })
-            .or_else(|| {
-                usage
-                    .get("completion_tokens_details")
-                    .and_then(|details| details.get("reasoning_tokens"))
-            })
-            .or_else(|| usage.get("total_thought_tokens"))
-            .or_else(|| usage.get("totalThoughtTokens"))
-            .or_else(|| usage.get("thoughtsTokenCount")),
-    )
+    let c = crate::proxy::pipeline::CanonicalUsage::from_gemini(usage);
+    if c.reasoning_tokens > 0 {
+        Some(c.reasoning_tokens)
+    } else {
+        None
+    }
 }
 
 fn extract_output_tokens(usage: &Value) -> Option<u32> {
-    if let Some(tokens) = value_as_u32(
-        usage
-            .get("completion_tokens")
-            .or_else(|| usage.get("output_tokens")),
-    ) {
-        return Some(tokens);
+    let has_field = usage.get("completion_tokens").is_some()
+        || usage.get("output_tokens").is_some()
+        || usage.get("total_output_tokens").is_some()
+        || usage.get("candidatesTokenCount").is_some();
+    if !has_field {
+        return None;
     }
-
-    let base = value_as_u32(
-        usage
-            .get("total_output_tokens")
-            .or_else(|| usage.get("candidatesTokenCount")),
-    )?;
-    let has_new_format = usage.get("total_output_tokens").is_some();
-    if has_new_format {
-        let reasoning = extract_reasoning_tokens(usage).unwrap_or(0);
-        let tool_use = value_as_u32(usage.get("total_tool_use_tokens")).unwrap_or(0);
-        Some(base + reasoning + tool_use)
-    } else {
-        Some(base)
-    }
+    let c = crate::proxy::pipeline::CanonicalUsage::from_gemini(usage);
+    Some(c.output_tokens)
 }
 
 pub async fn monitor_middleware(

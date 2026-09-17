@@ -1373,6 +1373,7 @@ mod tests {
                 refusal: None,
                 content: Some(OpenAIContent::String("read file".into())),
                 reasoning_content: Some("a very very long chain of reasoning thoughts that exceeds 10 characters".into()),
+                signature: None,
                 tool_calls: Some(vec![ToolCall {
                     id: "call_1".into(),
                     r#type: "function".into(),
@@ -1380,6 +1381,7 @@ mod tests {
                         name: "read_file".into(),
                         arguments: "{}".into(),
                     }),
+                    signature: None,
                     status: None,
                     call_id: None,
                     operation: None,
@@ -1392,6 +1394,7 @@ mod tests {
                 refusal: None,
                 content: Some(OpenAIContent::String("latest user message".into())),
                 reasoning_content: None,
+                signature: None,
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,

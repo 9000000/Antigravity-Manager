@@ -651,7 +651,11 @@ pub async fn fetch_zai_models(
 
     if !status.is_success() {
         let preview = if text.len() > 4000 {
-            &text[..4000]
+            let mut end = 4000;
+            while end > 0 && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            &text[..end]
         } else {
             &text
         };
