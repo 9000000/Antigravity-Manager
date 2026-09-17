@@ -248,14 +248,16 @@ fn migrate_thinking_from_logs() -> Result<(), String> {
              )";
     let copied = match conn.execute(copy_with_accessed, []) {
         Ok(n) => n,
-        Err(_) => match conn.execute(copy_basic, []) {
-            Ok(n) => n,
-            Err(e) => {
-                let _ = conn.execute("DETACH DATABASE logs", []);
-                tracing::warn!("[ThinkingStore] Import from proxy_logs.db failed (will retry next start): {e}");
-                return Ok(());
+        Err(_) => {
+            match conn.execute(copy_basic, []) {
+                Ok(n) => n,
+                Err(e) => {
+                    let _ = conn.execute("DETACH DATABASE logs", []);
+                    tracing::warn!("[ThinkingStore] Import from proxy_logs.db failed (will retry next start): {e}");
+                    return Ok(());
+                }
             }
-        },
+        }
     };
     let _ = conn.execute(
         "INSERT OR IGNORE INTO thinking_sessions (session_key, last_accessed)
@@ -294,7 +296,10 @@ pub fn init_db() -> Result<(), String> {
 
     // Try to add new columns (ignore errors if they exist)
     let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN request_body TEXT", []);
-    let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN upstream_request_body TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE request_logs ADD COLUMN upstream_request_body TEXT",
+        [],
+    );
     let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN response_body TEXT", []);
     let _ = conn.execute(
         "ALTER TABLE request_logs ADD COLUMN input_tokens INTEGER",
@@ -313,9 +318,18 @@ pub fn init_db() -> Result<(), String> {
     let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN protocol TEXT", []);
     let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN client_ip TEXT", []);
     let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN username TEXT", []);
-    let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN request_headers TEXT", []);
-    let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN upstream_request_headers TEXT", []);
-    let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN response_headers TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE request_logs ADD COLUMN request_headers TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE request_logs ADD COLUMN upstream_request_headers TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE request_logs ADD COLUMN response_headers TEXT",
+        [],
+    );
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_timestamp ON request_logs (timestamp DESC)",
@@ -382,7 +396,10 @@ pub fn init_db() -> Result<(), String> {
         [],
     )
     .map_err(|e| e.to_string())?;
-    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_sig_created ON tool_signatures (created_at DESC)", []);
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_sig_created ON tool_signatures (created_at DESC)",
+        [],
+    );
 
     drop(conn);
     migrate_thinking_from_logs()?;
@@ -556,7 +573,14 @@ pub fn load_thinking_records(session_key: &str) -> Result<Vec<PersistedThinkingR
             let tool_ids_str: String = row.get(3)?;
             let tool_names_str: String = row.get(4)?;
             let visible: String = row.get(5)?;
-            Ok((fp, thought_raw, signature, tool_ids_str, tool_names_str, visible))
+            Ok((
+                fp,
+                thought_raw,
+                signature,
+                tool_ids_str,
+                tool_names_str,
+                visible,
+            ))
         })
         .map_err(|e| e.to_string())?;
 
@@ -961,7 +985,7 @@ pub fn get_log_detail(log_id: &str) -> Result<ProxyRequestLog, String> {
         .map_err(|e| e.to_string())?;
 
     stmt.query_row([log_id], map_request_log_row)
-    .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -991,7 +1015,10 @@ mod thinking_pack_tests {
 
     #[test]
     fn persist_visible_drops_tool_turns() {
-        assert_eq!(persist_visible(&["call_1".to_string()], "I will run the tool"), "");
+        assert_eq!(
+            persist_visible(&["call_1".to_string()], "I will run the tool"),
+            ""
+        );
         assert_eq!(persist_visible(&[], "hello"), "hello");
     }
 }
@@ -1036,7 +1063,10 @@ mod retention_tests {
             max_disk_mb: 0,
             ..config.proxy.log_retention
         };
-        assert!(save_log_with_connection(&conn, sample_log("no-room", 100), &zero_budget_policy).is_err());
+        assert!(
+            save_log_with_connection(&conn, sample_log("no-room", 100), &zero_budget_policy)
+                .is_err()
+        );
         assert!(get_log_detail("no-room").is_err());
     }
 
@@ -1318,7 +1348,10 @@ pub fn get_logs_filtered(
     } else {
         let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
         let logs_iter = stmt
-            .query_map(rusqlite::params![limit, offset, filter_pattern], map_request_log_row)
+            .query_map(
+                rusqlite::params![limit, offset, filter_pattern],
+                map_request_log_row,
+            )
             .map_err(|e| e.to_string())?;
         logs_iter.filter_map(|r| r.ok()).collect()
     };

@@ -229,11 +229,13 @@ impl SessionManager {
                         OpenAIContent::String(s) => s.clone(),
                         OpenAIContent::Array(blocks) => blocks
                             .iter()
-                            .filter_map(|block| match block {
+                            .filter_map(|block| {
+                                match block {
                                 crate::proxy::mappers::openai::models::OpenAIContentBlock::Text {
                                     text,
                                 } => Some(text.as_str()),
                                 _ => None,
+                            }
                             })
                             .collect::<Vec<_>>()
                             .join(" "),
@@ -365,8 +367,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_user_text_for_fingerprint() {
-        let text1 = "你好啊\n\n<system-reminder>\nCurrent date: 2026-09-08 (Tue)\n</system-reminder>";
-        let text2 = "你好啊\n\n<system-reminder>\nCurrent date: 2026-09-09 (Wed)\n</system-reminder>";
+        let text1 =
+            "你好啊\n\n<system-reminder>\nCurrent date: 2026-09-08 (Tue)\n</system-reminder>";
+        let text2 =
+            "你好啊\n\n<system-reminder>\nCurrent date: 2026-09-09 (Wed)\n</system-reminder>";
         let text3 = "你好啊 [System: Tool execution completed successfully]";
 
         assert_eq!(sanitize_user_text_for_fingerprint(text1), "你好啊");
@@ -382,7 +386,9 @@ mod tests {
                 role: "user".to_string(),
                 content: MessageContent::String("你好".to_string()),
             }],
-            system: Some(SystemPrompt::String("Project A Workspace: /src/backend".to_string())),
+            system: Some(SystemPrompt::String(
+                "Project A Workspace: /src/backend".to_string(),
+            )),
             tools: None,
             stream: false,
             max_tokens: None,
@@ -402,7 +408,9 @@ mod tests {
                 role: "user".to_string(),
                 content: MessageContent::String("你好".to_string()),
             }],
-            system: Some(SystemPrompt::String("Project B Workspace: /src/frontend".to_string())),
+            system: Some(SystemPrompt::String(
+                "Project B Workspace: /src/frontend".to_string(),
+            )),
             tools: None,
             stream: false,
             max_tokens: None,
@@ -520,7 +528,10 @@ mod tests {
         // Construct a system prompt where byte index 512 lands exactly inside a 3-byte Chinese character '单' (bytes 511..514)
         let prefix = "a".repeat(511);
         let malicious_sys = format!("{}单清单清单", prefix);
-        assert!(!malicious_sys.is_char_boundary(512), "Byte 512 must be inside '单' to test the regression");
+        assert!(
+            !malicious_sys.is_char_boundary(512),
+            "Byte 512 must be inside '单' to test the regression"
+        );
 
         // 1. Claude Request
         let claude_req = ClaudeRequest {
@@ -552,7 +563,8 @@ mod tests {
                 { "role": "system", "content": malicious_sys },
                 { "role": "user", "content": "你好" }
             ]
-        })).unwrap();
+        }))
+        .unwrap();
         let sid_openai = SessionManager::extract_openai_session_id(&openai_req);
         assert!(sid_openai.starts_with("sid-"));
 
@@ -570,7 +582,8 @@ mod tests {
         assert!(sid_gemini.starts_with("sid-"));
 
         // 4. Real User Prompt reported in issue
-        let user_prompt = "你是一个远程服务器运维专家。\n\n当前纳管的 LXC 容器清单如下....".repeat(20);
+        let user_prompt =
+            "你是一个远程服务器运维专家。\n\n当前纳管的 LXC 容器清单如下....".repeat(20);
         let claude_user_req = ClaudeRequest {
             model: "claude-3-7-sonnet".to_string(),
             messages: vec![Message {

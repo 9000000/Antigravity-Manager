@@ -72,14 +72,17 @@ impl CanonicalUsage {
 
         // 提取思考思维链 token (支持 candidatesTokensDetails / total_thought_tokens / completion_tokens_details)
         let mut reasoning = 0u32;
-        if let Some(details) = usage.get("candidatesTokensDetails").and_then(|d| d.as_array()) {
+        if let Some(details) = usage
+            .get("candidatesTokensDetails")
+            .and_then(|d| d.as_array())
+        {
             for item in details {
                 let modality = item.get("modality").and_then(|m| m.as_str()).unwrap_or("");
-                if modality.eq_ignore_ascii_case("THINKING") || modality.eq_ignore_ascii_case("REASONING") {
+                if modality.eq_ignore_ascii_case("THINKING")
+                    || modality.eq_ignore_ascii_case("REASONING")
+                {
                     reasoning = reasoning.saturating_add(
-                        item.get("tokenCount")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as u32,
+                        item.get("tokenCount").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
                     );
                 }
             }
@@ -121,15 +124,23 @@ impl CanonicalUsage {
             .unwrap_or(0) as u32;
 
         let output = if has_new_format {
-            raw_output.saturating_add(reasoning).saturating_add(tool_use)
+            raw_output
+                .saturating_add(reasoning)
+                .saturating_add(tool_use)
         } else {
             raw_output
         };
 
         // 计算全量与增量
         // 如果输入数据是 Anthropic 格式（raw_input 存的是 uncached），做加和还原全量
-        let (canonical_total_input, uncached_input) = if let Some(cr) = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()) {
-            let cc = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let (canonical_total_input, uncached_input) = if let Some(cr) = usage
+            .get("cache_read_input_tokens")
+            .and_then(|v| v.as_u64())
+        {
+            let cc = usage
+                .get("cache_creation_input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
             let total = total_input.saturating_add(cr as u32).saturating_add(cc);
             (total, total_input)
         } else if cached > 0 && total_input < cached {
@@ -183,7 +194,9 @@ impl CanonicalUsage {
     /// 散开为 Anthropic Claude 格式：
     /// Claude 规范要求 input_tokens 仅表达未缓存增量，缓存单列在 cache_read_input_tokens
     pub fn to_claude_usage(&self, scaling_enabled: bool, context_limit: u32) -> Value {
-        let (reported_input, reported_cache) = if scaling_enabled && self.total_input_tokens > 30_000 {
+        let (reported_input, reported_cache) = if scaling_enabled
+            && self.total_input_tokens > 30_000
+        {
             let scaled_total = Self::scale_claude_tokens(self.total_input_tokens, context_limit);
             if self.total_input_tokens > 0 {
                 let cache_ratio = (self.cached_tokens as f64) / (self.total_input_tokens as f64);
@@ -232,10 +245,16 @@ impl CanonicalUsage {
 
         if let Some(obj) = out.as_object_mut() {
             if !prompt_details.is_empty() {
-                obj.insert("prompt_tokens_details".into(), Value::Object(prompt_details));
+                obj.insert(
+                    "prompt_tokens_details".into(),
+                    Value::Object(prompt_details),
+                );
             }
             if !completion_details.is_empty() {
-                obj.insert("completion_tokens_details".into(), Value::Object(completion_details));
+                obj.insert(
+                    "completion_tokens_details".into(),
+                    Value::Object(completion_details),
+                );
             }
         }
         out
@@ -264,7 +283,10 @@ impl CanonicalUsage {
                 obj.insert("input_tokens_details".into(), Value::Object(input_details));
             }
             if !output_details.is_empty() {
-                obj.insert("output_tokens_details".into(), Value::Object(output_details));
+                obj.insert(
+                    "output_tokens_details".into(),
+                    Value::Object(output_details),
+                );
             }
         }
         out
@@ -282,12 +304,15 @@ impl CanonicalUsage {
                 map.insert("cachedContentTokenCount".into(), json!(self.cached_tokens));
             }
             if self.reasoning_tokens > 0 {
-                map.insert("candidatesTokensDetails".into(), json!([
-                    {
-                        "modality": "THINKING",
-                        "tokenCount": self.reasoning_tokens
-                    }
-                ]));
+                map.insert(
+                    "candidatesTokensDetails".into(),
+                    json!([
+                        {
+                            "modality": "THINKING",
+                            "tokenCount": self.reasoning_tokens
+                        }
+                    ]),
+                );
             }
         }
         obj
@@ -296,7 +321,10 @@ impl CanonicalUsage {
     /// 散开为符合 ProxyMonitor 简要模式与截图参考格式
     pub fn to_brief_audit_usage(&self) -> Value {
         let cache_rate = if self.total_input_tokens > 0 {
-            format!("{:.1}%", (self.cached_tokens as f64 / self.total_input_tokens as f64) * 100.0)
+            format!(
+                "{:.1}%",
+                (self.cached_tokens as f64 / self.total_input_tokens as f64) * 100.0
+            )
         } else {
             "0.0%".to_string()
         };
@@ -357,7 +385,10 @@ mod tests {
         assert_eq!(chat_val["prompt_tokens"], 99000);
         assert_eq!(chat_val["completion_tokens"], 4100);
         assert_eq!(chat_val["prompt_tokens_details"]["cached_tokens"], 94000);
-        assert_eq!(chat_val["completion_tokens_details"]["reasoning_tokens"], 1000);
+        assert_eq!(
+            chat_val["completion_tokens_details"]["reasoning_tokens"],
+            1000
+        );
 
         // 验证散开到 OpenAI Responses
         let resp_val = usage.to_openai_responses_usage();

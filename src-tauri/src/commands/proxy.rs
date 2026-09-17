@@ -34,7 +34,11 @@ impl AdminServerInstance {
     /// 优雅停止管理服务器并等待监听任务退出释放端口
     pub async fn stop(mut self) {
         self.axum_server.stop();
-        let _ = tokio::time::timeout(std::time::Duration::from_millis(1000), &mut self.server_handle).await;
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(1000),
+            &mut self.server_handle,
+        )
+        .await;
         if !self.server_handle.is_finished() {
             self.server_handle.abort();
         }

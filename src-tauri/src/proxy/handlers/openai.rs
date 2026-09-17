@@ -1742,7 +1742,9 @@ fn prefix_with_step_marker(_marker: Option<String>, content: String) -> String {
 pub async fn handle_chat_completions(
     State(state): State<AppState>,
     headers: HeaderMap, // [CHANGED] Extract headers
-    upstream_recorder: Option<axum::extract::Extension<crate::proxy::monitor::UpstreamRequestBodyHolder>>,
+    upstream_recorder: Option<
+        axum::extract::Extension<crate::proxy::monitor::UpstreamRequestBodyHolder>,
+    >,
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let clean_start = std::time::Instant::now();
@@ -1937,8 +1939,18 @@ pub async fn handle_chat_completions(
     let effort_hint = openai_req
         .reasoning_effort
         .as_deref()
-        .or_else(|| openai_req.reasoning.as_ref().and_then(|r| r.effort.as_deref()))
-        .or_else(|| openai_req.thinking.as_ref().and_then(|t| t.effort.as_deref()));
+        .or_else(|| {
+            openai_req
+                .reasoning
+                .as_ref()
+                .and_then(|r| r.effort.as_deref())
+        })
+        .or_else(|| {
+            openai_req
+                .thinking
+                .as_ref()
+                .and_then(|t| t.effort.as_deref())
+        });
     let effort_tier = crate::proxy::common::variant_mapping::tier_from_effort(effort_hint);
 
     let variant_spec =
@@ -2113,10 +2125,11 @@ pub async fn handle_chat_completions(
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
         norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
         think_fill_ms = tf_micros as f64 / 1000.0;
-        let _ = crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
-            &mut gemini_body,
-            &mapped_model,
-        );
+        let _ =
+            crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
+                &mut gemini_body,
+                &mapped_model,
+            );
         if let Some(ref recorder) = upstream_recorder {
             recorder.set_value(&gemini_body);
         }
@@ -2517,7 +2530,9 @@ pub async fn handle_chat_completions(
                                 .header("X-Timing-Norm-Ms", format!("{:.3}", norm_ms))
                                 .header("X-Timing-Thinking-Ms", format!("{:.3}", think_fill_ms))
                                 .header("X-Timing-Ttft-Ms", format!("{:.3}", ttft_ms))
-                                .body(Body::from(serde_json::to_string(&full_response).unwrap_or_default()))
+                                .body(Body::from(
+                                    serde_json::to_string(&full_response).unwrap_or_default(),
+                                ))
                                 .unwrap()
                                 .into_response());
                         }
@@ -2602,7 +2617,9 @@ pub async fn handle_chat_completions(
                 .header("X-Timing-Norm-Ms", format!("{:.3}", norm_ms))
                 .header("X-Timing-Thinking-Ms", format!("{:.3}", think_fill_ms))
                 .header("X-Timing-Ttft-Ms", format!("{:.3}", ttft_ms))
-                .body(Body::from(serde_json::to_string(&openai_response).unwrap_or_default()))
+                .body(Body::from(
+                    serde_json::to_string(&openai_response).unwrap_or_default(),
+                ))
                 .unwrap()
                 .into_response());
         }
@@ -2984,7 +3001,9 @@ pub async fn handle_completions(
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
     State(state): State<AppState>,
     headers: HeaderMap,
-    upstream_recorder: Option<axum::extract::Extension<crate::proxy::monitor::UpstreamRequestBodyHolder>>,
+    upstream_recorder: Option<
+        axum::extract::Extension<crate::proxy::monitor::UpstreamRequestBodyHolder>,
+    >,
     Json(mut body): Json<Value>,
 ) -> Response {
     let clean_start = std::time::Instant::now();
@@ -3256,7 +3275,11 @@ pub async fn handle_completions(
                             }
                         }
                         if thought_text.is_empty() {
-                            if let Some(t) = item.get("text").or_else(|| item.get("thought")).and_then(Value::as_str) {
+                            if let Some(t) = item
+                                .get("text")
+                                .or_else(|| item.get("thought"))
+                                .and_then(Value::as_str)
+                            {
                                 thought_text.push_str(t);
                             }
                         }
@@ -3995,7 +4018,7 @@ pub async fn handle_completions(
                             headers,
                             format!("Token error: {}", e),
                         )
-                            .into_response()
+                            .into_response();
                     }
                 }
             };
@@ -4032,10 +4055,11 @@ pub async fn handle_completions(
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
         norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
         think_fill_ms = tf_micros as f64 / 1000.0;
-        let _ = crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
-            &mut gemini_body,
-            &mapped_model,
-        );
+        let _ =
+            crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
+                &mut gemini_body,
+                &mapped_model,
+            );
         if let Some(ref recorder) = upstream_recorder {
             recorder.set_value(&gemini_body);
         }
@@ -4472,12 +4496,17 @@ pub async fn handle_completions(
                                     .header("X-Account-Email", email.as_str())
                                     .header("X-Mapped-Model", mapped_model.as_str())
                                     .header("X-Session-Id", session_scope.client_id.as_str())
-                                    .header("X-Antigravity-Session-Id", session_scope.client_id.as_str())
+                                    .header(
+                                        "X-Antigravity-Session-Id",
+                                        session_scope.client_id.as_str(),
+                                    )
                                     .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
                                     .header("X-Timing-Norm-Ms", format!("{:.3}", norm_ms))
                                     .header("X-Timing-Thinking-Ms", format!("{:.3}", think_fill_ms))
                                     .header("X-Timing-Ttft-Ms", format!("{:.3}", ttft_ms))
-                                    .body(Body::from(serde_json::to_string(&resp).unwrap_or_default()))
+                                    .body(Body::from(
+                                        serde_json::to_string(&resp).unwrap_or_default(),
+                                    ))
                                     .unwrap()
                                     .into_response();
                             }
@@ -4541,12 +4570,17 @@ pub async fn handle_completions(
                                 .header("X-Account-Email", email.as_str())
                                 .header("X-Mapped-Model", mapped_model.as_str())
                                 .header("X-Session-Id", session_scope.client_id.as_str())
-                                .header("X-Antigravity-Session-Id", session_scope.client_id.as_str())
+                                .header(
+                                    "X-Antigravity-Session-Id",
+                                    session_scope.client_id.as_str(),
+                                )
                                 .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
                                 .header("X-Timing-Norm-Ms", format!("{:.3}", norm_ms))
                                 .header("X-Timing-Thinking-Ms", format!("{:.3}", think_fill_ms))
                                 .header("X-Timing-Ttft-Ms", format!("{:.3}", ttft_ms))
-                                .body(Body::from(serde_json::to_string(&legacy_resp).unwrap_or_default()))
+                                .body(Body::from(
+                                    serde_json::to_string(&legacy_resp).unwrap_or_default(),
+                                ))
                                 .unwrap()
                                 .into_response();
                         }
@@ -4675,7 +4709,9 @@ pub async fn handle_completions(
                 .header("X-Timing-Norm-Ms", format!("{:.3}", norm_ms))
                 .header("X-Timing-Thinking-Ms", format!("{:.3}", think_fill_ms))
                 .header("X-Timing-Ttft-Ms", format!("{:.3}", ttft_ms))
-                .body(Body::from(serde_json::to_string(&legacy_resp).unwrap_or_default()))
+                .body(Body::from(
+                    serde_json::to_string(&legacy_resp).unwrap_or_default(),
+                ))
                 .unwrap()
                 .into_response();
         }
@@ -4801,7 +4837,9 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
 pub async fn handle_chat_redirection(
     State(state): State<AppState>,
     headers: HeaderMap,
-    upstream_recorder: Option<axum::extract::Extension<crate::proxy::monitor::UpstreamRequestBodyHolder>>,
+    upstream_recorder: Option<
+        axum::extract::Extension<crate::proxy::monitor::UpstreamRequestBodyHolder>,
+    >,
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     handle_chat_completions(State(state), headers, upstream_recorder, Json(body)).await
@@ -6035,8 +6073,13 @@ async fn handle_websocket_session(mut socket: WebSocket, headers: HeaderMap, sta
         };
 
         let openai_body = convert_codex_to_openai_request(normalized);
-        let response_result =
-            handle_chat_completions(State(state.clone()), headers.clone(), None, Json(openai_body)).await;
+        let response_result = handle_chat_completions(
+            State(state.clone()),
+            headers.clone(),
+            None,
+            Json(openai_body),
+        )
+        .await;
 
         let response = match response_result {
             Ok(res) => res.into_response(),

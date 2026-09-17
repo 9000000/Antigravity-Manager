@@ -358,8 +358,7 @@ pub fn transform_openai_request_with_session(
 
     // [NEW] 决定是否开启 Thinking 功能（纯服务端权威）:
     // 仅按映射后的模型 ID / 强制思考启发式开启，忽略客户端 thinking.type / budget / effort。
-    let mut actual_include_thinking =
-        !is_under_v3 && (is_thinking_model || force_server_thinking);
+    let mut actual_include_thinking = !is_under_v3 && (is_thinking_model || force_server_thinking);
 
     // [REFACTORED] 使用 SignatureCache 获取 Session 级别的签名
     // Responses may pass previous_response_id as signature_read_key; always fall back to
@@ -948,7 +947,12 @@ pub fn transform_openai_request_with_session(
             "role": "user",
             "parts": [{ "text": "Continue" }]
         }));
-    } else if contents.first().and_then(|f| f.get("role")).and_then(|r| r.as_str()) == Some("model") {
+    } else if contents
+        .first()
+        .and_then(|f| f.get("role"))
+        .and_then(|r| r.as_str())
+        == Some("model")
+    {
         contents.insert(
             0,
             json!({
@@ -1010,14 +1014,19 @@ pub fn transform_openai_request_with_session(
             // 启发式模型强制锁死对应字典预算，彻底忽略客户端参数
             // 裸模型由客户端 reasoning_effort / thinkingLevel 接管（HIGH/MAX->10000/10001, LOW/EXTRA-LOW->1000/1001, MEDIUM/DEFAULT->4000/10001）
             // 试图关闭或未填：绝不关闭，兜底填充 -medium (4000/10001)
-            let client_effort = request.reasoning_effort.as_deref()
+            let client_effort = request
+                .reasoning_effort
+                .as_deref()
                 .or_else(|| request.reasoning.as_ref().and_then(|r| r.effort.as_deref()))
                 .or_else(|| request.thinking.as_ref().and_then(|t| t.effort.as_deref()));
 
             let default_budget = model_specs::resolve_authoritative_thinking_budget(
                 mapped_model,
                 client_effort,
-                request.thinking.as_ref().and_then(|t| t.budget_tokens.map(|b| b as u64)),
+                request
+                    .thinking
+                    .as_ref()
+                    .and_then(|t| t.budget_tokens.map(|b| b as u64)),
                 token,
             ) as i64;
 
@@ -1390,7 +1399,10 @@ pub fn transform_openai_request_with_session(
         }
         if let Some(tool_config_snake) = inner_request.get_mut("tool_config") {
             if let Some(obj) = tool_config_snake.as_object_mut() {
-                obj.insert("include_server_side_tool_invocations".to_string(), json!(true));
+                obj.insert(
+                    "include_server_side_tool_invocations".to_string(),
+                    json!(true),
+                );
             }
         } else {
             inner_request["tool_config"] = json!({
@@ -1421,8 +1433,7 @@ pub fn transform_openai_request_with_session(
     //   - 不同对话使用不同 sessionId,避免共享同一服务端累计会话
     //   - 检测到上游 1M 累计报错后 bump 代数,新 sessionId = 全新上游会话,对话无感恢复
     if let Some(t) = token {
-        let generation =
-            crate::proxy::common::session::current_bump(&t.account_id, &session_id);
+        let generation = crate::proxy::common::session::current_bump(&t.account_id, &session_id);
         inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_scoped(
             &t.account_id,
             &session_id,
@@ -1492,7 +1503,8 @@ pub fn transform_openai_request_with_session(
         .get("contents")
         .map(super::super::common_utils::contents_has_tool_interactions)
         .unwrap_or(false);
-    let is_agent_request = config.request_type != "image_gen" && (has_tools || has_tool_interactions);
+    let is_agent_request =
+        config.request_type != "image_gen" && (has_tools || has_tool_interactions);
 
     let mut final_body = json!({
         "project": project_id,
@@ -1626,7 +1638,13 @@ mod tests {
         // Server-authoritative: client reasoning.effort must not set thinkingLevel.
         for model in ["gemini-3.8-flash-tiered", "gemini-9.9-flash-tiered"] {
             assert!(is_tiered_flash_model(model));
-            for effort in [None, Some("low"), Some("medium"), Some("high"), Some("xhigh")] {
+            for effort in [
+                None,
+                Some("low"),
+                Some("medium"),
+                Some("high"),
+                Some("xhigh"),
+            ] {
                 let body = tiered_request_body(model, effort);
                 let thinking = &body["request"]["generationConfig"]["thinkingConfig"];
 
@@ -1659,60 +1677,99 @@ mod tests {
             "model": "gemini-3.7-flash-high",
             "messages": [{"role": "user", "content": "hi"}],
             "reasoning_effort": "low"
-        })).unwrap();
-        let (body, _, _, _) = transform_openai_request(&req_high, "test-p", "gemini-3.7-flash-high", None);
-        assert_eq!(body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"], 10000);
+        }))
+        .unwrap();
+        let (body, _, _, _) =
+            transform_openai_request(&req_high, "test-p", "gemini-3.7-flash-high", None);
+        assert_eq!(
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            10000
+        );
 
         // 2. 裸模型 Flash 接管客户端 reasoning_effort
         let req_flash_high: OpenAIRequest = serde_json::from_value(json!({
             "model": "gemini-3-flash",
             "messages": [{"role": "user", "content": "hi"}],
             "reasoning_effort": "high"
-        })).unwrap();
-        let (body, _, _, _) = transform_openai_request(&req_flash_high, "test-p", "gemini-3-flash", None);
-        assert_eq!(body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"], 10000);
+        }))
+        .unwrap();
+        let (body, _, _, _) =
+            transform_openai_request(&req_flash_high, "test-p", "gemini-3-flash", None);
+        assert_eq!(
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            10000
+        );
 
         let req_flash_low: OpenAIRequest = serde_json::from_value(json!({
             "model": "gemini-3-flash",
             "messages": [{"role": "user", "content": "hi"}],
             "reasoning_effort": "low"
-        })).unwrap();
-        let (body, _, _, _) = transform_openai_request(&req_flash_low, "test-p", "gemini-3-flash", None);
-        assert_eq!(body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"], 1000);
+        }))
+        .unwrap();
+        let (body, _, _, _) =
+            transform_openai_request(&req_flash_low, "test-p", "gemini-3-flash", None);
+        assert_eq!(
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            1000
+        );
 
         // 3. 裸模型 Flash 客户端未填或试图关闭：绝不关闭思考，强制回填 -medium (4000)
         let req_flash_none: OpenAIRequest = serde_json::from_value(json!({
             "model": "gemini-3-flash",
             "messages": [{"role": "user", "content": "hi"}]
-        })).unwrap();
-        let (body, _, _, _) = transform_openai_request(&req_flash_none, "test-p", "gemini-3-flash", None);
-        assert_eq!(body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"], 4000);
+        }))
+        .unwrap();
+        let (body, _, _, _) =
+            transform_openai_request(&req_flash_none, "test-p", "gemini-3-flash", None);
+        assert_eq!(
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            4000
+        );
 
         let req_flash_disabled: OpenAIRequest = serde_json::from_value(json!({
             "model": "gemini-3-flash",
             "messages": [{"role": "user", "content": "hi"}],
             "reasoning_effort": "none"
-        })).unwrap();
-        let (body, _, _, _) = transform_openai_request(&req_flash_disabled, "test-p", "gemini-3-flash", None);
-        assert_eq!(body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"], 4000);
+        }))
+        .unwrap();
+        let (body, _, _, _) =
+            transform_openai_request(&req_flash_disabled, "test-p", "gemini-3-flash", None);
+        assert_eq!(
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            4000
+        );
 
         // 4. 裸模型 Flash 客户端传入自定义 budget_tokens：彻底被忽略，由服务端权威等级回填
         let req_flash_custom_budget: OpenAIRequest = serde_json::from_value(json!({
             "model": "gemini-3-flash",
             "messages": [{"role": "user", "content": "hi"}],
             "thinking": {"budget_tokens": 12345}
-        })).unwrap();
-        let (body, _, _, _) = transform_openai_request(&req_flash_custom_budget, "test-p", "gemini-3-flash", None);
-        assert_eq!(body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"], 4000);
+        }))
+        .unwrap();
+        let (body, _, _, _) =
+            transform_openai_request(&req_flash_custom_budget, "test-p", "gemini-3-flash", None);
+        assert_eq!(
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            4000
+        );
 
         let req_flash_high_custom_budget: OpenAIRequest = serde_json::from_value(json!({
             "model": "gemini-3-flash",
             "messages": [{"role": "user", "content": "hi"}],
             "reasoning_effort": "high",
             "thinking": {"budget_tokens": 1234}
-        })).unwrap();
-        let (body, _, _, _) = transform_openai_request(&req_flash_high_custom_budget, "test-p", "gemini-3-flash", None);
-        assert_eq!(body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"], 10000);
+        }))
+        .unwrap();
+        let (body, _, _, _) = transform_openai_request(
+            &req_flash_high_custom_budget,
+            "test-p",
+            "gemini-3-flash",
+            None,
+        );
+        assert_eq!(
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            10000
+        );
     }
 
     #[test]
@@ -1791,10 +1848,7 @@ mod tests {
         let parts = body["request"]["systemInstruction"]["parts"]
             .as_array()
             .expect("systemInstruction.parts");
-        let texts: Vec<&str> = parts
-            .iter()
-            .filter_map(|p| p["text"].as_str())
-            .collect();
+        let texts: Vec<&str> = parts.iter().filter_map(|p| p["text"].as_str()).collect();
 
         assert_eq!(
             texts,
@@ -1864,8 +1918,12 @@ mod tests {
 
     #[test]
     fn test_issue_1592_gemini_3_pro_budget_capping() {
-        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        crate::proxy::config::update_thinking_budget_config(crate::proxy::config::ThinkingBudgetConfig::default());
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::proxy::config::update_thinking_budget_config(
+            crate::proxy::config::ThinkingBudgetConfig::default(),
+        );
         // [FIX #1592] Regression test for gemini-3-pro thinking budget capping
         let req = OpenAIRequest {
             model: "gemini-3-pro".to_string(),
@@ -1891,7 +1949,9 @@ mod tests {
 
     #[test]
     fn test_issue_1602_custom_mode_gemini_capping() {
-        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // [FIX #1602] Regression test for custom mode capping
         use crate::proxy::config::{
             update_thinking_budget_config, ThinkingBudgetConfig, ThinkingBudgetMode,
@@ -1997,11 +2057,15 @@ mod tests {
             messages: vec![OpenAIMessage {
                 role: "user".to_string(),
                 content: Some(OpenAIContent::Array(vec![
-                    OpenAIContentBlock::Text { text: "Describe this video".to_string() },
-                    OpenAIContentBlock::VideoUrl { video_url: OpenAIVideoUrl {
-                        url: "data:video/mp4;base64,AAAA".to_string(),
-                        mime_type: None,
-                    } }
+                    OpenAIContentBlock::Text {
+                        text: "Describe this video".to_string(),
+                    },
+                    OpenAIContentBlock::VideoUrl {
+                        video_url: OpenAIVideoUrl {
+                            url: "data:video/mp4;base64,AAAA".to_string(),
+                            mime_type: None,
+                        },
+                    },
                 ])),
                 ..Default::default()
             }],
@@ -2017,10 +2081,7 @@ mod tests {
             parts[1]["inlineData"]["mimeType"].as_str().unwrap(),
             "video/mp4"
         );
-        assert_eq!(
-            parts[1]["inlineData"]["data"].as_str().unwrap(),
-            "AAAA"
-        );
+        assert_eq!(parts[1]["inlineData"]["data"].as_str().unwrap(), "AAAA");
     }
 
     #[test]
@@ -2048,17 +2109,23 @@ mod tests {
             ..Default::default()
         };
 
-        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Even Passthrough must NOT honor client budget anymore
-        crate::proxy::config::update_thinking_budget_config(crate::proxy::config::ThinkingBudgetConfig {
-            mode: crate::proxy::config::ThinkingBudgetMode::Passthrough,
-            custom_value: 16000,
-            effort: None,
-        });
+        crate::proxy::config::update_thinking_budget_config(
+            crate::proxy::config::ThinkingBudgetConfig {
+                mode: crate::proxy::config::ThinkingBudgetMode::Passthrough,
+                custom_value: 16000,
+                effort: None,
+            },
+        );
         struct PassthroughResetGuard;
         impl Drop for PassthroughResetGuard {
             fn drop(&mut self) {
-                crate::proxy::config::update_thinking_budget_config(crate::proxy::config::ThinkingBudgetConfig::default());
+                crate::proxy::config::update_thinking_budget_config(
+                    crate::proxy::config::ThinkingBudgetConfig::default(),
+                );
             }
         }
         let _guard = PassthroughResetGuard;
@@ -2150,7 +2217,9 @@ mod tests {
 
     #[test]
     fn test_flash_thinking_budget_capping() {
-        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         crate::proxy::config::update_thinking_budget_config(
             crate::proxy::config::ThinkingBudgetConfig::default(),
         );
@@ -2413,7 +2482,8 @@ mod tests {
         });
 
         let request: OpenAIRequest = serde_json::from_value(raw_json).unwrap();
-        let (res_val, _sid, _msg_count, _) = transform_openai_request(&request, "test-v", "gemini-2.5-flash", None);
+        let (res_val, _sid, _msg_count, _) =
+            transform_openai_request(&request, "test-v", "gemini-2.5-flash", None);
         let gen_config = &res_val["request"]["generationConfig"];
         assert_eq!(gen_config["responseMimeType"], "application/json");
         assert!(gen_config.get("responseSchema").is_some());
@@ -2627,8 +2697,11 @@ mod tests {
         });
 
         let request: OpenAIRequest = serde_json::from_value(raw_json).unwrap();
-        let (res_val, _sid, _msg_count, _) = transform_openai_request(&request, "test-v", "gemini-3.8-flash-high", None);
-        let contents = res_val["request"]["contents"].as_array().expect("contents must be an array");
+        let (res_val, _sid, _msg_count, _) =
+            transform_openai_request(&request, "test-v", "gemini-3.8-flash-high", None);
+        let contents = res_val["request"]["contents"]
+            .as_array()
+            .expect("contents must be an array");
 
         // First turn MUST be user
         assert_eq!(contents[0]["role"], "user");
@@ -2636,12 +2709,20 @@ mod tests {
 
         // Second turn MUST be model with functionCall
         assert_eq!(contents[1]["role"], "model");
-        let has_func_call = contents[1]["parts"].as_array().unwrap().iter().any(|p| p.get("functionCall").is_some());
+        let has_func_call = contents[1]["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p.get("functionCall").is_some());
         assert!(has_func_call);
 
         // Third turn MUST be user with functionResponse
         assert_eq!(contents[2]["role"], "user");
-        let has_func_resp = contents[2]["parts"].as_array().unwrap().iter().any(|p| p.get("functionResponse").is_some());
+        let has_func_resp = contents[2]["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p.get("functionResponse").is_some());
         assert!(has_func_resp);
 
         // Since it has tool_calls / functionCall, it should have requestType: "agent"
@@ -2661,8 +2742,12 @@ mod tests {
         });
 
         let request: OpenAIRequest = serde_json::from_value(raw_json).unwrap();
-        let (res_val, _, _, _) = transform_openai_request(&request, "test-v", "gemini-2.5-flash", None);
-        assert!(res_val.get("requestType").is_none(), "Plain text request should not have requestType: 'agent'");
+        let (res_val, _, _, _) =
+            transform_openai_request(&request, "test-v", "gemini-2.5-flash", None);
+        assert!(
+            res_val.get("requestType").is_none(),
+            "Plain text request should not have requestType: 'agent'"
+        );
     }
 
     #[test]

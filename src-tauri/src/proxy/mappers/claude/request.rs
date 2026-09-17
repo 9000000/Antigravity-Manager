@@ -386,8 +386,10 @@ pub fn transform_claude_request_in(
     session_id: &str,
     token: Option<&crate::proxy::token_manager::ProxyToken>,
 ) -> Result<Value, String> {
-    transform_claude_request_in_timed(claude_req, project_id, is_retry, account_id, session_id, token)
-        .map(|(body, _)| body)
+    transform_claude_request_in_timed(
+        claude_req, project_id, is_retry, account_id, session_id, token,
+    )
+    .map(|(body, _)| body)
 }
 
 pub fn transform_claude_request_in_timed(
@@ -503,11 +505,8 @@ pub fn transform_claude_request_in_timed(
         crate::proxy::common::model_mapping::map_claude_model_to_gemini(&claude_req.model);
 
     // 1. System Instruction (透传系统提示词分块，若目标为 Gemini 则自动过滤无用计费元数据 #3452)
-    let system_instruction = build_system_instruction(
-        &claude_req.system,
-        &mapped_model,
-        &extra_system_messages,
-    );
+    let system_instruction =
+        build_system_instruction(&claude_req.system, &mapped_model, &extra_system_messages);
 
     // 将 Claude 工具转为 Value 数组以便探测联网
     let tools_val: Option<Vec<Value>> = claude_req.tools.as_ref().map(|list| {
@@ -535,11 +534,10 @@ pub fn transform_claude_request_in_timed(
 
     // Check if thinking is enabled in the request
     let thinking_type = claude_req.thinking.as_ref().map(|t| t.type_.as_str());
-    let force_server_thinking =
-        crate::proxy::thinking_store::any_model_forces_server_thinking(&[
-            claude_req.model.as_str(),
-            mapped_model.as_str(),
-        ]);
+    let force_server_thinking = crate::proxy::thinking_store::any_model_forces_server_thinking(&[
+        claude_req.model.as_str(),
+        mapped_model.as_str(),
+    ]);
     let target_model_supports_thinking = model_supports_thinking(&mapped_model);
     let is_under_v3 = crate::proxy::model_specs::is_gemini_under_v3(&mapped_model)
         || crate::proxy::model_specs::is_gemini_under_v3(&claude_req.model);
@@ -697,8 +695,11 @@ pub fn transform_claude_request_in_timed(
     // [FIX session-1M] 混入对话指纹与代数,不同对话隔离服务端会话,1M 累计报错后 bump 自愈
     if let Some(account_id) = account_id {
         let generation = crate::proxy::common::session::current_bump(account_id, &session_id);
-        inner_request["sessionId"] =
-            json!(crate::proxy::common::session::derive_session_scoped(account_id, &session_id, generation));
+        inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_scoped(
+            account_id,
+            &session_id,
+            generation
+        ));
     }
 
     // 生成 requestId
@@ -719,7 +720,8 @@ pub fn transform_claude_request_in_timed(
         .get("contents")
         .map(super::super::common_utils::contents_has_tool_interactions)
         .unwrap_or(false);
-    let is_agent_request = config.request_type != "image_gen" && (has_tools || has_tool_interactions);
+    let is_agent_request =
+        config.request_type != "image_gen" && (has_tools || has_tool_interactions);
 
     // 构建最终请求体
     let mut body = json!({
@@ -819,8 +821,7 @@ fn model_supports_thinking(mapped_model: &str) -> bool {
     if crate::proxy::model_specs::is_gemini_under_v3(mapped_model) {
         return false;
     }
-    mapped_model.contains("-thinking")
-        || mapped_model.starts_with("claude-")
+    mapped_model.contains("-thinking") || mapped_model.starts_with("claude-")
 }
 
 /// Whether a model should keep thinking enabled (and rely on the
@@ -1034,7 +1035,9 @@ fn build_contents(
         if let MessageContent::Array(blocks) = content {
             for b in blocks {
                 match b {
-                    ContentBlock::Thinking { signature: Some(s), .. } => {
+                    ContentBlock::Thinking {
+                        signature: Some(s), ..
+                    } => {
                         if s == SENTINEL_SIGNATURE || s.len() >= MIN_SIGNATURE_LENGTH {
                             turn_signature = Some(s.clone());
                             break;
@@ -1047,7 +1050,9 @@ fn build_contents(
                                 break;
                             }
                         }
-                        if let Some(s) = crate::proxy::SignatureCache::global().get_tool_signature(id) {
+                        if let Some(s) =
+                            crate::proxy::SignatureCache::global().get_tool_signature(id)
+                        {
                             turn_signature = Some(s);
                             break;
                         }
@@ -1059,7 +1064,9 @@ fn build_contents(
 
         // If not found from blocks or tool cache, try session cache at msg_index
         if turn_signature.is_none() {
-            if let Some(s) = crate::proxy::SignatureCache::global().get_session_signature_at(session_id, msg_index) {
+            if let Some(s) = crate::proxy::SignatureCache::global()
+                .get_session_signature_at(session_id, msg_index)
+            {
                 turn_signature = Some(s);
             }
         }
@@ -1139,7 +1146,8 @@ fn build_contents(
                         }
 
                         // Normalize placeholder thoughts (e.g. Claude Code "·", ".", "···") to "..."
-                        let is_placeholder = crate::proxy::thinking_store::is_placeholder_thought(thinking);
+                        let is_placeholder =
+                            crate::proxy::thinking_store::is_placeholder_thought(thinking);
                         let final_thought_text = if is_placeholder {
                             "..."
                         } else {
@@ -1182,8 +1190,8 @@ fn build_contents(
                         // 1. Check incoming signature if long enough or sentinel
                         if let Some(sig) = signature {
                             if sig == SENTINEL_SIGNATURE || sig.len() >= MIN_SIGNATURE_LENGTH {
-                                let cached_family =
-                                    crate::proxy::SignatureCache::global().get_signature_family(sig);
+                                let cached_family = crate::proxy::SignatureCache::global()
+                                    .get_signature_family(sig);
 
                                 match cached_family {
                                     Some(family) => {
@@ -1251,22 +1259,24 @@ fn build_contents(
                     }
                     ContentBlock::Image { source, .. } => {
                         if source.source_type == "base64" {
-                            let part = crate::proxy::mappers::common_utils::create_gemini_inline_part(
-                                source.media_type.as_deref(),
-                                source.data.as_deref().unwrap_or_default(),
-                                "Image",
-                            );
+                            let part =
+                                crate::proxy::mappers::common_utils::create_gemini_inline_part(
+                                    source.media_type.as_deref(),
+                                    source.data.as_deref().unwrap_or_default(),
+                                    "Image",
+                                );
                             parts.push(part);
                             saw_non_thinking = true;
                         }
                     }
                     ContentBlock::Document { source, .. } => {
                         if source.source_type == "base64" {
-                            let part = crate::proxy::mappers::common_utils::create_gemini_inline_part(
-                                source.media_type.as_deref(),
-                                source.data.as_deref().unwrap_or_default(),
-                                "Document",
-                            );
+                            let part =
+                                crate::proxy::mappers::common_utils::create_gemini_inline_part(
+                                    source.media_type.as_deref(),
+                                    source.data.as_deref().unwrap_or_default(),
+                                    "Document",
+                                );
                             parts.push(part);
                             saw_non_thinking = true;
                         }
@@ -1308,10 +1318,15 @@ fn build_contents(
                         // Signature resolution logic
                         // Priority: Client -> Tool-specific cache -> Turn Context -> Turn Signature -> Session cache at msg_index
                         // Strictly isolated to this turn: NEVER fall back to latest session or global store!
-                        let final_sig = signature.as_ref()
-                            .filter(|s| s.as_str() == SENTINEL_SIGNATURE || s.len() >= MIN_SIGNATURE_LENGTH)
+                        let final_sig = signature
+                            .as_ref()
+                            .filter(|s| {
+                                s.as_str() == SENTINEL_SIGNATURE || s.len() >= MIN_SIGNATURE_LENGTH
+                            })
                             .cloned()
-                            .or_else(|| crate::proxy::SignatureCache::global().get_tool_signature(id))
+                            .or_else(|| {
+                                crate::proxy::SignatureCache::global().get_tool_signature(id)
+                            })
                             .or_else(|| last_thought_signature.as_ref().cloned())
                             .or_else(|| turn_signature.clone())
                             .or_else(|| {
@@ -1412,8 +1427,12 @@ fn build_contents(
                                             == Some("image")
                                         {
                                             let source = block.get("source").unwrap();
-                                            let media_type = source.get("media_type").and_then(|v| v.as_str());
-                                            let data = source.get("data").and_then(|v| v.as_str()).unwrap_or_default();
+                                            let media_type =
+                                                source.get("media_type").and_then(|v| v.as_str());
+                                            let data = source
+                                                .get("data")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or_default();
                                             extra_parts.push(crate::proxy::mappers::common_utils::create_gemini_inline_part(
                                                 media_type,
                                                 data,
@@ -1525,9 +1544,9 @@ fn build_contents(
     // Vertex AI requires every assistant message to start with a thinking block when thinking is enabled.
     if is_assistant && is_thinking_enabled {
         let is_google_cloud = mapped_model.starts_with("projects/");
-        let thought_idx = parts.iter().position(|p| {
-            p.get("thought").and_then(|v| v.as_bool()) == Some(true)
-        });
+        let thought_idx = parts
+            .iter()
+            .position(|p| p.get("thought").and_then(|v| v.as_bool()) == Some(true));
 
         match thought_idx {
             Some(0) => {
@@ -1909,7 +1928,10 @@ fn build_generation_config(
         let budget = crate::proxy::model_specs::resolve_authoritative_thinking_budget(
             mapped_model,
             effort.map(|s| s.as_str()),
-            claude_req.thinking.as_ref().and_then(|t| t.budget_tokens.map(|b| b as u64)),
+            claude_req
+                .thinking
+                .as_ref()
+                .and_then(|t| t.budget_tokens.map(|b| b as u64)),
             token,
         );
 
@@ -2019,7 +2041,11 @@ fn build_generation_config(
 
     if let Some(val) = final_max_tokens {
         // [FIX] Cap maxOutputTokens to safe upper limit (65535 for Pro, 65536 for Flash) to avoid INVALID_ARGUMENT (Cherry Studio sends 128000)
-        let safe_limit = if mapped_model.to_lowercase().contains("pro") { 65535 } else { 65536 };
+        let safe_limit = if mapped_model.to_lowercase().contains("pro") {
+            65535
+        } else {
+            65536
+        };
         if val > safe_limit {
             tracing::warn!(
                 "[Generation-Config] Capping maxOutputTokens from {} to {} to prevent 400 Invalid Argument",
@@ -2436,7 +2462,9 @@ mod tests {
         let request = &body["request"];
 
         // 验证: generationConfig 中必须保留 thinkingConfig (不再因历史消息无签名或无思考块而被降级移除)
-        let gen_config = request.get("generationConfig").expect("Should have generationConfig");
+        let gen_config = request
+            .get("generationConfig")
+            .expect("Should have generationConfig");
         assert!(
             gen_config.get("thinkingConfig").is_some(),
             "thinkingConfig must be preserved per server-side thinking persistence policy"
@@ -2454,7 +2482,9 @@ mod tests {
 
     #[test]
     fn test_thinking_block_not_prepend_when_disabled() {
-        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // 验证当 thinking 未启用且模型非思考模型时,不会补全 thinking 块
         let req = ClaudeRequest {
             model: "non-reasoning-model".to_string(),
@@ -2555,9 +2585,9 @@ mod tests {
         let parts = contents[0]["parts"].as_array().unwrap();
 
         // 验证空 thinking 块被降级为包含 "..." 的非 thought 文本块
-        let downgraded_part = parts.iter().find(|p| {
-            p.get("text") == Some(&json!("...")) && p.get("thought").is_none()
-        });
+        let downgraded_part = parts
+            .iter()
+            .find(|p| p.get("text") == Some(&json!("...")) && p.get("thought").is_none());
         assert!(
             downgraded_part.is_some(),
             "Empty thinking should be downgraded to text without thought: true"
@@ -2602,9 +2632,14 @@ mod tests {
         let parts = body["request"]["contents"][0]["parts"].as_array().unwrap();
 
         // 验证 RedactedThinking -> Text 存在且不带 thought: true
-        let redacted_part = parts.iter().find(|p| {
-            p.get("text").and_then(|t| t.as_str()).map_or(false, |t| t.contains("[Redacted Thinking: some data]"))
-        }).expect("Should find redacted thinking degraded text");
+        let redacted_part = parts
+            .iter()
+            .find(|p| {
+                p.get("text")
+                    .and_then(|t| t.as_str())
+                    .map_or(false, |t| t.contains("[Redacted Thinking: some data]"))
+            })
+            .expect("Should find redacted thinking degraded text");
         assert!(
             redacted_part.get("thought").is_none(),
             "Redacted thinking should NOT have thought: true"
@@ -2768,7 +2803,9 @@ mod tests {
     }
     #[test]
     fn test_default_max_tokens() {
-        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let req = ClaudeRequest {
             model: "non-reasoning-model".to_string(),
             messages: vec![Message {
@@ -2801,7 +2838,9 @@ mod tests {
     }
     #[test]
     fn test_claude_flash_thinking_budget_capping() {
-        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Use full path or ensure import of ThinkingConfig
         // transform_claude_request and models are needed.
         // Assuming models are available via super imports, but let's be explicit if needed.
@@ -2869,7 +2908,9 @@ mod tests {
 
     #[test]
     fn test_gemini_pro_thinking_support() {
-        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Setup request for Gemini Pro (no -thinking suffix)
         let req = ClaudeRequest {
             model: "gemini-3-pro-preview".to_string(),
@@ -2915,7 +2956,9 @@ mod tests {
 
     #[test]
     fn test_gemini_pro_default_thinking() {
-        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Setup request for Gemini Pro WITHOUT thinking config
         let req = ClaudeRequest {
             model: "gemini-3-pro-preview".to_string(),
@@ -2951,7 +2994,9 @@ mod tests {
 
     #[test]
     fn test_claude_image_thinking_mode_disabled() {
-        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // 1. Force image thinking mode to "disabled"
         crate::proxy::config::update_image_thinking_mode(Some("disabled".to_string()));
         struct ImageResetGuard;
@@ -3002,7 +3047,9 @@ mod tests {
 
     #[test]
     fn test_claude_adaptive_global_config() {
-        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Set global config to Adaptive + High effort
         let config = ThinkingBudgetConfig {
             mode: crate::proxy::config::ThinkingBudgetMode::Adaptive,
@@ -3114,10 +3161,7 @@ mod tests {
             !has_google_search,
             "v1internal should avoid mixed Google Search when functionDeclarations present"
         );
-        assert!(
-            has_functions,
-            "Should have function declarations"
-        );
+        assert!(has_functions, "Should have function declarations");
     }
 
     #[test]
@@ -3199,11 +3243,15 @@ mod tests {
     fn test_model_keeps_thinking_without_signature() {
         assert!(model_keeps_thinking_without_signature("gemini-3-flash"));
         assert!(model_keeps_thinking_without_signature("gemini-3.1-flash"));
-        assert!(model_keeps_thinking_without_signature("gemini-3.7-flash-high"));
+        assert!(model_keeps_thinking_without_signature(
+            "gemini-3.7-flash-high"
+        ));
         assert!(model_keeps_thinking_without_signature(
             "gemini-3.6-flash-medium"
         ));
-        assert!(model_keeps_thinking_without_signature("gemini-3.5-flash-low"));
+        assert!(model_keeps_thinking_without_signature(
+            "gemini-3.5-flash-low"
+        ));
         assert!(model_keeps_thinking_without_signature("gemini-pro-agent"));
         assert!(!model_keeps_thinking_without_signature("gemini-3.1-pro"));
         assert!(!model_keeps_thinking_without_signature(
@@ -3270,15 +3318,24 @@ mod tests {
             quality: None,
         };
 
-        let result = transform_claude_request_in(&req, "test-proj", false, None, "test-session", None)
-            .expect("Transform should succeed");
+        let result =
+            transform_claude_request_in(&req, "test-proj", false, None, "test-session", None)
+                .expect("Transform should succeed");
 
-        let contents = result["request"]["contents"].as_array().expect("Contents array");
+        let contents = result["request"]["contents"]
+            .as_array()
+            .expect("Contents array");
         let assistant_parts = contents[1]["parts"].as_array().expect("Assistant parts");
         assert_eq!(assistant_parts.len(), 2);
         assert_eq!(assistant_parts[0]["thought"], true);
-        assert_eq!(assistant_parts[0]["thoughtSignature"], "skip_thought_signature_validator");
-        assert_eq!(assistant_parts[0]["text"], "Considering the question deeply...");
+        assert_eq!(
+            assistant_parts[0]["thoughtSignature"],
+            "skip_thought_signature_validator"
+        );
+        assert_eq!(
+            assistant_parts[0]["text"],
+            "Considering the question deeply..."
+        );
         assert_eq!(assistant_parts[1]["text"], "Here is my answer");
     }
 
@@ -3311,13 +3368,11 @@ mod tests {
             },
             Message {
                 role: "user".to_string(),
-                content: MessageContent::Array(vec![
-                    ContentBlock::ToolResult {
-                        tool_use_id: "call_548709".to_string(),
-                        content: serde_json::json!("file1.txt\nfile2.txt"),
-                        is_error: None,
-                    }
-                ]),
+                content: MessageContent::Array(vec![ContentBlock::ToolResult {
+                    tool_use_id: "call_548709".to_string(),
+                    content: serde_json::json!("file1.txt\nfile2.txt"),
+                    is_error: None,
+                }]),
             },
         ];
 
@@ -3326,7 +3381,11 @@ mod tests {
         if let MessageContent::Array(blocks) = &messages[1].content {
             assert_eq!(blocks.len(), 2);
             if let ContentBlock::Thinking { signature, .. } = &blocks[0] {
-                assert_eq!(signature.as_deref(), Some(real_sig), "Real signature must NOT be stripped!");
+                assert_eq!(
+                    signature.as_deref(),
+                    Some(real_sig),
+                    "Real signature must NOT be stripped!"
+                );
             } else {
                 panic!("Expected thinking block");
             }
@@ -3354,16 +3413,22 @@ mod tests {
             quality: None,
         };
 
-        let result = transform_claude_request_in(&req, "test-proj", false, None, "test-session", None)
-            .expect("Transform should succeed");
+        let result =
+            transform_claude_request_in(&req, "test-proj", false, None, "test-session", None)
+                .expect("Transform should succeed");
 
-        let contents = result["request"]["contents"].as_array().expect("Contents array");
+        let contents = result["request"]["contents"]
+            .as_array()
+            .expect("Contents array");
         let assistant_parts = contents[1]["parts"].as_array().expect("Assistant parts");
         assert_eq!(assistant_parts.len(), 2);
         assert_eq!(assistant_parts[0]["thought"], true);
         assert_eq!(assistant_parts[0]["thoughtSignature"], real_sig);
         assert_eq!(assistant_parts[1]["functionCall"]["name"], "list_directory");
-        assert_eq!(assistant_parts[1]["thoughtSignature"], real_sig, "functionCall must inherit thoughtSignature!");
+        assert_eq!(
+            assistant_parts[1]["thoughtSignature"], real_sig,
+            "functionCall must inherit thoughtSignature!"
+        );
     }
 
     #[test]
@@ -3371,41 +3436,41 @@ mod tests {
         let valid_png_b64 = "iVBORw0KGgo=";
         let req = ClaudeRequest {
             model: "claude-3-7-sonnet-20250219".to_string(),
-            messages: vec![
-                Message {
-                    role: "user".to_string(),
-                    content: MessageContent::Array(vec![
-                        ContentBlock::Text { text: "Look at these images".to_string() },
-                        // Corrupt image block 1 (empty data)
-                        ContentBlock::Image {
-                            source: ImageSource {
-                                source_type: "base64".to_string(),
-                                media_type: None,
-                                data: None,
-                            },
-                            cache_control: None,
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::Array(vec![
+                    ContentBlock::Text {
+                        text: "Look at these images".to_string(),
+                    },
+                    // Corrupt image block 1 (empty data)
+                    ContentBlock::Image {
+                        source: ImageSource {
+                            source_type: "base64".to_string(),
+                            media_type: None,
+                            data: None,
                         },
-                        // Corrupt image block 2 (invalid short base64 +A==)
-                        ContentBlock::Image {
-                            source: ImageSource {
-                                source_type: "base64".to_string(),
-                                media_type: Some("image/png".to_string()),
-                                data: Some("+A==".to_string()),
-                            },
-                            cache_control: None,
+                        cache_control: None,
+                    },
+                    // Corrupt image block 2 (invalid short base64 +A==)
+                    ContentBlock::Image {
+                        source: ImageSource {
+                            source_type: "base64".to_string(),
+                            media_type: Some("image/png".to_string()),
+                            data: Some("+A==".to_string()),
                         },
-                        // Valid image block
-                        ContentBlock::Image {
-                            source: ImageSource {
-                                source_type: "base64".to_string(),
-                                media_type: Some("image/png".to_string()),
-                                data: Some(valid_png_b64.to_string()),
-                            },
-                            cache_control: None,
+                        cache_control: None,
+                    },
+                    // Valid image block
+                    ContentBlock::Image {
+                        source: ImageSource {
+                            source_type: "base64".to_string(),
+                            media_type: Some("image/png".to_string()),
+                            data: Some(valid_png_b64.to_string()),
                         },
-                    ]),
-                },
-            ],
+                        cache_control: None,
+                    },
+                ]),
+            }],
             system: None,
             tools: None,
             stream: false,
@@ -3420,15 +3485,22 @@ mod tests {
             quality: None,
         };
 
-        let result = transform_claude_request_in(&req, "test-proj", false, None, "test-session", None)
-            .expect("Transform must not fail on corrupt images");
+        let result =
+            transform_claude_request_in(&req, "test-proj", false, None, "test-session", None)
+                .expect("Transform must not fail on corrupt images");
 
         let contents = result["request"]["contents"].as_array().unwrap();
         let user_parts = contents[0]["parts"].as_array().unwrap();
         assert_eq!(user_parts.len(), 4);
         assert_eq!(user_parts[0]["text"], "Look at these images");
-        assert_eq!(user_parts[1]["text"], "[Image: invalid or corrupted data omitted]");
-        assert_eq!(user_parts[2]["text"], "[Image: invalid or corrupted data omitted]");
+        assert_eq!(
+            user_parts[1]["text"],
+            "[Image: invalid or corrupted data omitted]"
+        );
+        assert_eq!(
+            user_parts[2]["text"],
+            "[Image: invalid or corrupted data omitted]"
+        );
         assert!(user_parts[3].get("inlineData").is_some());
         assert_eq!(user_parts[3]["inlineData"]["mimeType"], "image/png");
         assert_eq!(user_parts[3]["inlineData"]["data"], valid_png_b64);
@@ -3457,14 +3529,9 @@ mod tests {
             quality: None,
         };
 
-        let result = transform_claude_request_in(
-            &req,
-            "test-proj",
-            false,
-            None,
-            "test-session",
-            None,
-        ).unwrap();
+        let result =
+            transform_claude_request_in(&req, "test-proj", false, None, "test-session", None)
+                .unwrap();
 
         let gen_config = &result["request"]["generationConfig"];
         assert!(
@@ -3500,14 +3567,9 @@ mod tests {
             quality: None,
         };
 
-        let result = transform_claude_request_in(
-            &req,
-            "test-proj",
-            false,
-            None,
-            "test-session",
-            None,
-        ).unwrap();
+        let result =
+            transform_claude_request_in(&req, "test-proj", false, None, "test-session", None)
+                .unwrap();
 
         let gen_config = &result["request"]["generationConfig"];
         let thinking_config = gen_config
@@ -3582,7 +3644,9 @@ mod tests {
             .collect::<Vec<_>>();
 
         // Billing header must be filtered out to avoid Gemini 429 RESOURCE_EXHAUSTED (#3452)
-        assert!(!system_texts.iter().any(|t| t.contains("x-anthropic-billing-header:")));
+        assert!(!system_texts
+            .iter()
+            .any(|t| t.contains("x-anthropic-billing-header:")));
         // Normal prompt must be preserved
         assert!(system_texts.contains(&"You are a helpful assistant."));
     }

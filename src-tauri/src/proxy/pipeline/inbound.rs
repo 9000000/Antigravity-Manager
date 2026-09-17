@@ -1,5 +1,5 @@
-use serde_json::{json, Value};
 use super::policy::ProxyProtocol;
+use serde_json::{json, Value};
 
 /// 统一进站思考管线（InboundThinkingPipeline）
 /// 接收任何协议转译成的 Google contents 统一报文，单向流转执行：
@@ -34,14 +34,18 @@ impl InboundThinkingPipeline {
                     let mut saw_non_thinking = false;
 
                     for part in parts.drain(..) {
-                        let is_thought = part.get("thought").and_then(|v| v.as_bool()).unwrap_or(false)
+                        let is_thought = part
+                            .get("thought")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
                             || (part.get("thoughtSignature").is_some()
                                 && part.get("functionCall").is_none()
                                 && part.get("functionResponse").is_none());
 
                         if is_thought {
                             let text = part.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                            let is_placeholder = crate::proxy::thinking_store::is_placeholder_thought(text);
+                            let is_placeholder =
+                                crate::proxy::thinking_store::is_placeholder_thought(text);
                             let final_thought_text = if is_placeholder || text.is_empty() {
                                 "..."
                             } else {
@@ -68,13 +72,15 @@ impl InboundThinkingPipeline {
                                 if sig == crate::proxy::thinking_store::SENTINEL_SIGNATURE {
                                     effective_sig = Some(sig.to_string());
                                 } else if trusts_signature && sig.len() >= 50 {
-                                    let cached_family =
-                                        crate::proxy::SignatureCache::global().get_signature_family(sig);
+                                    let cached_family = crate::proxy::SignatureCache::global()
+                                        .get_signature_family(sig);
                                     let compatible = match cached_family {
-                                        Some(family) => crate::proxy::mappers::common_utils::is_model_compatible(
-                                            &family,
-                                            target_model,
-                                        ),
+                                        Some(family) => {
+                                            crate::proxy::mappers::common_utils::is_model_compatible(
+                                                &family,
+                                                target_model,
+                                            )
+                                        }
                                         None => true,
                                     };
                                     if compatible {

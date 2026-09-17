@@ -659,13 +659,22 @@ pub async fn monitor_middleware(
                         }
 
                         // Gemini format: candidates[0].content.parts
-                        if let Some(candidates) = json.get("candidates").and_then(|c| c.as_array()) {
+                        if let Some(candidates) = json.get("candidates").and_then(|c| c.as_array())
+                        {
                             for cand in candidates {
                                 if let Some(content) = cand.get("content") {
-                                    if let Some(parts) = content.get("parts").and_then(|p| p.as_array()) {
+                                    if let Some(parts) =
+                                        content.get("parts").and_then(|p| p.as_array())
+                                    {
                                         for part in parts {
-                                            if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                                                if part.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) {
+                                            if let Some(text) =
+                                                part.get("text").and_then(|t| t.as_str())
+                                            {
+                                                if part
+                                                    .get("thought")
+                                                    .and_then(|t| t.as_bool())
+                                                    .unwrap_or(false)
+                                                {
                                                     thinking_content.push_str(text);
                                                 } else {
                                                     response_content.push_str(text);
@@ -679,8 +688,13 @@ pub async fn monitor_middleware(
                                                 thinking_signature = sig.to_string();
                                             }
                                             if let Some(fc) = part.get("functionCall") {
-                                                if let Some(name) = fc.get("name").and_then(|n| n.as_str()) {
-                                                    let args = fc.get("args").map(|a| a.to_string()).unwrap_or_default();
+                                                if let Some(name) =
+                                                    fc.get("name").and_then(|n| n.as_str())
+                                                {
+                                                    let args = fc
+                                                        .get("args")
+                                                        .map(|a| a.to_string())
+                                                        .unwrap_or_default();
                                                     tool_calls.push(serde_json::json!({
                                                         "id": "",
                                                         "type": "function",
@@ -721,7 +735,9 @@ pub async fn monitor_middleware(
                                             "function": { "name": name, "arguments": "" }
                                         });
                                     }
-                                    if let Some(thinking) = block.get("thinking").and_then(|v| v.as_str()) {
+                                    if let Some(thinking) =
+                                        block.get("thinking").and_then(|v| v.as_str())
+                                    {
                                         thinking_content.push_str(thinking);
                                     }
                                     if let Some(sig) = block
@@ -903,7 +919,10 @@ pub async fn monitor_middleware(
 
                 // [Timing Diagnostics] 注入耗时诊断元数据 (秒)
                 let mut timing_obj = serde_json::Map::new();
-                if let Some(clean) = headers_map.get("x-timing-clean-ms").and_then(|v| v.as_str()) {
+                if let Some(clean) = headers_map
+                    .get("x-timing-clean-ms")
+                    .and_then(|v| v.as_str())
+                {
                     if let Ok(n) = clean.parse::<f64>() {
                         timing_obj.insert("clean_s".to_string(), serde_json::json!(n / 1000.0));
                     }
@@ -913,7 +932,10 @@ pub async fn monitor_middleware(
                         timing_obj.insert("norm_s".to_string(), serde_json::json!(n / 1000.0));
                     }
                 }
-                if let Some(th) = headers_map.get("x-timing-thinking-ms").and_then(|v| v.as_str()) {
+                if let Some(th) = headers_map
+                    .get("x-timing-thinking-ms")
+                    .and_then(|v| v.as_str())
+                {
                     if let Ok(n) = th.parse::<f64>() {
                         timing_obj.insert("thinking_s".to_string(), serde_json::json!(n / 1000.0));
                     }
@@ -923,7 +945,10 @@ pub async fn monitor_middleware(
                         timing_obj.insert("ttft_s".to_string(), serde_json::json!(n / 1000.0));
                     }
                 }
-                timing_obj.insert("stream_s".to_string(), serde_json::json!(stream_ms / 1000.0));
+                timing_obj.insert(
+                    "stream_s".to_string(),
+                    serde_json::json!(stream_ms / 1000.0),
+                );
                 timing_obj.insert("total_s".to_string(), serde_json::json!(total_ms / 1000.0));
                 consolidated.insert("_timing".to_string(), Value::Object(timing_obj));
                 if has_actual_content {
@@ -1041,7 +1066,9 @@ pub async fn monitor_middleware(
                     .as_ref()
                     .or(log.request_body.as_ref())
                     .map(|body| {
-                        crate::proxy::mappers::context_manager::estimate_raw_tokens_from_payload(body)
+                        crate::proxy::mappers::context_manager::estimate_raw_tokens_from_payload(
+                            body,
+                        )
                     })
                     .unwrap_or(0);
                 if estimated > 0 {

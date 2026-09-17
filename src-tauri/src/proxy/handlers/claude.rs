@@ -332,7 +332,10 @@ mod variant_tests {
                 .as_ref()
                 .and_then(|config| config.effort.as_deref()),
         );
-        assert_eq!(effort, Some(crate::proxy::common::variant_mapping::VariantTier::High));
+        assert_eq!(
+            effort,
+            Some(crate::proxy::common::variant_mapping::VariantTier::High)
+        );
 
         apply_variant(&mut request, effort, Some(1_000))
             .expect("gemini-3-flash must resolve with max effort");
@@ -409,7 +412,9 @@ fn apply_variant(
 pub async fn handle_messages(
     State(state): State<AppState>,
     headers: HeaderMap,
-    upstream_recorder: Option<axum::extract::Extension<crate::proxy::monitor::UpstreamRequestBodyHolder>>,
+    upstream_recorder: Option<
+        axum::extract::Extension<crate::proxy::monitor::UpstreamRequestBodyHolder>,
+    >,
     Json(body): Json<Value>,
 ) -> Response {
     // [FIX] 保存原始请求体的完整副本，用于日志记录
@@ -1127,46 +1132,48 @@ pub async fn handle_messages(
         // let _trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
 
         let token_obj = token_manager.get_token_by_id(&account_id);
-        let (mut gemini_body, transform_timing) = match crate::proxy::mappers::claude::transform_claude_request_in_timed(
-            &request_with_mapped,
-            &project_id,
-            retried_without_thinking,
-            Some(account_id.as_str()),
-            &session_id_str,
-            token_obj.as_ref(),
-        ) {
-            Ok((b, timing)) => {
-                debug!(
-                    "[{}] Transformed Gemini Body: {}",
-                    trace_id,
-                    serde_json::to_string_pretty(&b).unwrap_or_default()
-                );
-                (b, timing)
-            }
-            Err(e) => {
-                let headers = [
-                    ("X-Mapped-Model", request_with_mapped.model.as_str()),
-                    ("X-Account-Email", email.as_str()),
-                ];
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    headers,
-                    Json(json!({
-                        "type": "error",
-                        "error": {
-                            "type": "api_error",
-                            "message": format!("Transform error: {}", e)
-                        }
-                    })),
-                )
-                    .into_response();
-            }
-        };
+        let (mut gemini_body, transform_timing) =
+            match crate::proxy::mappers::claude::transform_claude_request_in_timed(
+                &request_with_mapped,
+                &project_id,
+                retried_without_thinking,
+                Some(account_id.as_str()),
+                &session_id_str,
+                token_obj.as_ref(),
+            ) {
+                Ok((b, timing)) => {
+                    debug!(
+                        "[{}] Transformed Gemini Body: {}",
+                        trace_id,
+                        serde_json::to_string_pretty(&b).unwrap_or_default()
+                    );
+                    (b, timing)
+                }
+                Err(e) => {
+                    let headers = [
+                        ("X-Mapped-Model", request_with_mapped.model.as_str()),
+                        ("X-Account-Email", email.as_str()),
+                    ];
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        headers,
+                        Json(json!({
+                            "type": "error",
+                            "error": {
+                                "type": "api_error",
+                                "message": format!("Transform error: {}", e)
+                            }
+                        })),
+                    )
+                        .into_response();
+                }
+            };
 
-        let _ = crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
-            &mut gemini_body,
-            &mapped_model,
-        );
+        let _ =
+            crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
+                &mut gemini_body,
+                &mapped_model,
+            );
 
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
         let tf_micros = transform_timing.think_fill_micros;
@@ -1507,7 +1514,10 @@ pub async fn handle_messages(
                                         )
                                         .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
                                         .header("X-Timing-Norm-Ms", format!("{:.3}", norm_ms))
-                                        .header("X-Timing-Thinking-Ms", format!("{:.3}", think_fill_ms))
+                                        .header(
+                                            "X-Timing-Thinking-Ms",
+                                            format!("{:.3}", think_fill_ms),
+                                        )
                                         .header("X-Timing-Ttft-Ms", format!("{:.3}", ttft_ms))
                                         .body(Body::from(
                                             serde_json::to_string(&full_response).unwrap(),
@@ -1701,7 +1711,10 @@ pub async fn handle_messages(
             if status_code == 429 || status_code == 529 {
                 if let Some(sid) = session_id {
                     token_manager.clear_session_binding(sid);
-                    debug!("[{}] Unbound session {} from account {} due to status {}", trace_id, sid, email, status_code);
+                    debug!(
+                        "[{}] Unbound session {} from account {} due to status {}",
+                        trace_id, sid, email, status_code
+                    );
                 }
             }
         }
@@ -1956,7 +1969,8 @@ pub async fn handle_messages(
             last_status
         };
 
-        if let Some(sec) = crate::proxy::handlers::common::extract_retry_after_seconds(&last_error) {
+        if let Some(sec) = crate::proxy::handlers::common::extract_retry_after_seconds(&last_error)
+        {
             if let Ok(val) = header::HeaderValue::from_str(&sec.to_string()) {
                 headers.insert(axum::http::header::RETRY_AFTER, val);
             }
@@ -1978,7 +1992,8 @@ pub async fn handle_messages(
                 headers.insert("X-Mapped-Model", v);
             }
         }
-        if let Some(sec) = crate::proxy::handlers::common::extract_retry_after_seconds(&last_error) {
+        if let Some(sec) = crate::proxy::handlers::common::extract_retry_after_seconds(&last_error)
+        {
             if let Ok(val) = header::HeaderValue::from_str(&sec.to_string()) {
                 headers.insert(axum::http::header::RETRY_AFTER, val);
             }

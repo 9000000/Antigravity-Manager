@@ -49,7 +49,13 @@ pub struct OpenAIRequest {
     #[serde(default)]
     pub reasoning: Option<ReasoningConfig>,
     // [NEW] OpenAI o1/o3/o4 reasoning_effort (and aliases) support
-    #[serde(default, rename = "reasoning_effort", alias = "reasoningEffort", alias = "thinkingLevel", alias = "thinking_level")]
+    #[serde(
+        default,
+        rename = "reasoning_effort",
+        alias = "reasoningEffort",
+        alias = "thinkingLevel",
+        alias = "thinking_level"
+    )]
     pub reasoning_effort: Option<String>,
     // [NEW] Direct imageSize support (for Gemini native parameter)
     #[serde(default, rename = "imageSize")]
@@ -167,7 +173,12 @@ pub struct OpenAIInputAudio {
     /// base64 编码的音频数据 (也兼容传入 data: URL)
     pub data: String,
     /// "wav" | "mp3" | "m4a" | "ogg" | "flac" | "aiff" ... 亦接受完整 MIME
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "mimeType", alias = "mime_type")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "mimeType",
+        alias = "mime_type"
+    )]
     pub format: Option<String>,
 }
 
@@ -187,7 +198,11 @@ pub struct OpenAIMessage {
     pub content: Option<OpenAIContent>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "thought")]
     pub reasoning_content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", alias = "thoughtSignature", alias = "thought_signature")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        alias = "thoughtSignature",
+        alias = "thought_signature"
+    )]
     pub signature: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
@@ -205,7 +220,11 @@ pub struct ToolCall {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function: Option<ToolFunction>,
 
-    #[serde(skip_serializing_if = "Option::is_none", alias = "thoughtSignature", alias = "thought_signature")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        alias = "thoughtSignature",
+        alias = "thought_signature"
+    )]
     pub signature: Option<String>,
 
     // [NEW] Fields for apply_patch_call
@@ -340,4 +359,3 @@ impl From<&crate::proxy::pipeline::CanonicalUsage> for OpenAIUsage {
         }
     }
 }
-

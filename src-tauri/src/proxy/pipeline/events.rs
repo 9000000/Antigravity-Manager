@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use super::usage::CanonicalUsage;
+use serde::{Deserialize, Serialize};
 
 /// 流式增量分块（Streaming SSE Chunks）的统一领域事件抽象
 /// 上游 Google Gemini SSE 分块在转为具体协议前，先收拢萃取为本事件

@@ -1,7 +1,7 @@
-use serde_json::{json, Value};
 use super::events::CanonicalStreamEvent;
 use super::policy::ProxyProtocol;
 use super::usage::CanonicalUsage;
+use serde_json::{json, Value};
 
 /// 统一出站萃取对象
 #[derive(Debug, Clone, Default)]
@@ -30,9 +30,16 @@ impl OutboundThinkingPipeline {
 
         if let Some(cands) = raw.get("candidates").and_then(|c| c.as_array()) {
             if let Some(first) = cands.first() {
-                if let Some(parts) = first.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
+                if let Some(parts) = first
+                    .get("content")
+                    .and_then(|c| c.get("parts"))
+                    .and_then(|p| p.as_array())
+                {
                     for part in parts {
-                        let is_thought = part.get("thought").and_then(|t| t.as_bool()).unwrap_or(false);
+                        let is_thought = part
+                            .get("thought")
+                            .and_then(|t| t.as_bool())
+                            .unwrap_or(false);
                         if is_thought {
                             if let Some(t) = part.get("text").and_then(|s| s.as_str()) {
                                 thought = Some(t.to_string());
@@ -95,7 +102,8 @@ impl OutboundThinkingPipeline {
                 // 关联工具调用签名
                 for tc in &payload.tool_calls {
                     if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
-                        crate::proxy::SignatureCache::global().cache_tool_signature(id, sig.clone());
+                        crate::proxy::SignatureCache::global()
+                            .cache_tool_signature(id, sig.clone());
                     }
                 }
             }
@@ -148,7 +156,10 @@ impl OutboundThinkingPipeline {
             for (idx, tc) in payload.tool_calls.iter().enumerate() {
                 let name = tc.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
                 let args = tc.get("args").cloned().unwrap_or(json!({}));
-                let id = tc.get("id").and_then(|i| i.as_str()).map(|s| s.to_string())
+                let id = tc
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("call_{}_{}", name, idx));
                 formatted_tcs.push(json!({
                     "id": id,
@@ -210,7 +221,10 @@ impl OutboundThinkingPipeline {
         for (idx, tc) in payload.tool_calls.iter().enumerate() {
             let name = tc.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
             let args = tc.get("args").cloned().unwrap_or(json!({}));
-            let id = tc.get("id").and_then(|i| i.as_str()).map(|s| s.to_string())
+            let id = tc
+                .get("id")
+                .and_then(|i| i.as_str())
+                .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("call_{}_{}", name, idx));
             content.push(json!({
                 "type": "tool_use",
@@ -319,9 +333,9 @@ impl OutboundThinkingPipeline {
                     }
                     Some(format!("data: {}\n\ndata: [DONE]\n\n", obj))
                 }
-                ProxyProtocol::AnthropicClaude => Some(
-                    "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_string(),
-                ),
+                ProxyProtocol::AnthropicClaude => {
+                    Some("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_string())
+                }
                 _ => None,
             },
             _ => None,

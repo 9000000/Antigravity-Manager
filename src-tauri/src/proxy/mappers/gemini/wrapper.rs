@@ -255,7 +255,9 @@ pub fn wrap_request_v2(
         let is_google_cloud = final_model_name.starts_with("projects/");
         let can_use_sentinel = !is_google_cloud
             && (should_inject
-                || crate::proxy::mappers::common_utils::model_keeps_thinking_without_signature(final_model_name));
+                || crate::proxy::mappers::common_utils::model_keeps_thinking_without_signature(
+                    final_model_name,
+                ));
 
         for (i, content) in contents.iter_mut().enumerate() {
             let role = content.get("role").and_then(|r| r.as_str()).unwrap_or("");
@@ -270,26 +272,43 @@ pub fn wrap_request_v2(
                 if is_assistant {
                     for part in parts.iter() {
                         if let Some(obj) = part.as_object() {
-                            let is_thought = obj.get("thought").and_then(|v| v.as_bool()).unwrap_or(false)
+                            let is_thought = obj
+                                .get("thought")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false)
                                 || (obj.get("thoughtSignature").is_some()
                                     && !obj.contains_key("functionCall")
                                     && !obj.contains_key("functionResponse"));
                             if is_thought {
-                                if let Some(s) = obj.get("thoughtSignature").or(obj.get("thought_signature")).and_then(|s| s.as_str()) {
-                                    if s == crate::proxy::thinking_store::SENTINEL_SIGNATURE || s.len() >= 50 {
+                                if let Some(s) = obj
+                                    .get("thoughtSignature")
+                                    .or(obj.get("thought_signature"))
+                                    .and_then(|s| s.as_str())
+                                {
+                                    if s == crate::proxy::thinking_store::SENTINEL_SIGNATURE
+                                        || s.len() >= 50
+                                    {
                                         turn_signature = Some(s.to_string());
                                         break;
                                     }
                                 }
                             } else if let Some(fc) = obj.get("functionCall") {
-                                if let Some(s) = obj.get("thoughtSignature").or(obj.get("thought_signature")).and_then(|s| s.as_str()) {
-                                    if s == crate::proxy::thinking_store::SENTINEL_SIGNATURE || s.len() >= 50 {
+                                if let Some(s) = obj
+                                    .get("thoughtSignature")
+                                    .or(obj.get("thought_signature"))
+                                    .and_then(|s| s.as_str())
+                                {
+                                    if s == crate::proxy::thinking_store::SENTINEL_SIGNATURE
+                                        || s.len() >= 50
+                                    {
                                         turn_signature = Some(s.to_string());
                                         break;
                                     }
                                 }
                                 if let Some(call_id) = fc.get("id").and_then(|v| v.as_str()) {
-                                    if let Some(s) = crate::proxy::SignatureCache::global().get_tool_signature(call_id) {
+                                    if let Some(s) = crate::proxy::SignatureCache::global()
+                                        .get_tool_signature(call_id)
+                                    {
                                         turn_signature = Some(s);
                                         break;
                                     }
@@ -299,9 +318,13 @@ pub fn wrap_request_v2(
                     }
                     if turn_signature.is_none() {
                         if let Some(s_id) = session_id {
-                            if let Some(s) = crate::proxy::SignatureCache::global().get_session_signature_at(s_id, i) {
+                            if let Some(s) = crate::proxy::SignatureCache::global()
+                                .get_session_signature_at(s_id, i)
+                            {
                                 turn_signature = Some(s);
-                            } else if let Some(s) = crate::proxy::SignatureCache::global().get_session_signature(s_id) {
+                            } else if let Some(s) =
+                                crate::proxy::SignatureCache::global().get_session_signature(s_id)
+                            {
                                 turn_signature = Some(s);
                             }
                         }
@@ -312,7 +335,10 @@ pub fn wrap_request_v2(
                 let mut saw_non_thinking = false;
 
                 for mut part in parts.drain(..) {
-                    let is_thought = part.get("thought").and_then(|v| v.as_bool()).unwrap_or(false)
+                    let is_thought = part
+                        .get("thought")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
                         || (part.get("thoughtSignature").is_some()
                             && part.get("functionCall").is_none()
                             && part.get("functionResponse").is_none());
@@ -329,7 +355,8 @@ pub fn wrap_request_v2(
                         let text = if text.is_empty() { "..." } else { text };
 
                         // 占位思考规整 (对齐 Anthropic)
-                        let is_placeholder = crate::proxy::thinking_store::is_placeholder_thought(text);
+                        let is_placeholder =
+                            crate::proxy::thinking_store::is_placeholder_thought(text);
                         let final_thought_text = if is_placeholder { "..." } else { text.trim() };
 
                         // 位置检查：思考块必须是首位部件，若之前已有非思考内容则降级为文本
@@ -356,10 +383,14 @@ pub fn wrap_request_v2(
                         let mut effective_sig = None;
                         if let Some(ref sig) = incoming_sig {
                             if !sig.is_empty() {
-                                let cached_family = crate::proxy::SignatureCache::global().get_signature_family(sig);
+                                let cached_family = crate::proxy::SignatureCache::global()
+                                    .get_signature_family(sig);
                                 match cached_family {
                                     Some(family) => {
-                                        if crate::proxy::mappers::common_utils::is_model_compatible(&family, final_model_name) {
+                                        if crate::proxy::mappers::common_utils::is_model_compatible(
+                                            &family,
+                                            final_model_name,
+                                        ) {
                                             effective_sig = Some(sig.clone());
                                         } else {
                                             tracing::warn!(
@@ -380,11 +411,13 @@ pub fn wrap_request_v2(
                         }
                         if effective_sig.is_none() {
                             if let Some(s_id) = session_id {
-                                effective_sig = crate::proxy::SignatureCache::global().get_session_signature(s_id);
+                                effective_sig = crate::proxy::SignatureCache::global()
+                                    .get_session_signature(s_id);
                             }
                         }
                         if effective_sig.is_none() && can_use_sentinel {
-                            effective_sig = Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string());
+                            effective_sig =
+                                Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string());
                         }
 
                         if let Some(sig) = effective_sig {
@@ -403,8 +436,10 @@ pub fn wrap_request_v2(
                             // 1. 处理 functionCall (Assistant 请求调用工具)
                             if let Some(fc) = obj.get_mut("functionCall") {
                                 if fc.get("id").is_none() && is_target_claude {
-                                    let name =
-                                        fc.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+                                    let name = fc
+                                        .get("name")
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("unknown");
                                     let count = name_counters.entry(name.to_string()).or_insert(0);
                                     let call_id = format!("call_{}_{}", name, count);
                                     *count += 1;
@@ -416,8 +451,10 @@ pub fn wrap_request_v2(
                                 }
 
                                 // 处理签名校验与兼容性 (对齐 Anthropic)
-                                let call_id = fc.get("id").and_then(|v| v.as_str()).map(str::to_string);
-                                let incoming_fc_sig = obj.get("thoughtSignature")
+                                let call_id =
+                                    fc.get("id").and_then(|v| v.as_str()).map(str::to_string);
+                                let incoming_fc_sig = obj
+                                    .get("thoughtSignature")
                                     .or_else(|| obj.get("thought_signature"))
                                     .and_then(|s| s.as_str())
                                     .map(str::to_string);
@@ -425,7 +462,8 @@ pub fn wrap_request_v2(
                                 let mut effective_fc_sig = None;
                                 if let Some(ref sig) = incoming_fc_sig {
                                     if !sig.is_empty() {
-                                        let cached_family = crate::proxy::SignatureCache::global().get_signature_family(sig);
+                                        let cached_family = crate::proxy::SignatureCache::global()
+                                            .get_signature_family(sig);
                                         match cached_family {
                                             Some(family) => {
                                                 if crate::proxy::mappers::common_utils::is_model_compatible(&family, final_model_name) {
@@ -441,7 +479,8 @@ pub fn wrap_request_v2(
 
                                 if effective_fc_sig.is_none() {
                                     if let Some(ref id) = call_id {
-                                        effective_fc_sig = crate::proxy::SignatureCache::global().get_tool_signature(id);
+                                        effective_fc_sig = crate::proxy::SignatureCache::global()
+                                            .get_tool_signature(id);
                                     }
                                 }
                                 if effective_fc_sig.is_none() {
@@ -449,11 +488,19 @@ pub fn wrap_request_v2(
                                 }
                                 if effective_fc_sig.is_none() {
                                     if let Some(s_id) = session_id {
-                                        effective_fc_sig = crate::proxy::SignatureCache::global().get_session_signature(s_id);
+                                        effective_fc_sig = crate::proxy::SignatureCache::global()
+                                            .get_session_signature(s_id);
                                     }
                                 }
-                                if effective_fc_sig.is_none() && (crate::proxy::thinking_store::model_forces_server_thinking(&final_model_name) || should_inject) {
-                                    effective_fc_sig = Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string());
+                                if effective_fc_sig.is_none()
+                                    && (crate::proxy::thinking_store::model_forces_server_thinking(
+                                        &final_model_name,
+                                    ) || should_inject)
+                                {
+                                    effective_fc_sig = Some(
+                                        crate::proxy::thinking_store::SENTINEL_SIGNATURE
+                                            .to_string(),
+                                    );
                                 }
 
                                 if let Some(sig) = effective_fc_sig {
@@ -465,8 +512,10 @@ pub fn wrap_request_v2(
                             // 2. 处理 functionResponse (User 回复工具结果)
                             if let Some(fr) = obj.get_mut("functionResponse") {
                                 if fr.get("id").is_none() && is_target_claude {
-                                    let name =
-                                        fr.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+                                    let name = fr
+                                        .get("name")
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("unknown");
                                     let count = name_counters.entry(name.to_string()).or_insert(0);
                                     let call_id = format!("call_{}_{}", name, count);
                                     *count += 1;
@@ -526,7 +575,8 @@ pub fn wrap_request_v2(
             let default_budget =
                 crate::proxy::model_specs::get_thinking_budget(final_model_name, token);
 
-            let is_explicit_tier = crate::proxy::model_specs::is_explicit_heuristic_tier_model(final_model_name);
+            let is_explicit_tier =
+                crate::proxy::model_specs::is_explicit_heuristic_tier_model(final_model_name);
 
             // [ANTI-POLLUTION] 对齐 Anthropic 与 OpenAI：对于未设置思考配置或显式档位模型，设定权威 default_budget；对于裸模型保留客户端配置供后续 resolve_authoritative_thinking_budget 仲裁
             let should_override_budget = !has_thinking || is_explicit_tier;
@@ -799,14 +849,17 @@ pub fn wrap_request_v2(
                 if let Some(tools_arr) = tools_entry.as_array_mut() {
                     let has_functions = tools_arr.iter().any(|t| {
                         t.as_object().map_or(false, |o| {
-                            o.contains_key("functionDeclarations") || o.contains_key("function_declarations")
+                            o.contains_key("functionDeclarations")
+                                || o.contains_key("function_declarations")
                         })
                     });
                     if !has_functions {
                         // 清理已存在的 googleSearch
                         tools_arr.retain(|t| {
                             if let Some(o) = t.as_object() {
-                                !(o.contains_key("googleSearch") || o.contains_key("google_search") || o.contains_key("googleSearchRetrieval"))
+                                !(o.contains_key("googleSearch")
+                                    || o.contains_key("google_search")
+                                    || o.contains_key("googleSearchRetrieval"))
                             } else {
                                 true
                             }
@@ -939,7 +992,10 @@ pub fn wrap_request_v2(
         // 2. snake_case
         if let Some(tool_config_snake) = inner_request.get_mut("tool_config") {
             if let Some(obj) = tool_config_snake.as_object_mut() {
-                obj.insert("include_server_side_tool_invocations".to_string(), json!(true));
+                obj.insert(
+                    "include_server_side_tool_invocations".to_string(),
+                    json!(true),
+                );
             }
         } else {
             inner_request["tool_config"] = json!({
@@ -953,8 +1009,7 @@ pub fn wrap_request_v2(
     // [FIX session-1M] 混入对话指纹与代数,不同对话隔离服务端会话,1M 累计报错后 bump 自愈
     if let Some(account_id_str) = account_id {
         let fingerprint = session_id.unwrap_or("default");
-        let generation =
-            crate::proxy::common::session::current_bump(account_id_str, fingerprint);
+        let generation = crate::proxy::common::session::current_bump(account_id_str, fingerprint);
         inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_scoped(
             account_id_str,
             fingerprint,
@@ -1017,7 +1072,8 @@ pub fn wrap_request_v2(
         .map(crate::proxy::mappers::common_utils::contents_has_tool_interactions)
         .unwrap_or(false);
 
-    let is_agent_request = config.request_type != "image_gen" && (has_tools || has_tool_interactions);
+    let is_agent_request =
+        config.request_type != "image_gen" && (has_tools || has_tool_interactions);
 
     // [CACHE] 重建 inner_request 字段顺序——稳定前缀在前，动态内容在后
     // 遵循 Google 官方建议："将较大且常见的内容放置在提示的开头"
@@ -1468,7 +1524,11 @@ mod tests {
         let result = wrap_request(&body, "test-proj", "gemini-pro", None, None, None);
 
         // 验证没有多余注入的 systemInstruction
-        assert!(result.get("request").unwrap().get("systemInstruction").is_none());
+        assert!(result
+            .get("request")
+            .unwrap()
+            .get("systemInstruction")
+            .is_none());
     }
 
     #[test]
@@ -1649,7 +1709,9 @@ mod tests {
     #[test]
     fn test_gemini_pro_thinking_budget_processing() {
         let _test_lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Update global config to Custom mode to verify logic execution
         use crate::proxy::config::{
             update_thinking_budget_config, ThinkingBudgetConfig, ThinkingBudgetMode,
@@ -1703,7 +1765,9 @@ mod tests {
         #[test]
         fn test_claude_no_root_thinking_injection() {
             let _test_lock = super::TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-            let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             // 验证 Claude 模型不会在根目录注入 thinking，而是注入到 generationConfig.thinkingConfig
             // 并且 budget 默认为 16000
 
@@ -1758,7 +1822,9 @@ mod tests {
         #[test]
         fn test_gemini_thinking_injection_default() {
             let _test_lock = super::TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-            let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             crate::proxy::config::update_thinking_budget_config(
                 crate::proxy::config::ThinkingBudgetConfig::default(),
             );
@@ -1791,7 +1857,9 @@ mod tests {
     #[test]
     fn test_gemini_pro_auto_inject_thinking() {
         let _test_lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Reset thinking budget to auto mode at the start to avoid interference from parallel tests
         crate::proxy::config::update_thinking_budget_config(
             crate::proxy::config::ThinkingBudgetConfig {
@@ -2026,7 +2094,10 @@ mod tests {
 
         // Part 1 should be downgraded to text without thought: true
         assert!(parts[1].get("thought").is_none());
-        assert_eq!(parts[1]["text"], "second thought block that should be downgraded");
+        assert_eq!(
+            parts[1]["text"],
+            "second thought block that should be downgraded"
+        );
         // Downgraded part should not carry thoughtSignature
         assert!(parts[1].get("thoughtSignature").is_none());
 
@@ -2036,8 +2107,12 @@ mod tests {
 
     #[test]
     fn test_gemini_thinking_level_authority_resolution() {
-        let _lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        crate::proxy::config::update_thinking_budget_config(crate::proxy::config::ThinkingBudgetConfig::default());
+        let _lock = crate::proxy::config::TEST_CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::proxy::config::update_thinking_budget_config(
+            crate::proxy::config::ThinkingBudgetConfig::default(),
+        );
         // 1. 启发式模型忽略客户端 thinkingLevel
         let req_high = json!({
             "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
@@ -2045,7 +2120,14 @@ mod tests {
                 "thinkingConfig": { "thinkingLevel": "LOW" }
             }
         });
-        let wrapped = wrap_request(&req_high, "test-p", "gemini-3.7-flash-high", None, None, None);
+        let wrapped = wrap_request(
+            &req_high,
+            "test-p",
+            "gemini-3.7-flash-high",
+            None,
+            None,
+            None,
+        );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
         assert_eq!(tc["thinkingBudget"], 10000);
         assert!(tc.get("thinkingLevel").is_none());
@@ -2057,7 +2139,14 @@ mod tests {
                 "thinkingConfig": { "thinkingLevel": "HIGH" }
             }
         });
-        let wrapped = wrap_request(&req_flash_high, "test-p", "gemini-3-flash", None, None, None);
+        let wrapped = wrap_request(
+            &req_flash_high,
+            "test-p",
+            "gemini-3-flash",
+            None,
+            None,
+            None,
+        );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
         assert_eq!(tc["thinkingBudget"], 10000);
         assert!(tc.get("thinkingLevel").is_none());
@@ -2080,7 +2169,14 @@ mod tests {
                 "thinkingConfig": { "thinkingLevel": "NONE" }
             }
         });
-        let wrapped = wrap_request(&req_flash_none, "test-p", "gemini-3-flash", None, None, None);
+        let wrapped = wrap_request(
+            &req_flash_none,
+            "test-p",
+            "gemini-3-flash",
+            None,
+            None,
+            None,
+        );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
         assert_eq!(tc["thinkingBudget"], 4000);
         assert!(tc.get("thinkingLevel").is_none());
@@ -2088,7 +2184,14 @@ mod tests {
         let req_flash_empty = json!({
             "contents": [{"role": "user", "parts": [{"text": "hi"}]}]
         });
-        let wrapped = wrap_request(&req_flash_empty, "test-p", "gemini-3-flash", None, None, None);
+        let wrapped = wrap_request(
+            &req_flash_empty,
+            "test-p",
+            "gemini-3-flash",
+            None,
+            None,
+            None,
+        );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
         assert_eq!(tc["thinkingBudget"], 4000);
 
@@ -2099,7 +2202,14 @@ mod tests {
                 "thinkingConfig": { "thinkingBudget": 12345 }
             }
         });
-        let wrapped = wrap_request(&req_flash_custom_budget, "test-p", "gemini-3-flash", None, None, None);
+        let wrapped = wrap_request(
+            &req_flash_custom_budget,
+            "test-p",
+            "gemini-3-flash",
+            None,
+            None,
+            None,
+        );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
         assert_eq!(tc["thinkingBudget"], 4000);
 
@@ -2109,7 +2219,14 @@ mod tests {
                 "thinkingConfig": { "thinkingLevel": "HIGH", "thinkingBudget": 1234 }
             }
         });
-        let wrapped = wrap_request(&req_flash_high_custom_budget, "test-p", "gemini-3-flash", None, None, None);
+        let wrapped = wrap_request(
+            &req_flash_high_custom_budget,
+            "test-p",
+            "gemini-3-flash",
+            None,
+            None,
+            None,
+        );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
         assert_eq!(tc["thinkingBudget"], 10000);
     }

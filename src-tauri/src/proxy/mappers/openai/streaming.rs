@@ -1798,10 +1798,18 @@ mod tests {
         }
 
         // With include_usage: true, the last chunk before [DONE] MUST have choices: [] and usage
-        assert!(chunks.len() >= 3, "Expected at least 3 chunks: partial, finish, usage");
-        let last_chunk: Value = serde_json::from_str(chunks.last().unwrap().trim_start_matches("data: ").trim()).unwrap();
+        assert!(
+            chunks.len() >= 3,
+            "Expected at least 3 chunks: partial, finish, usage"
+        );
+        let last_chunk: Value =
+            serde_json::from_str(chunks.last().unwrap().trim_start_matches("data: ").trim())
+                .unwrap();
         assert_eq!(last_chunk["choices"], json!([]));
-        assert!(last_chunk.get("usage").is_some(), "Standalone usage chunk must contain usage");
+        assert!(
+            last_chunk.get("usage").is_some(),
+            "Standalone usage chunk must contain usage"
+        );
         let usage = &last_chunk["usage"];
         assert_eq!(usage["prompt_tokens"], 10);
         assert_eq!(usage["completion_tokens"], 5);

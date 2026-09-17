@@ -1,5 +1,5 @@
 //! 全双工模型思考与响应统一流水线架构
-//! 
+//!
 //! 1. 统一中间领域对象（Canonical IR）：谷歌 Gemini 标准报文 (`contents` + `generationConfig`)
 //! 2. 协议进站策略适配器 (`InboundThinkingPipeline`, `ProxyProtocol`)
 //! 3. 统一用量与缓存核心计算收拢与散开 (`CanonicalUsage`)

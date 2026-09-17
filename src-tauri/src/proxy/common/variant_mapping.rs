@@ -222,7 +222,8 @@ pub fn resolve_with_tier(
     // 针对任何 >= 3.0 的 Gemini 衍生模型（如 gemini-3.8-flash, gemini-3.9-flash, gemini-4.0-flash 等），
     // 即使未在 GEMINI_FAMILIES 中硬编码，也能自动根据档位生成完整规范的 RealModelSpec，
     // 确保思考模式无缝开启，预算自动校准，绝不降级。
-    let is_gemini_3_family = is_v3 && (lower.contains("flash") || lower.contains("pro") || lower.contains("agent"));
+    let is_gemini_3_family =
+        is_v3 && (lower.contains("flash") || lower.contains("pro") || lower.contains("agent"));
     if is_gemini_3_family {
         let dynamic_tier = if let Some(nt) = name_tier {
             nt
@@ -363,7 +364,10 @@ pub static GEMINI_FAMILIES: &[CanonicalFamily] = &[
             (VariantTier::High, SPEC_3_FLASH_AGENT),
         ],
         aliases: &[
-            ("gemini-3.5-flash-high", AliasPolicy::Fixed(VariantTier::High)),
+            (
+                "gemini-3.5-flash-high",
+                AliasPolicy::Fixed(VariantTier::High),
+            ),
             (
                 "gemini-3.5-flash-medium",
                 AliasPolicy::Fixed(VariantTier::Medium),
@@ -615,8 +619,20 @@ mod tests {
     #[test]
     fn gemini_3_flash_alias_follows_tier() {
         // 裸模型 budget 字段被彻底忽略，由思考强度接管；未传 effort 默认 Medium
-        check("gemini-3-flash", Some(0), "gemini-3.5-flash-low", 4000, 65536);
-        check("gemini-3-flash", Some(4000), "gemini-3.5-flash-low", 4000, 65536);
+        check(
+            "gemini-3-flash",
+            Some(0),
+            "gemini-3.5-flash-low",
+            4000,
+            65536,
+        );
+        check(
+            "gemini-3-flash",
+            Some(4000),
+            "gemini-3.5-flash-low",
+            4000,
+            65536,
+        );
         check("gemini-3-flash", None, "gemini-3.5-flash-low", 4000, 65536);
 
         // 显式 effort 档位依然严格接管
