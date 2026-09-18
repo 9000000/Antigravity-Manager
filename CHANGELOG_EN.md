@@ -3,6 +3,14 @@
 > Complete version history for Antigravity Tools. Return to project home at [README_EN.md](README_EN.md).
 
 *   **Version History**:
+    *   **v4.7.6 (2026-09-18)**:
+        -   **[Subscription Tier Detection & Alignment] Fix Free Accounts Misidentified as PRO via gpt-oss Models and standard-tier (PR #3470, Fixes #3469)**:
+            -   **Free Tier Normalization**: Expanded subscription tier normalization to identify Google unbilled tiers including `standard-tier`, `standard`, and `restricted`, converging to `FREE`.
+            -   **Heuristic Prefix Refinement**: Removed crude prefix matching on open-source `gpt-oss-120b-medium` models, safely falling back to `FREE` in the absence of explicit billing tiers.
+            -   **Calibrate Tier Extraction**: Removed erroneous fallback to `allowed_tiers` default upgrade offerings, preventing upgrade recommendations from being treated as purchased plans.
+        -   **[Configuration & Command Compatibility] Fix Command Not Found on Proxy Settings Save (PR #3470)**:
+            -   **Frontend Refresh Command Alignment**: Corrected the post-save refresh invocation in `ApiProxy.tsx` from `get_config` to `load_config`, eliminating missing command warnings.
+            -   **Dual Command Compatibility**: Registered `get_config` as a compatibility alias for `load_config` across Tauri commands and HTTP mappings.
     *   **v4.7.5 (2026-09-18)**:
         -   **[Upstream WAF & Request Sanitization] Flawlessly Resolved Agent Client 404/429/503 Errors & Purged Pseudo-Headers (PR #3463, Fixes #3458, Fixes #3467, Fixes #3466, Fixes #3460, Fixes #3454, Fixes #3453)**:
             -   **Outbound UA Normalization**: Upgraded outbound client User-Agent uniformly to `>= 4.3.0` to eliminate upstream WAF fingerprint blocking.

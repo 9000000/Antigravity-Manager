@@ -3,6 +3,14 @@
 > 完整版本历史记录。返回项目主页请查看 [README.md](README.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v4.7.6 (2026-09-18)**:
+        -   **[订阅层级识别与展示修正] 修复免费账号因 gpt-oss 与 standard-tier 被误标为 PRO 的问题 (PR #3470, Fixes #3469)**:
+            -   **免费层级识别补齐**: 在订阅等级归一化逻辑中全面支持对 Google 官方未付费层级 `standard-tier` / `standard` / `restricted` 等代号的标准识别，准确收敛归入 `FREE`。
+            -   **开源模型前缀匹配修正**: 针对上游免费开源模型 `gpt-oss-120b-medium`，移除粗暴的前缀匹配规则，在缺乏权威付费标记时安全回退为 `FREE`。
+            -   **校准层级提取逻辑**: 移除对 `allowed_tiers` 默认升级推荐项的错误回退，避免将推荐项误当成已购付费项。
+        -   **[配置中心与命令兼容] 修复反代设置保存时命令未找到错误 (PR #3470)**:
+            -   **保存后重新拉取指令对齐**: 修正前端保存配置后重新获取配置的指令为 `load_config`，彻底消除 `Command get_config not found` 报错提示。
+            -   **双向指令兼容**: 后端 Tauri 与 HTTP 接口中注册 `get_config` 作为 `load_config` 兼容别名。
     *   **v4.7.5 (2026-09-18)**:
         -   **[上游 WAF 与请求清洗重构] 完美修复 Agent 客户端 404/429/503 报错，清洗伪 Header 杜绝上游雪崩 (PR #3463, Fixes #3458, Fixes #3467, Fixes #3466, Fixes #3460, Fixes #3454, Fixes #3453)**:
             -   **出站 UA 规范化对齐**: 统一升级客户端出站 User-Agent 至 `>= 4.3.0`，彻底规避因陈旧客户端标识被上游云控拦截。
