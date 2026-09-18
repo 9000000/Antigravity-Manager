@@ -104,7 +104,12 @@ pub fn normalize_subscription_tier(tier: &str) -> String {
         "ULTRA".to_string()
     } else if lower.contains("pro") || lower.contains("premium") || lower.contains("advanced") {
         "PRO".to_string()
-    } else if lower.contains("free") {
+    } else if lower.contains("free")
+        || lower.contains("standard")
+        || lower.contains("restricted")
+        || lower.contains("basic")
+        || lower.contains("community")
+    {
         "FREE".to_string()
     } else {
         tier.to_string()
@@ -127,14 +132,9 @@ pub fn resolve_subscription_tier(raw_tier: Option<&str>, models: &[ModelQuota]) 
         return "ULTRA".to_string();
     }
 
-    let has_paid_models = models.iter().any(|m| {
-        let n = m.name.to_lowercase();
-        n.starts_with("claude") || n.starts_with("gpt")
-    });
-    if has_paid_models {
-        return "PRO".to_string();
-    }
-
+    // 注意：不要使用 n.starts_with("gpt")，因为 Google Code Assist 免费开放了开源模型 gpt-oss-*
+    // 并且 retrieveUserQuota 接口对免费账号也可能下发全量支持目录，
+    // 因此在缺乏明确 paid_tier / pro 标记时，绝不随意将未知账号升格为 PRO，安全回退到 FREE
     "FREE".to_string()
 }
 
@@ -158,12 +158,29 @@ mod tests {
         assert_eq!(normalize_subscription_tier("ULTRA"), "ULTRA");
         assert_eq!(normalize_subscription_tier("free-tier"), "FREE");
         assert_eq!(normalize_subscription_tier("Free"), "FREE");
+        assert_eq!(normalize_subscription_tier("standard-tier"), "FREE");
+        assert_eq!(normalize_subscription_tier("Standard Tier"), "FREE");
+        assert_eq!(normalize_subscription_tier("standard"), "FREE");
+        assert_eq!(normalize_subscription_tier("restricted-tier"), "FREE");
     }
 
     #[test]
     fn test_resolve_subscription_tier_model_fallback() {
-        let claude_model = ModelQuota {
-            name: "claude-3-5-sonnet".to_string(),
+        let ultra_model = ModelQuota {
+            name: "gemini-ultra".to_string(),
+            percentage: 100,
+            reset_time: "2026-09-17T00:00:00Z".to_string(),
+            display_name: None,
+            supports_images: None,
+            supports_thinking: None,
+            thinking_budget: None,
+            recommended: None,
+            max_tokens: None,
+            max_output_tokens: None,
+            supported_mime_types: None,
+        };
+        let gpt_oss_model = ModelQuota {
+            name: "gpt-oss-120b-medium".to_string(),
             percentage: 100,
             reset_time: "2026-09-17T00:00:00Z".to_string(),
             display_name: None,
@@ -189,14 +206,23 @@ mod tests {
             supported_mime_types: None,
         };
 
-        // Claude model present without explicit tier -> infer PRO
+        // Ultra model present without explicit tier -> infer ULTRA
         assert_eq!(
-            resolve_subscription_tier(None, &[flash_model.clone(), claude_model.clone()]),
-            "PRO"
+            resolve_subscription_tier(None, &[flash_model.clone(), ultra_model.clone()]),
+            "ULTRA"
         );
 
-        // Flash only without explicit tier -> infer FREE
-        assert_eq!(resolve_subscription_tier(None, &[flash_model]), "FREE");
+        // gpt-oss model present on free account without explicit tier -> MUST remain FREE
+        assert_eq!(
+            resolve_subscription_tier(None, &[flash_model.clone(), gpt_oss_model]),
+            "FREE"
+        );
+
+        // standard-tier explicit -> FREE
+        assert_eq!(
+            resolve_subscription_tier(Some("standard-tier"), &[flash_model.clone()]),
+            "FREE"
+        );
 
         // Empty models without explicit tier -> infer FREE
         assert_eq!(resolve_subscription_tier(None, &[]), "FREE");
@@ -207,7 +233,7 @@ mod tests {
             "PRO"
         );
         assert_eq!(
-            resolve_subscription_tier(Some("gemini-ultra"), &[claude_model]),
+            resolve_subscription_tier(Some("gemini-ultra"), &[]),
             "ULTRA"
         );
     }

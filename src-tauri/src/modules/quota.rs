@@ -184,7 +184,10 @@ async fn fetch_project_id(
                     if let Ok(data) = res.json::<LoadProjectResponse>().await {
                         let project_id = data.project_id.clone();
 
-                        // Multi-level fallback for tier extraction: paid_tier -> current_tier -> allowed_tiers default
+                        // Tier 提取逻辑：
+                        // 1. 优先使用 paid_tier（权威付费层级，如 Google One AI Premium 等）；
+                        // 2. 其次使用 current_tier（未付费账号通常返回 standard-tier，会被 normalize 为 FREE）；
+                        // 3. 切勿回退到 allowed_tiers！因为 allowed_tiers 是 Google 提供的推荐升级购买选项，其 is_default 往往是付费推荐，会导致免费用户被误判为已购买。
                         let raw_tier = data
                             .paid_tier
                             .as_ref()
@@ -193,14 +196,6 @@ async fn fetch_project_id(
                                 data.current_tier
                                     .as_ref()
                                     .and_then(|t| t.name.clone().or_else(|| t.id.clone()))
-                            })
-                            .or_else(|| {
-                                data.allowed_tiers.as_ref().and_then(|allowed| {
-                                    allowed
-                                        .iter()
-                                        .find(|t| t.is_default == Some(true))
-                                        .and_then(|t| t.name.clone().or_else(|| t.id.clone()))
-                                })
                             });
 
                         let subscription_tier =

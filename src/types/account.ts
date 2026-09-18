@@ -106,7 +106,15 @@ export function getAccountTier(account: { quota?: QuotaData | null }): 'ultra' |
     if (rawTier) {
         if (rawTier.includes('ultra')) return 'ultra';
         if (rawTier.includes('pro') || rawTier.includes('premium') || rawTier.includes('advanced')) return 'pro';
-        if (rawTier.includes('free')) return 'free';
+        if (
+            rawTier.includes('free') ||
+            rawTier.includes('standard') ||
+            rawTier.includes('restricted') ||
+            rawTier.includes('basic') ||
+            rawTier.includes('community')
+        ) {
+            return 'free';
+        }
     }
 
     // 基于可用模型的启发式推导
@@ -114,13 +122,7 @@ export function getAccountTier(account: { quota?: QuotaData | null }): 'ultra' |
     if (models.some(m => m.name.toLowerCase().includes('ultra'))) {
         return 'ultra';
     }
-    // Claude / GPT 在 Google Code Assist 体系内仅付费 Pro/Premium 账号专享
-    if (models.some(m => {
-        const n = m.name.toLowerCase();
-        return n.startsWith('claude') || n.startsWith('gpt');
-    })) {
-        return 'pro';
-    }
 
+    // 在缺乏明确付费凭据时，安全兜底为 free
     return 'free';
 }
