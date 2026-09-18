@@ -4,10 +4,14 @@
 
 *   **Version History**:
     *   **v4.7.6 (2026-09-18)**:
-        -   **[Subscription Tier Detection & Alignment] Fix Free Accounts Misidentified as PRO via gpt-oss Models and standard-tier (PR #3470, Fixes #3469)**:
-            -   **Free Tier Normalization**: Expanded subscription tier normalization to identify Google unbilled tiers including `standard-tier`, `standard`, and `restricted`, converging to `FREE`.
-            -   **Heuristic Prefix Refinement**: Removed crude prefix matching on open-source `gpt-oss-120b-medium` models, safely falling back to `FREE` in the absence of explicit billing tiers.
-            -   **Calibrate Tier Extraction**: Removed erroneous fallback to `allowed_tiers` default upgrade offerings, preventing upgrade recommendations from being treated as purchased plans.
+        -   **[Official IDE Subscription Alignment & Authoritative Parsing] Architectural Subscription Refactor to Fix Free Accounts Misidentified as PRO (PR #3470, Fixes #3469)**:
+            -   **Align with Machine Identifier `paidTier.id`**: Tier extraction is now strictly prioritized by machine-readable `id` (`free-tier` / `g1-pro-tier` / `g1-ultra-tier`) rather than mutable text `name`, accurately handling internal codenames like `helium` (Ultra) and `starter` (Free).
+            -   **Complete Removal of Model Heuristic Fallback**: Verified that `fetchAvailableModels` serves identical static catalogs regardless of tier; completely eliminated model-based tier guessing in both backend and frontend, safely defaulting unrecognized values to `FREE`.
+            -   **Eliminate Stale Cache Lockup**: Removed the skip-check optimization in `fetch_quota_with_cache` to ensure authoritative `loadCodeAssist` calls on each refresh, allowing previously corrupted tiers on disk to self-heal.
+            -   **Unified Scheduling Priority & UI Badges**: Centrally routes proxy rotation through `models::quota::tier_priority`, mapping unknown tiers to standard low-priority Free tier; account dialog badges now use canonical labels.
+        -   **[Test Sandbox Isolation & Data Safety Hardening] Guard Against Test Data Directory Pointer Pollution**:
+            -   **Pointer Override via Environment Variable**: Added `ABV_DATA_DIR_POINTER_FILE` support to isolate tests in temporary sandboxes.
+            -   **Interrupt Recovery & Assert Real Pointer Unchanged**: Wrapped test migrations with unwind protection and strictly asserted that `~/.antigravity_tools_location` remains untouched, eliminating the risk of lost accounts upon aborted test runs.
         -   **[Configuration & Command Compatibility] Fix Command Not Found on Proxy Settings Save (PR #3470)**:
             -   **Frontend Refresh Command Alignment**: Corrected the post-save refresh invocation in `ApiProxy.tsx` from `get_config` to `load_config`, eliminating missing command warnings.
             -   **Dual Command Compatibility**: Registered `get_config` as a compatibility alias for `load_config` across Tauri commands and HTTP mappings.
