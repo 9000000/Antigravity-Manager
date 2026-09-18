@@ -463,7 +463,7 @@ export default function ApiProxy() {
         if (!appConfig) return;
         try {
             await invoke('save_config', { config: appConfig });
-            const refreshed = await invoke<AppConfig>('get_config');
+            const refreshed = await invoke<AppConfig>('load_config');
             if (refreshed) {
                 setAppConfig(refreshed);
             }
