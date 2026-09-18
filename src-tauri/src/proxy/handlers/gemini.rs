@@ -303,6 +303,9 @@ pub async fn handle_generate(
                 &mut wrapped_body,
                 &mapped_model,
             );
+        crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
+            &mut wrapped_body,
+        );
 
         if let Some(ref recorder) = upstream_recorder {
             recorder.set_value(&wrapped_body);
