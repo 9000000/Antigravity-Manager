@@ -517,7 +517,7 @@ impl Default for ExperimentalConfig {
     fn default() -> Self {
         Self {
             enable_signature_cache: true,
-            enable_tool_loop_recovery: true,
+            enable_tool_loop_recovery: false,
             enable_cross_model_checks: true,
             enable_usage_scaling: false,
             compression_level: "disabled".to_string(),

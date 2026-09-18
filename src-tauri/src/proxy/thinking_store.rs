@@ -1550,7 +1550,7 @@ fn client_id_from_store_key(store_key: &str) -> &str {
         .unwrap_or(store_key)
 }
 
-fn is_real_signature(sig: &str) -> bool {
+pub fn is_real_signature(sig: &str) -> bool {
     sig.len() >= MIN_SIGNATURE_LENGTH && sig != SENTINEL_SIGNATURE
 }
 
