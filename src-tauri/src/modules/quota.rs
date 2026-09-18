@@ -184,12 +184,11 @@ async fn fetch_project_id(
                     if let Ok(data) = res.json::<LoadProjectResponse>().await {
                         let project_id = data.project_id.clone();
 
-                        // 等级提取优先级：paid_tier -> current_tier -> allowed_tiers 中的默认项。
-                        //
-                        // 关键：优先取 `id`（机器可读的稳定标识）而不是 `name`。
-                        // 实测 `name` 是自由文本，免费档叫 "Antigravity Starter Quota"，
-                        // 靠关键词匹配既脆弱又漏判；而 `id` 是 `free-tier` / `g1-pro-tier` /
-                        // `g1-ultra-tier`，与官方客户端使用的字段一致。
+                        // 等级提取优先级：
+                        // 1. 优先取 paid_tier：若有付费信息（g1-pro-tier / g1-ultra-tier），直接作为权威付费等级；
+                        // 2. 其次取 current_tier：若当前生效档位为 free-tier，则为 FREE；
+                        // 3. 再次检查 allowed_tiers：若包含且仅能用 free-tier，则为 FREE；
+                        // 4. 若 paid_tier 与 current_tier 均为 null（如地理位置受限、受限账号），则权威判为 FREE，绝不误判为 PRO。
                         let raw_tier = data
                             .paid_tier
                             .as_ref()
@@ -203,27 +202,25 @@ async fn fetch_project_id(
                                 data.allowed_tiers.as_ref().and_then(|allowed| {
                                     allowed
                                         .iter()
-                                        .find(|t| t.is_default == Some(true))
+                                        .find(|t| {
+                                            t.id.as_deref() == Some("free-tier")
+                                                || t.is_default == Some(true)
+                                        })
                                         .and_then(|t| t.id.clone().or_else(|| t.name.clone()))
                                 })
-                            });
+                            })
+                            .unwrap_or_else(|| "free-tier".to_string());
 
-                        // 只接受归一化后合法的等级。上游若出现我们还不认识的取值，
-                        // 宁可返回 None（由调用方保留已有值），也不要把垃圾字符串
-                        // 写进账号数据 —— 那会让下游以为「有值」而跳过纠正。
-                        let subscription_tier = raw_tier.and_then(|t| {
+                        let subscription_tier = {
                             let normalized =
-                                crate::models::quota::normalize_subscription_tier(&t);
+                                crate::models::quota::normalize_subscription_tier(&raw_tier);
                             if crate::models::quota::is_known_tier(&normalized) {
                                 Some(normalized)
                             } else {
-                                crate::modules::logger::log_warn(&format!(
-                                    "⚠️  [{}] loadCodeAssist 返回未识别的订阅等级 {:?}，已忽略（等待上游新增支持）",
-                                    email, t
-                                ));
-                                None
+                                // standard-tier 或其他未知档位安全归入 FREE
+                                Some("FREE".to_string())
                             }
-                        });
+                        };
 
                         if let Some(ref tier) = subscription_tier {
                             crate::modules::logger::log_info(&format!(
