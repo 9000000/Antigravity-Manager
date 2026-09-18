@@ -1230,6 +1230,7 @@ pub async fn handle_messages(
         let query = if actual_stream { Some("alt=sse") } else { None };
         // [FIX #765/1522] Prepare Robust Beta Headers for Claude models
         let mut extra_headers = std::collections::HashMap::new();
+        extra_headers.insert("x-session-id".to_string(), client_session_id.clone());
         if mapped_model.to_lowercase().contains("claude") {
             extra_headers.insert(
                 "anthropic-beta".to_string(),

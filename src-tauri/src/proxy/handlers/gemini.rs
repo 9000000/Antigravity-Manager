@@ -342,6 +342,7 @@ pub async fn handle_generate(
 
         // [FIX #1522] Inject Anthropic Beta Headers for Claude models
         let mut extra_headers = std::collections::HashMap::new();
+        extra_headers.insert("x-session-id".to_string(), client_session_id.clone());
         if mapped_model.to_lowercase().contains("claude") {
             extra_headers.insert("anthropic-beta".to_string(), "claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14".to_string());
             tracing::debug!(

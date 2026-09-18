@@ -2194,6 +2194,7 @@ pub async fn handle_chat_completions(
 
         // [FIX #1522] Inject Anthropic Beta Headers for Claude models (OpenAI path)
         let mut extra_headers = std::collections::HashMap::new();
+        extra_headers.insert("x-session-id".to_string(), client_session_id.clone());
         if mapped_model.to_lowercase().contains("claude") {
             extra_headers.insert(
                 "anthropic-beta".to_string(),
