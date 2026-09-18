@@ -711,12 +711,8 @@ fn apply_retention_with_connection(
     conn: &Connection,
     policy: &LogRetentionConfig,
 ) -> Result<(usize, usize), String> {
-    let now = chrono::Utc::now().timestamp_millis();
-    let body_cutoff = now - (policy.max_body_age_hours as i64 * 3600 * 1000);
-    let bodies_cleared = conn.execute(
-        "UPDATE request_logs SET request_body = NULL, upstream_request_body = NULL, response_body = NULL WHERE timestamp < ?1 AND (request_body IS NOT NULL OR upstream_request_body IS NOT NULL OR response_body IS NOT NULL)",
-        [body_cutoff],
-    ).map_err(|e| e.to_string())?;
+    // 请求体不再按时间强制清空，完全由容量上限与行数滑动窗口整体托管，保留完整报文
+    let bodies_cleared = 0;
 
     // 注意：已移除基于 max_age_days 的按天整行删除逻辑，改为条数上限与空间上限滑动窗口淘汰
     let mut rows_deleted = 0;

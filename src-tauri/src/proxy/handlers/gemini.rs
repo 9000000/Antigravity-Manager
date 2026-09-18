@@ -306,6 +306,7 @@ pub async fn handle_generate(
         crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
             &mut wrapped_body,
         );
+        crate::proxy::mappers::common_utils::ensure_gemini_payload_ends_with_user(&mut wrapped_body);
 
         if let Some(ref recorder) = upstream_recorder {
             recorder.set_value(&wrapped_body);
@@ -836,6 +837,19 @@ pub async fn handle_generate(
                     tracing::error!("Failed to set forbidden status: {}", e);
                 }
             }
+        }
+
+        // [FIX session-1M] 上游按 sessionId 在服务端累计会话输入，长工具循环会把累计推过 1M，
+        // 之后该 sessionId 的所有请求都 400 "input token count exceeds ... 1048576"。
+        // 给 (账号, 对话) 的 sessionId 升代并立即重试:新 sessionId = 上游全新会话,对话无感恢复。
+        if status_code == 400 && error_text.contains("exceeds the maximum number of tokens") {
+            let fingerprint = session_id.as_str();
+            let generation = crate::proxy::common::session::bump_session(&account_id, fingerprint);
+            tracing::warn!(
+                "[Gemini] Upstream session token accumulation exceeded 1M on account {}. sessionId bumped to generation {}, retrying with a fresh upstream session.",
+                email, generation
+            );
+            continue; // 重试:下一轮读取新代数,派生全新 sessionId
         }
 
         if status_code == 429 || status_code == 529 {

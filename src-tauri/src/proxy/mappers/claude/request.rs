@@ -737,13 +737,6 @@ pub fn transform_claude_request_in_timed(
         body["requestType"] = json!("agent");
     }
 
-    // 如果提供了 metadata.user_id，则复用为 sessionId
-    if let Some(metadata) = &claude_req.metadata {
-        if let Some(user_id) = &metadata.user_id {
-            body["request"]["sessionId"] = json!(user_id);
-        }
-    }
-
     // [FIX #593] 最后一道防线: 递归深度清理所有 cache_control 字段
     // 确保发送给 Antigravity 的请求中不包含任何 cache_control
     deep_clean_cache_control(&mut body);
@@ -1656,7 +1649,11 @@ fn build_google_content(
     )?;
 
     if parts.is_empty() {
-        return Ok(json!(null)); // Indicate no content to add
+        if role == "user" {
+            parts.push(json!({ "text": crate::proxy::mappers::common_utils::TRANSIT_DEFENSE_FALLBACK_TEXT }));
+        } else {
+            return Ok(json!(null)); // Indicate no content to add
+        }
     }
 
     if role == "model" {

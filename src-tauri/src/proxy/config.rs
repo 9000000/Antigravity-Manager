@@ -666,13 +666,13 @@ fn default_thinking_budget_mode() -> ThinkingBudgetMode {
 }
 
 fn default_flash_low() -> i32 {
-    1000
+    1024
 }
 fn default_flash_medium() -> i32 {
-    4000
+    4096
 }
 fn default_flash_high() -> i32 {
-    10000
+    16384
 }
 fn default_flash_tiered() -> i32 {
     -1
@@ -686,7 +686,7 @@ fn default_pro_high() -> i32 {
 }
 
 fn default_claude_budget() -> i32 {
-    16000
+    16384
 }
 fn default_claude_low() -> i32 {
     1024
@@ -695,7 +695,7 @@ fn default_claude_medium() -> i32 {
     4096
 }
 fn default_claude_high() -> i32 {
-    16000
+    16384
 }
 
 impl Default for ThinkingBudgetConfig {
@@ -985,10 +985,10 @@ fn default_max_rows() -> u64 {
     100_000
 }
 fn default_max_disk_mb() -> u64 {
-    512
+    1024
 }
 fn default_max_storage_gb() -> f64 {
-    0.5
+    1.0
 }
 
 impl LogRetentionConfig {
@@ -998,7 +998,7 @@ impl LogRetentionConfig {
         } else if self.max_disk_mb > 0 {
             self.max_disk_mb.saturating_mul(1024 * 1024)
         } else {
-            512 * 1024 * 1024 // 0.5 GB
+            1024 * 1024 * 1024 // 1.0 GB
         }
     }
 }
@@ -1009,8 +1009,8 @@ impl Default for LogRetentionConfig {
             max_body_age_hours: 24,
             max_age_days: 30,
             max_rows: 100_000,
-            max_disk_mb: 512,
-            max_storage_gb: 0.5,
+            max_disk_mb: 1024,
+            max_storage_gb: 1.0,
         }
     }
 }

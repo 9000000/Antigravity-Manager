@@ -1561,22 +1561,9 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                             <div className="space-y-2.5">
                                 <span className="text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
                                     <Clock size={13} className="text-indigo-500 dark:text-indigo-400" />
-                                    {t('monitor.settings.retention_title', { defaultValue: '请求日志保留策略' })}
+                                    {t('monitor.settings.retention_title', { defaultValue: '请求日志保留策略 (滑动窗口)' })}
                                 </span>
-                                <div className="space-y-2">
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
-                                            {t('proxy.config.log_retention_body_hours', { defaultValue: '请求报文保留时间 (小时)' })}
-                                        </label>
-                                        <input
-                                            type="number"
-                                            min={1}
-                                            max={720}
-                                            value={appConfig.proxy.log_retention?.max_body_age_hours ?? 24}
-                                            onChange={(e) => updateLogRetentionField('max_body_age_hours', Number(e.target.value))}
-                                            className="input input-xs input-bordered bg-gray-50 dark:bg-base-200 border-gray-300 dark:border-base-300 text-gray-800 dark:text-white w-full font-mono text-xs focus:border-blue-500"
-                                        />
-                                    </div>
+                                <div className="space-y-2.5">
                                     <div>
                                         <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
                                             {t('proxy.config.log_retention_storage_gb', { defaultValue: '日志保留空间上限 (GB)' })}
@@ -1586,16 +1573,16 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                                             min={0.1}
                                             max={100}
                                             step={0.1}
-                                            value={appConfig.proxy.log_retention?.max_storage_gb ?? 0.5}
+                                            value={appConfig.proxy.log_retention?.max_storage_gb ?? 1.0}
                                             onChange={(e) => updateLogRetentionField('max_storage_gb', parseFloat(e.target.value))}
                                             className="input input-xs input-bordered bg-gray-50 dark:bg-base-200 border-gray-300 dark:border-base-300 text-gray-800 dark:text-white w-full font-mono text-xs focus:border-blue-500"
                                         />
                                         <div className="flex items-center justify-between mt-1 text-[10px] text-gray-500 dark:text-gray-400">
                                             <span>{t('proxy.config.log_retention_current_usage', { defaultValue: '当前数据库占用' })}: <strong className="font-mono text-gray-700 dark:text-gray-200">{dbDiskSizeBytes !== null ? formatBytes(dbDiskSizeBytes) : '...'}</strong></span>
-                                            <span className="text-amber-600 dark:text-amber-400 font-medium">超限挤出 30%</span>
+                                            <span className="text-emerald-600 dark:text-emerald-400 font-medium">完整报文保留</span>
                                         </div>
                                         <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-tight">
-                                            {t('proxy.config.log_retention_storage_gb_desc', { defaultValue: '滑动窗口机制：达到上限自动淘汰最尾部 30% 记录以容纳新日志入库' })}
+                                            {t('proxy.config.log_retention_storage_gb_desc', { defaultValue: '完全由容量上限滑动窗口托管，保留完整报文不被提前掏空；达到上限自动淘汰最尾部 30% 记录以容纳新日志入库' })}
                                         </p>
                                     </div>
                                     <div>

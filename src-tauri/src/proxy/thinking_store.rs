@@ -806,12 +806,18 @@ impl SessionScope {
         fallback: impl Into<String>,
     ) -> Self {
         let fallback = fallback.into();
-        let client_id = explicit_session_id_with_query(headers, body, query)
-            .unwrap_or(fallback)
-            .trim()
-            .to_string();
-        let client_id = sanitize_session_id(&client_id);
         let tenant = tenant_from_headers(headers);
+        let session_headers = collect_session_semantic_headers(headers);
+        let query_sid = extract_query_session_id(headers, query);
+        let body_sid = extract_body_session_id(body);
+
+        let client_id = derive_blended_session_id(
+            &tenant,
+            &session_headers,
+            query_sid.as_deref(),
+            body_sid.as_deref(),
+            &fallback,
+        );
         let store_key = format!("{}:{}", tenant, client_id);
         Self {
             client_id,
@@ -1360,6 +1366,181 @@ pub fn sanitize_session_id(raw: &str) -> String {
     } else {
         out
     }
+}
+
+/// 判断 HTTP Header 是否属于会话语义相关头（严格排除易变随机头如 x-request-id 等）
+pub fn is_session_semantic_header(name: &str) -> bool {
+    let key = name.trim().to_ascii_lowercase().replace('_', "-");
+    if key == "mcp-session-id" {
+        return false;
+    }
+    if key.ends_with("-request-id")
+        || key.ends_with("-trace-id")
+        || key.ends_with("-correlation-id")
+        || key == "x-request-id"
+        || key == "request-id"
+        || key == "traceparent"
+        || key == "tracestate"
+        || key == "content-length"
+        || key == "content-type"
+        || key == "host"
+        || key == "user-agent"
+        || key.starts_with("sec-")
+        || key.starts_with("cf-")
+        || key.starts_with("x-forwarded-")
+        || key.starts_with("x-real-")
+    {
+        return false;
+    }
+
+    if PRODUCT_SESSION_HEADERS.iter().any(|h| key == *h) {
+        return true;
+    }
+    if ALIAS_SESSION_HEADERS.iter().any(|h| key == *h) {
+        return true;
+    }
+    if key == GENERIC_SESSION_HEADER || key == "session-id" {
+        return true;
+    }
+
+    let compact = key.replace('-', "");
+    (compact.contains("session") || compact.contains("conversation") || compact.contains("chat") || compact.contains("thread"))
+        && compact.ends_with("id")
+}
+
+/// 收集所有具有会话隔离语义的 HTTP Header（键按字典序保存在 BTreeMap 中）
+pub fn collect_session_semantic_headers(
+    headers: &HeaderMap,
+) -> std::collections::BTreeMap<String, String> {
+    let mut map = std::collections::BTreeMap::new();
+    for (name, val) in headers.iter() {
+        let key = name.as_str().to_ascii_lowercase();
+        if is_session_semantic_header(&key) {
+            if let Ok(v) = val.to_str() {
+                let trimmed = v.trim();
+                if !trimmed.is_empty() {
+                    let sanitized = sanitize_session_id(trimmed);
+                    if !sanitized.is_empty() && sanitized != "sid-unknown" {
+                        map.insert(key, sanitized);
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
+/// 从 URL Query、代理跳转 Header (x-forwarded-uri, x-original-uri) 以及 Referer 中提取会话参数
+pub fn extract_query_session_id(headers: &HeaderMap, query: Option<&str>) -> Option<String> {
+    if let Some(q) = query {
+        if let Some(sid) = extract_session_from_query_str(q) {
+            return Some(sid);
+        }
+    }
+    for uri_h in ["x-forwarded-uri", "x-original-uri"] {
+        if let Some(raw_uri) = headers.get(uri_h).and_then(|h| h.to_str().ok()) {
+            if let Some(pos) = raw_uri.find('?') {
+                if let Some(sid) = extract_session_from_query_str(&raw_uri[pos + 1..]) {
+                    return Some(sid);
+                }
+            }
+        }
+    }
+    if let Some(referer) = headers.get("referer").and_then(|h| h.to_str().ok()) {
+        if let Some(pos) = referer.find('?') {
+            if let Some(sid) = extract_session_from_query_str(&referer[pos + 1..]) {
+                return Some(sid);
+            }
+        }
+    }
+    None
+}
+
+/// 从 JSON Body 及 metadata 中提取显式指定的会话字段
+pub fn extract_body_session_id(body: Option<&Value>) -> Option<String> {
+    let body = body?;
+    for field in [
+        "session_id",
+        "conversation_id",
+        "chat_id",
+        "thread_id",
+        "client_session_id",
+        "previous_response_id",
+    ] {
+        if let Some(v) = body.get(field).and_then(|v| v.as_str()) {
+            let v = v.trim();
+            if !v.is_empty() {
+                let sanitized = sanitize_session_id(v);
+                if !sanitized.is_empty() && sanitized != "sid-unknown" {
+                    return Some(sanitized);
+                }
+            }
+        }
+    }
+    if let Some(metadata) = body.get("metadata") {
+        for field in [
+            "conversation_id",
+            "chat_id",
+            "session_id",
+            "thread_id",
+        ] {
+            if let Some(v) = metadata.get(field).and_then(|v| v.as_str()) {
+                let v = v.trim();
+                if !v.is_empty() && !v.contains("session-") {
+                    let sanitized = sanitize_session_id(v);
+                    if !sanitized.is_empty() && sanitized != "sid-unknown" {
+                        return Some(sanitized);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 3D 正交确定性会话混淆哈希生成：
+/// 1. 租户隔离 (Tenant Key)
+/// 2. 客户端显式会话语义头集合 (Sorted Session Headers + Query + Body)
+/// 3. 会话根锚点指纹 (Fallback Root User Prompt + Full System Prompt + Tools)
+pub fn derive_blended_session_id(
+    tenant: &str,
+    session_headers: &std::collections::BTreeMap<String, String>,
+    query_sid: Option<&str>,
+    body_sid: Option<&str>,
+    fallback: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"v2|");
+    hasher.update(tenant.as_bytes());
+    hasher.update([0xff]);
+
+    for (k, v) in session_headers {
+        hasher.update(k.as_bytes());
+        hasher.update(b"=");
+        hasher.update(v.as_bytes());
+        hasher.update([0xfe]);
+    }
+
+    if let Some(q) = query_sid {
+        hasher.update(b"query=");
+        hasher.update(q.as_bytes());
+        hasher.update([0xfd]);
+    }
+
+    if let Some(b) = body_sid {
+        hasher.update(b"body=");
+        hasher.update(b.as_bytes());
+        hasher.update([0xfc]);
+    }
+
+    let clean_fallback = fallback.trim();
+    if !clean_fallback.is_empty() {
+        hasher.update(b"anchor=");
+        hasher.update(clean_fallback.as_bytes());
+    }
+
+    let hash = format!("{:x}", hasher.finalize());
+    format!("sess-{}", &hash[..16])
 }
 
 fn client_id_from_store_key(store_key: &str) -> &str {
@@ -1956,8 +2137,8 @@ mod tests {
         // 2. Header extraction: Claude Code / Cursor / VSCode
         let mut headers = HeaderMap::new();
         headers.insert("x-cursor-session-id", "cursor-tab-99".parse().unwrap());
-        let scope = SessionScope::from_headers(&headers, "fallback_id");
-        assert_eq!(scope.client_id, "cursor-tab-99");
+        let extracted = explicit_session_id_with_query(&headers, None, None);
+        assert_eq!(extracted.as_deref(), Some("cursor-tab-99"));
 
         // 3. Body & Metadata extraction
         let body = json!({
@@ -1966,9 +2147,8 @@ mod tests {
             }
         });
         let empty_headers = HeaderMap::new();
-        let scope2 =
-            SessionScope::from_headers_and_body(&empty_headers, Some(&body), "fallback_id");
-        assert_eq!(scope2.client_id, "meta-conv-888");
+        let extracted2 = explicit_session_id_with_query(&empty_headers, Some(&body), None);
+        assert_eq!(extracted2.as_deref(), Some("meta-conv-888"));
     }
 
     #[test]
@@ -1978,15 +2158,15 @@ mod tests {
         let mut atom = HeaderMap::new();
         atom.insert("x-atomcode-session-id", uuid.parse().unwrap());
         assert_eq!(
-            SessionScope::from_headers(&atom, "fallback").client_id,
-            uuid
+            explicit_session_id_with_query(&atom, None, None).as_deref(),
+            Some(uuid)
         );
 
         let mut jeik = HeaderMap::new();
         jeik.insert("x-jeikcode-sessionid", uuid.parse().unwrap());
         assert_eq!(
-            SessionScope::from_headers(&jeik, "fallback").client_id,
-            uuid
+            explicit_session_id_with_query(&jeik, None, None).as_deref(),
+            Some(uuid)
         );
 
         let mut multi = HeaderMap::new();
@@ -1995,23 +2175,23 @@ mod tests {
         multi.insert("x-jeikcode-sessionid", uuid.parse().unwrap());
         multi.insert("x-session-id", uuid.parse().unwrap());
         assert_eq!(
-            SessionScope::from_headers(&multi, "fallback").client_id,
-            uuid
+            explicit_session_id_with_query(&multi, None, None).as_deref(),
+            Some(uuid)
         );
 
         let mut custom = HeaderMap::new();
         custom.insert("x-windsurf-session-id", "wind-tab-1".parse().unwrap());
         assert_eq!(
-            SessionScope::from_headers(&custom, "fallback").client_id,
-            "wind-tab-1"
+            explicit_session_id_with_query(&custom, None, None).as_deref(),
+            Some("wind-tab-1")
         );
 
         let mut ignored = HeaderMap::new();
         ignored.insert("x-request-id", "req-should-not-win".parse().unwrap());
         ignored.insert("x-api-key", "secret".parse().unwrap());
         assert_eq!(
-            SessionScope::from_headers(&ignored, "fallback_id").client_id,
-            "fallback_id"
+            explicit_session_id_with_query(&ignored, None, None),
+            None
         );
     }
 
@@ -2021,32 +2201,73 @@ mod tests {
         jeik.insert("x-session-id", "generic-session".parse().unwrap());
         jeik.insert("x-jeikcode-sessionid", "jeik-session".parse().unwrap());
         assert_eq!(
-            SessionScope::from_headers(&jeik, "fallback").client_id,
-            "jeik-session"
+            explicit_session_id_with_query(&jeik, None, None).as_deref(),
+            Some("jeik-session")
         );
 
         let mut atom = HeaderMap::new();
         atom.insert("x-session-id", "generic-session".parse().unwrap());
         atom.insert("x-atomcode-session-id", "atom-session".parse().unwrap());
         assert_eq!(
-            SessionScope::from_headers(&atom, "fallback").client_id,
-            "atom-session"
+            explicit_session_id_with_query(&atom, None, None).as_deref(),
+            Some("atom-session")
         );
 
         let mut wildcard = HeaderMap::new();
         wildcard.insert("x-session-id", "generic-session".parse().unwrap());
         wildcard.insert("x-windsurf-session-id", "wind-session".parse().unwrap());
         assert_eq!(
-            SessionScope::from_headers(&wildcard, "fallback").client_id,
-            "wind-session"
+            explicit_session_id_with_query(&wildcard, None, None).as_deref(),
+            Some("wind-session")
         );
 
         let mut only_generic = HeaderMap::new();
         only_generic.insert("x-session-id", "generic-session".parse().unwrap());
         assert_eq!(
-            SessionScope::from_headers(&only_generic, "fallback").client_id,
-            "generic-session"
+            explicit_session_id_with_query(&only_generic, None, None).as_deref(),
+            Some("generic-session")
         );
+    }
+
+    #[test]
+    fn test_3d_orthogonal_blended_session_stability_and_isolation() {
+        // 1. 同一对话多轮聊天：相同 Headers 与相同的 Anchor -> 100% 相同稳定
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-claude-code-session-id",
+            "53696541-0a6e-4be0-801e-2ee7a5601831".parse().unwrap(),
+        );
+        let scope_turn1 = SessionScope::from_headers(&headers, "sid-main-conversation-root");
+        let scope_turn2 = SessionScope::from_headers(&headers, "sid-main-conversation-root");
+        assert_eq!(scope_turn1.client_id, scope_turn2.client_id);
+        assert_eq!(scope_turn1.store_key, scope_turn2.store_key);
+
+        // 2. 主 Agent 与 Subagent 在同一 CLI 进程下（相同 x-claude-code-session-id 但不同 Anchor） -> 绝对隔离！
+        let scope_subagent = SessionScope::from_headers(&headers, "sid-subagent-distinct-prompt");
+        assert_ne!(scope_turn1.client_id, scope_subagent.client_id);
+        assert_ne!(scope_turn1.store_key, scope_subagent.store_key);
+
+        // 3. 不同租户多用户并发（不同 Authorization / API Key） -> 绝对隔离！
+        let mut headers_user_a = headers.clone();
+        headers_user_a.insert("authorization", "Bearer user-token-aaa".parse().unwrap());
+        let mut headers_user_b = headers.clone();
+        headers_user_b.insert("authorization", "Bearer user-token-bbb".parse().unwrap());
+        let scope_user_a = SessionScope::from_headers(&headers_user_a, "sid-main-conversation-root");
+        let scope_user_b = SessionScope::from_headers(&headers_user_b, "sid-main-conversation-root");
+        assert_ne!(scope_user_a.store_key, scope_user_b.store_key);
+
+        // 4. Header 乱序注入时哈希绝对一致（BTreeMap 保证确定性排序）
+        let mut headers_order1 = HeaderMap::new();
+        headers_order1.insert("x-atomcode-session-id", "uuid-123".parse().unwrap());
+        headers_order1.insert("x-jeikcode-sessionid", "uuid-456".parse().unwrap());
+
+        let mut headers_order2 = HeaderMap::new();
+        headers_order2.insert("x-jeikcode-sessionid", "uuid-456".parse().unwrap());
+        headers_order2.insert("x-atomcode-session-id", "uuid-123".parse().unwrap());
+
+        let scope_ord1 = SessionScope::from_headers(&headers_order1, "anchor-1");
+        let scope_ord2 = SessionScope::from_headers(&headers_order2, "anchor-1");
+        assert_eq!(scope_ord1.client_id, scope_ord2.client_id);
     }
 
     #[test]
