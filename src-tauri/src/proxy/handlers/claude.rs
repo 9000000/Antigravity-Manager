@@ -1174,6 +1174,9 @@ pub async fn handle_messages(
                 &mut gemini_body,
                 &mapped_model,
             );
+        crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
+            &mut gemini_body,
+        );
 
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
         let tf_micros = transform_timing.think_fill_micros;

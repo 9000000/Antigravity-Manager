@@ -1606,7 +1606,7 @@ impl TokenManager {
                 let t = tier.as_deref().unwrap_or("").to_lowercase();
                 if t.contains("ultra") {
                     0
-                } else if t.contains("pro") {
+                } else if t.contains("pro") || t.contains("premium") || t.contains("advanced") {
                     1
                 } else if t.contains("free") {
                     2
@@ -4666,7 +4666,7 @@ mod tests {
             let t = tier.as_deref().unwrap_or("").to_lowercase();
             if t.contains("ultra") {
                 0
-            } else if t.contains("pro") {
+            } else if t.contains("pro") || t.contains("premium") || t.contains("advanced") {
                 1
             } else if t.contains("free") {
                 2
@@ -4714,10 +4714,27 @@ mod tests {
         // ULTRA > PRO > FREE
         let ultra = create_test_token("ultra@test.com", Some("ULTRA"), 1.0, None, Some(50));
         let pro = create_test_token("pro@test.com", Some("PRO"), 1.0, None, Some(50));
+        let premium = create_test_token(
+            "premium@test.com",
+            Some("Google One AI Premium"),
+            1.0,
+            None,
+            Some(50),
+        );
+        let advanced = create_test_token(
+            "advanced@test.com",
+            Some("Gemini Advanced"),
+            1.0,
+            None,
+            Some(50),
+        );
         let free = create_test_token("free@test.com", Some("FREE"), 1.0, None, Some(50));
 
         assert_eq!(compare_tokens(&ultra, &pro), Ordering::Less);
+        assert_eq!(compare_tokens(&ultra, &premium), Ordering::Less);
         assert_eq!(compare_tokens(&pro, &free), Ordering::Less);
+        assert_eq!(compare_tokens(&premium, &free), Ordering::Less);
+        assert_eq!(compare_tokens(&advanced, &free), Ordering::Less);
         assert_eq!(compare_tokens(&ultra, &free), Ordering::Less);
         assert_eq!(compare_tokens(&free, &ultra), Ordering::Greater);
     }

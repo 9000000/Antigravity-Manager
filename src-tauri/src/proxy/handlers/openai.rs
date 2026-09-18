@@ -2130,6 +2130,9 @@ pub async fn handle_chat_completions(
                 &mut gemini_body,
                 &mapped_model,
             );
+        crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
+            &mut gemini_body,
+        );
         if let Some(ref recorder) = upstream_recorder {
             recorder.set_value(&gemini_body);
         }
@@ -4060,6 +4063,9 @@ pub async fn handle_completions(
                 &mut gemini_body,
                 &mapped_model,
             );
+        crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
+            &mut gemini_body,
+        );
         if let Some(ref recorder) = upstream_recorder {
             recorder.set_value(&gemini_body);
         }
