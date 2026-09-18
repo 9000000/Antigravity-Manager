@@ -1812,12 +1812,8 @@ pub async fn handle_messages(
                 }
             }
 
-            // [NEW] Heal session after stripping thinking blocks to prevent "naked ToolResult" rejection
-            // This ensures that any ToolResult in history is properly "closed" with synthetic messages
-            // if its preceding Thinking block was just converted to Text.
-            crate::proxy::mappers::claude::thinking_utils::close_tool_loop_for_thinking(
-                &mut request_for_body.messages,
-            );
+            // [FIX Prompt-Cache] 严禁在重试路径中注入合成消息 (close_tool_loop_for_thinking)！
+            // 保持历史消息真实纯净，由 InboundThinkingPipeline 与 finalize_gemini_contents_thinking 统一兜底签名与占位。
 
             // 清理模型名中的 -thinking 后缀
             if request_for_body.model.contains("claude-") {

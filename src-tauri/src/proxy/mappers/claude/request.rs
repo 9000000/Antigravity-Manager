@@ -408,24 +408,56 @@ pub fn transform_claude_request_in_timed(
     // 原封不动发回导致的 "Extra inputs are not permitted" 错误
     let mut cleaned_req = claude_req.clone();
 
-    // [CRITICAL FIX] 提取并过滤 role == "system" 的消息，防止混入 contents 导致 Gemini 返回 400 INVALID_ARGUMENT
+    // [JEIKCODE FROZEN SYSTEM PRINCIPLE]
+    // 仅收集最开头的连续 role == "system" 消息进入 extra_system_messages。
+    // 一旦对话开始（遇到首个非 system 轮次），后续中途出现的任何 system 消息绝对严禁提升至 systemInstruction，
+    // 否则会导致发往 Google 上游的顶层系统前缀发生字节级突变并引发 KV Cache 崩溃！
+    // 中途 system 消息就地转为 synthetic user 消息留在原时间线中，并在后续由 merge_consecutive_messages 自然融合。
     let mut extra_system_messages = Vec::new();
     let mut filtered_messages = Vec::new();
+    let mut in_leading_system = true;
+
     for msg in cleaned_req.messages {
         if msg.role == "system" {
-            match &msg.content {
-                MessageContent::String(text) => {
-                    extra_system_messages.push(text.clone());
-                }
-                MessageContent::Array(blocks) => {
-                    for block in blocks {
-                        if let ContentBlock::Text { text } = block {
-                            extra_system_messages.push(text.clone());
+            if in_leading_system {
+                match &msg.content {
+                    MessageContent::String(text) => {
+                        extra_system_messages.push(text.clone());
+                    }
+                    MessageContent::Array(blocks) => {
+                        for block in blocks {
+                            if let ContentBlock::Text { text } = block {
+                                extra_system_messages.push(text.clone());
+                            }
                         }
                     }
                 }
+            } else {
+                let text = match &msg.content {
+                    MessageContent::String(t) => t.clone(),
+                    MessageContent::Array(blocks) => {
+                        let mut joined = String::new();
+                        for b in blocks {
+                            if let ContentBlock::Text { text } = b {
+                                if !joined.is_empty() {
+                                    joined.push('\n');
+                                }
+                                joined.push_str(text);
+                            }
+                        }
+                        joined
+                    }
+                };
+                let wrapped_reminder = crate::proxy::mappers::common_utils::wrap_in_system_reminder(&text);
+                if !wrapped_reminder.is_empty() {
+                    filtered_messages.push(Message {
+                        role: "user".to_string(),
+                        content: MessageContent::String(wrapped_reminder),
+                    });
+                }
             }
         } else {
+            in_leading_system = false;
             filtered_messages.push(msg);
         }
     }

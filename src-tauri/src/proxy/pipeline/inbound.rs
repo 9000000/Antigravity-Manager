@@ -46,10 +46,11 @@ impl InboundThinkingPipeline {
                             let text = part.get("text").and_then(|v| v.as_str()).unwrap_or("");
                             let is_placeholder =
                                 crate::proxy::thinking_store::is_placeholder_thought(text);
-                            let final_thought_text = if is_placeholder || text.is_empty() {
+                            // 保留真实原始思考文本的尾部换行与空白，绝不进行破坏性 trim，保证与上一轮流式输出字节级严格一致
+                            let final_thought_text = if is_placeholder || text.trim().is_empty() {
                                 "..."
                             } else {
-                                text.trim()
+                                text
                             };
 
                             // 若非首位，或者前面已有文本部件，降级为普通文本
