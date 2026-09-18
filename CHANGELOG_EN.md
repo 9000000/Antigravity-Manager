@@ -15,6 +15,9 @@
         -   **[Configuration & Command Compatibility] Fix Command Not Found on Proxy Settings Save (PR #3470)**:
             -   **Frontend Refresh Command Alignment**: Corrected the post-save refresh invocation in `ApiProxy.tsx` from `get_config` to `load_config`, eliminating missing command warnings.
             -   **Dual Command Compatibility**: Registered `get_config` as a compatibility alias for `load_config` across Tauri commands and HTTP mappings.
+        -   **[Desktop Proxy Service & Auto-Start Persistence] Fix Proxy Switch State Reset on Restart & Stale State Overwrite**:
+            -   **Backend Persistence Alignment**: Aligned desktop `start_proxy_service` and `stop_proxy_service` handlers with Web/Docker behavior by persisting `auto_start` directly into `gui_config.json`, ensuring the proxy service reliably auto-starts after application restart.
+            -   **Frontend State Synchronization**: Fixed `handleToggle` in `ApiProxy.tsx` to immediately update `auto_start` in local React state, preventing subsequent configuration saves or model mapping changes from overwriting `auto_start` with stale `false` state.
     *   **v4.7.5 (2026-09-18)**:
         -   **[Upstream WAF & Request Sanitization] Flawlessly Resolved Agent Client 404/429/503 Errors & Purged Pseudo-Headers (PR #3463, Fixes #3458, Fixes #3467, Fixes #3466, Fixes #3460, Fixes #3454, Fixes #3453)**:
             -   **Outbound UA Normalization**: Upgraded outbound client User-Agent uniformly to `>= 4.3.0` to eliminate upstream WAF fingerprint blocking.
