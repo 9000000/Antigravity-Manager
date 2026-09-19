@@ -3046,11 +3046,19 @@ pub async fn handle_completions(
         .get("previous_response_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let explicit_session_id = body
-        .get("session_id")
-        .and_then(Value::as_str)
+    let explicit_session_id = headers
+        .get("x-session-id")
+        .or_else(|| headers.get("session-id"))
+        .or_else(|| headers.get("x-claude-code-session-id"))
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.trim().to_string())
         .filter(|id| !id.is_empty())
-        .map(str::to_string);
+        .or_else(|| {
+            body.get("session_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string)
+        });
     let response_id_for_save = format!("resp-{}", uuid::Uuid::new_v4());
     let http_tool_call_cache: std::collections::HashMap<String, serde_json::Value> =
         std::collections::HashMap::new();
@@ -3727,7 +3735,11 @@ pub async fn handle_completions(
 
     // [NEW v4.2.0] Context Management & Reasoning Replay
     let fallback_sid = if is_responses_api {
-        routing_session_id.clone()
+        if explicit_session_id.is_some() || previous_response_id.is_some() {
+            routing_session_id.clone()
+        } else {
+            SessionManager::extract_openai_session_id(&openai_req)
+        }
     } else {
         SessionManager::extract_openai_session_id(&openai_req)
     };
@@ -3738,6 +3750,7 @@ pub async fn handle_completions(
     );
     openai_req.session_id = Some(session_scope.store_key.clone());
     let session_id_str = session_scope.store_key.clone();
+    let client_session_id = session_scope.client_id.clone();
     let signature_session_id_str = if is_responses_api {
         previous_response_id
             .clone()
@@ -4060,7 +4073,7 @@ pub async fn handle_completions(
                 &project_id,
                 &mapped_model,
                 proxy_token.as_ref(),
-                &routing_session_id,
+                &session_id_str,
                 signature_read_key.as_deref(),
                 true, // is_responses_api
             )
@@ -4159,13 +4172,17 @@ pub async fn handle_completions(
         };
         let query_string = if list_response { Some("alt=sse") } else { None };
 
+        let mut extra_headers = std::collections::HashMap::new();
+        extra_headers.insert("x-session-id".to_string(), client_session_id.clone());
+
         let upstream_req_start = std::time::Instant::now();
         let call_result = match upstream
-            .call_v1_internal(
+            .call_v1_internal_with_headers(
                 method,
                 &access_token,
                 gemini_body,
                 query_string,
+                extra_headers,
                 Some(account_id.as_str()),
             )
             .await

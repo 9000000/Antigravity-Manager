@@ -137,31 +137,46 @@ pub fn normalize_and_sanitize_tool_args(tool_name: &str, args: &mut Value) {
                 .trim()
                 .to_string();
 
+            let mut candidate = raw_desc.as_str();
+            for pfx in &["Run: ", "Run ", "Execute: ", "Execute ", "Check: ", "Check ", "运行: ", "运行 ", "执行: ", "执行 "] {
+                if let Some(rest) = candidate.strip_prefix(pfx) {
+                    candidate = rest.trim();
+                }
+            }
+
             // 如果 description 看起来像一条可执行命令（如包含管道、常见命令开头等），不要盲目覆盖成 echo
-            let is_likely_command = !raw_desc.is_empty()
-                && (raw_desc.starts_with("git ")
-                    || raw_desc.starts_with("ls ")
-                    || raw_desc.starts_with("dir ")
-                    || raw_desc.starts_with("cd ")
-                    || raw_desc.starts_with("cat ")
-                    || raw_desc.starts_with("cargo ")
-                    || raw_desc.starts_with("npm ")
-                    || raw_desc.starts_with("pnpm ")
-                    || raw_desc.starts_with("yarn ")
-                    || raw_desc.starts_with("node ")
-                    || raw_desc.starts_with("python ")
-                    || raw_desc.starts_with("Get-")
-                    || raw_desc.starts_with("Set-")
-                    || raw_desc.contains(" | ")
-                    || raw_desc.contains(";"));
+            let is_likely_command = !candidate.is_empty()
+                && (candidate.starts_with("git ")
+                    || candidate.starts_with("ls ")
+                    || candidate.starts_with("dir ")
+                    || candidate.starts_with("cd ")
+                    || candidate.starts_with("cat ")
+                    || candidate.starts_with("cargo ")
+                    || candidate.starts_with("npm ")
+                    || candidate.starts_with("pnpm ")
+                    || candidate.starts_with("yarn ")
+                    || candidate.starts_with("node ")
+                    || candidate.starts_with("python ")
+                    || candidate.starts_with("powershell ")
+                    || candidate.starts_with("pwsh ")
+                    || candidate.starts_with("cmd ")
+                    || candidate.starts_with("cp ")
+                    || candidate.starts_with("mv ")
+                    || candidate.starts_with("rm ")
+                    || candidate.starts_with("mkdir ")
+                    || candidate.starts_with("Get-")
+                    || candidate.starts_with("Set-")
+                    || candidate.starts_with("Copy-")
+                    || candidate.contains(" | ")
+                    || candidate.contains(";"));
 
             if is_likely_command {
-                obj.insert("command".to_string(), Value::String(raw_desc));
+                obj.insert("command".to_string(), Value::String(candidate.to_string()));
             } else {
-                let desc_for_log = if raw_desc.is_empty() {
+                let desc_for_log = if candidate.is_empty() {
                     "Action logged"
                 } else {
-                    raw_desc.as_str()
+                    candidate
                 };
 
                 let safe_desc: String = desc_for_log
@@ -175,7 +190,7 @@ pub fn normalize_and_sanitize_tool_args(tool_name: &str, args: &mut Value) {
                     trimmed
                 };
 
-                let fallback_cmd = format!("echo \"[OK: Action logged - {}]\"", safe_title);
+                let fallback_cmd = format!("echo \"[Error: No command provided - {}]\" >&2; exit 1", safe_title);
                 obj.insert("command".to_string(), Value::String(fallback_cmd));
                 tracing::warn!(
                     tool = %tool_name,
