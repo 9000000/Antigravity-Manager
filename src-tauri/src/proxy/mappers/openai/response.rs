@@ -94,6 +94,15 @@ pub fn is_likely_command(candidate: &str) -> bool {
         return true;
     }
 
+    // 排除含有明显自然语言连词或英语叙述结构的短语（如 "Run git tag and git push", "git pull and build", "git tag to origin"）
+    // 避免因为以 "git", "npm", "cargo" 等开头就将复合英文描述误判为单一合法命令
+    let lower_trimmed = trimmed.to_ascii_lowercase();
+    for conjunction in &[" and ", " then ", " but ", " to origin", " to main", " to master"] {
+        if lower_trimmed.contains(conjunction) {
+            return false;
+        }
+    }
+
     let first_token = trimmed.split_whitespace().next().unwrap_or("");
     let first_token_lower = first_token.to_ascii_lowercase();
 
@@ -953,6 +962,20 @@ mod tests {
                 "Failed to extract command from '{}'", input_desc
             );
         }
+    }
+
+    #[test]
+    fn test_is_likely_command_excludes_natural_language_conjunctions() {
+        // 自然语言动作描述（含 and, then, but, to origin 等），即使以 git/cargo 开头也不应被误判为合法命令
+        assert!(!is_likely_command("git tag and git push"));
+        assert!(!is_likely_command("git pull and build"));
+        assert!(!is_likely_command("git push to origin"));
+        assert!(!is_likely_command("cargo build then test"));
+
+        // 真实合法命令保持正常识别
+        assert!(is_likely_command("git tag -a v1.0"));
+        assert!(is_likely_command("git push origin main"));
+        assert!(is_likely_command("cargo check --workspace"));
     }
 
     #[test]

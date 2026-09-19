@@ -1294,6 +1294,12 @@ pub fn transform_openai_request_with_session(
                     *obj = clean_obj;
                 }
 
+                let is_shell_tool = gemini_func
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(super::response::is_shell_or_terminal_tool)
+                    .unwrap_or(false);
+
                 if gemini_func.get("name").and_then(|v| v.as_str()) == Some("apply_patch") {
                     gemini_func.as_object_mut().unwrap().insert(
                         "parameters".to_string(),
@@ -1311,6 +1317,21 @@ pub fn transform_openai_request_with_session(
                 } else if let Some(params) = gemini_func.get_mut("parameters") {
                     // [DEEP FIX] 统一调用公共库清洗：展开 $ref 并剔除所有层级的 format/definitions
                     crate::proxy::common::json_schema::clean_json_schema(params);
+
+                    // [FIX] 针对 Shell / Terminal 类工具（如 run_command, bash, powershell, cmd 等）：
+                    // 彻底从 parameters.properties 中剔除 `description` 参数字段！
+                    // 谷歌 Gemini 上游极易产生字段语义混淆，误将人类意图输出到参数中的 description 字段，
+                    // 从而把真正的 command 字段漏掉。从源头剔除 description 字段，强迫模型只能把命令填入 command 字段。
+                    if is_shell_tool {
+                        if let Some(params_obj) = params.as_object_mut() {
+                            if let Some(props) = params_obj.get_mut("properties").and_then(|p| p.as_object_mut()) {
+                                props.remove("description");
+                            }
+                            if let Some(req_arr) = params_obj.get_mut("required").and_then(|r| r.as_array_mut()) {
+                                req_arr.retain(|v| v.as_str() != Some("description"));
+                            }
+                        }
+                    }
 
                     // Gemini v1internal 要求：
                     // 1. type 必须是大写 (OBJECT, STRING 等)
@@ -2879,5 +2900,54 @@ mod tests {
             chat_thought["thoughtSignature"].as_str(),
             Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE)
         );
+    }
+
+    #[test]
+    fn test_shell_tool_strips_description_parameter_for_gemini() {
+        use crate::proxy::mappers::openai::models::{OpenAITool, OpenAIFunction};
+        let req = OpenAIRequest {
+            model: "gemini-2.5-pro".to_string(),
+            messages: vec![OpenAIMessage {
+                role: "user".to_string(),
+                content: Some(OpenAIContent::String("run command".to_string())),
+                ..Default::default()
+            }],
+            tools: Some(vec![OpenAITool {
+                r#type: "function".to_string(),
+                function: OpenAIFunction {
+                    name: "run_command".to_string(),
+                    description: Some("Run a shell command".to_string()),
+                    parameters: Some(json!({
+                        "type": "object",
+                        "properties": {
+                            "command": { "type": "string", "description": "CLI command" },
+                            "description": { "type": "string", "description": "Optional human label" }
+                        },
+                        "required": ["command", "description"]
+                    })),
+                },
+            }]),
+            ..Default::default()
+        };
+
+        let (result, _, _, _) = transform_openai_request_with_session(
+            &req,
+            "test-proj",
+            "gemini-2.5-pro",
+            None,
+            "routing-1",
+            None,
+            false,
+        );
+
+        let tools = result["request"]["tools"].as_array().unwrap();
+        let func_decls = tools[0]["functionDeclarations"].as_array().unwrap();
+        let run_cmd = func_decls.iter().find(|f| f["name"] == "run_command").unwrap();
+        let props = run_cmd["parameters"]["properties"].as_object().unwrap();
+        assert!(props.contains_key("command"));
+        assert!(!props.contains_key("description"), "description parameter must be stripped for Gemini");
+        let req_arr = run_cmd["parameters"]["required"].as_array().unwrap();
+        assert!(req_arr.iter().any(|v| v == "command"));
+        assert!(!req_arr.iter().any(|v| v == "description"), "description must not be required");
     }
 }

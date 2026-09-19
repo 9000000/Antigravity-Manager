@@ -1865,6 +1865,18 @@ fn build_tools(
                 }));
                 crate::proxy::common::json_schema::clean_json_schema(&mut input_schema);
 
+                // [FIX] 针对 Shell / Terminal 类工具彻底从 parameters.properties 中剔除 description 字段
+                if crate::proxy::mappers::openai::response::is_shell_or_terminal_tool(name) {
+                    if let Some(params_obj) = input_schema.as_object_mut() {
+                        if let Some(props) = params_obj.get_mut("properties").and_then(|p| p.as_object_mut()) {
+                            props.remove("description");
+                        }
+                        if let Some(req_arr) = params_obj.get_mut("required").and_then(|r| r.as_array_mut()) {
+                            req_arr.retain(|v| v.as_str() != Some("description"));
+                        }
+                    }
+                }
+
                 function_declarations.push(json!({
                     "name": name,
                     "description": tool.description,
