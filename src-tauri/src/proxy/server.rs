@@ -1747,6 +1747,7 @@ async fn admin_save_config(
         new_config.proxy.experimental.log_retention_days,
         new_config.proxy.experimental.thinking_store_enabled,
         new_config.proxy.experimental.thinking_retention_days,
+        Some(new_config.proxy.experimental.thinking_max_memory_turns),
     );
 
     Ok(StatusCode::OK)

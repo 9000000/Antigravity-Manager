@@ -22,8 +22,10 @@ use std::time::{Duration, Instant};
 const MIN_SIGNATURE_LENGTH: usize = 50;
 pub const SENTINEL_SIGNATURE: &str = "skip_thought_signature_validator";
 const MAX_SESSIONS: usize = 2000;
-const MAX_TURNS_PER_SESSION: usize = 200;
-const MAX_BYTES_PER_SESSION: usize = 32 * 1024 * 1024;
+fn max_turns_per_session() -> usize {
+    crate::proxy::config::get_thinking_max_memory_turns()
+}
+const MAX_BYTES_PER_SESSION: usize = 64 * 1024 * 1024;
 /// Persist last_accessed at most this often. Fill/hydrate is memory-only between writes.
 const TOUCH_PERSIST_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -212,7 +214,7 @@ impl ThinkingStore {
             } else {
                 entry.turns.push(Arc::new(rec));
                 entry.bytes = entry.bytes.saturating_add(rec_bytes);
-                while entry.turns.len() > MAX_TURNS_PER_SESSION
+                while entry.turns.len() > max_turns_per_session()
                     || entry.bytes > MAX_BYTES_PER_SESSION
                 {
                     if let Some(old) = entry.turns.first() {
@@ -401,10 +403,7 @@ impl ThinkingStore {
             return 0;
         }
 
-        let records = self.load_turns(store_key);
-        if records.is_empty() {
-            return 0;
-        }
+        let mut records = self.load_turns(store_key);
 
         // 收集所有的 model 轮次元信息
         struct ModelTurnMeta {
@@ -558,23 +557,76 @@ impl ThinkingStore {
             }
         }
 
-        // Phase 4: 尾部优先的逆向兜底匹配（对齐用户的“最新回答在尾部”思路）
-        // 仅对对话中【最后一个 model 轮次】进行保底匹配，绝不污染历史早期轮次！
+        // Phase 3.5: L2 SQLite 精准穿透回捞 (针对超过内存容量淘汰或冷启动的历史轮次)
+        // 核心原则：淘汰轮次绝不盲目降级占位符！优先通过 tool_id / fingerprint 从 SQLite 索引中精准回捞
+        for turn in model_turns.iter_mut() {
+            if turn.already_complete || turn.matched_record_idx.is_some() {
+                continue;
+            }
+
+            let mut fetched_rec: Option<ThinkingRecord> = None;
+
+            if !turn.tool_ids.is_empty() {
+                // 1. 工具调用精准穿透点查 (利用 primary_tool_id Partial Index，纳秒级命中)
+                for id in &turn.tool_ids {
+                    if let Ok(Some(persisted)) =
+                        crate::modules::proxy_db::load_thinking_by_tool_id(store_key, id)
+                    {
+                        fetched_rec = Some(ThinkingRecord {
+                            fingerprint: persisted.fingerprint,
+                            thought: persisted.thought,
+                            signature: persisted.signature,
+                            tool_ids: persisted.tool_ids,
+                            tool_names: persisted.tool_names,
+                            visible: persisted.visible,
+                        });
+                        break;
+                    }
+                }
+            } else if !turn.visible.trim().is_empty() {
+                // 2. 纯文本轮次精准穿透点查 (利用 idx_thinking_rec_fp 索引)
+                if turn.fp.is_empty() {
+                    turn.fp = fingerprint(&turn.visible, &turn.tool_ids, &turn.tool_names);
+                }
+                if let Ok(Some(persisted)) =
+                    crate::modules::proxy_db::load_thinking_by_fingerprint(store_key, &turn.fp)
+                {
+                    fetched_rec = Some(ThinkingRecord {
+                        fingerprint: persisted.fingerprint,
+                        thought: persisted.thought,
+                        signature: persisted.signature,
+                        tool_ids: persisted.tool_ids,
+                        tool_names: persisted.tool_names,
+                        visible: persisted.visible,
+                    });
+                }
+            }
+
+            if let Some(rec) = fetched_rec {
+                records.push(Arc::new(rec));
+                let new_idx = records.len() - 1;
+                turn.matched_record_idx = Some(new_idx);
+            }
+        }
+
+        // Phase 4: 尾部优先的逆向兜底匹配（仅限纯文本轮次，绝不跨轮借用工具签名造成下轮突变！）
         if let Some(last_turn) = model_turns.last_mut() {
             if !last_turn.already_complete && last_turn.matched_record_idx.is_none() {
                 let last_turn_has_tools =
                     !last_turn.tool_ids.is_empty() || !last_turn.tool_names.is_empty();
-                if let Some((last_unused_rec_idx, _)) =
-                    records.iter().enumerate().rfind(|(idx, r)| {
-                        if used[*idx] {
-                            return false;
-                        }
-                        let r_has_tools = !r.tool_ids.is_empty() || !r.tool_names.is_empty();
-                        r_has_tools == last_turn_has_tools
-                    })
-                {
-                    last_turn.matched_record_idx = Some(last_unused_rec_idx);
-                    used[last_unused_rec_idx] = true;
+                if !last_turn_has_tools {
+                    if let Some((last_unused_rec_idx, _)) =
+                        records.iter().enumerate().rfind(|(idx, r)| {
+                            if used[*idx] {
+                                return false;
+                            }
+                            let r_has_tools = !r.tool_ids.is_empty() || !r.tool_names.is_empty();
+                            !r_has_tools
+                        })
+                    {
+                        last_turn.matched_record_idx = Some(last_unused_rec_idx);
+                        used[last_unused_rec_idx] = true;
+                    }
                 }
             }
         }
@@ -2769,5 +2821,62 @@ mod tests {
             parts[0].get("thoughtSignature").is_none(),
             "thoughtSignature must be removed from functionResponse when thinking is disabled"
         );
+    }
+
+    #[test]
+    fn test_sqlite_penetration_fallback_when_memory_missing() {
+        let store = ThinkingStore::new();
+        let key = "t:sqlite-fallback-test";
+        let tool_id = "call_fallback_999";
+        let real_sig = "s".repeat(60);
+
+        // 1. 模拟旧轮次已持久化入库 SQLite（但在内存缓存中已被淘汰或未命中）
+        crate::modules::proxy_db::save_thinking_record(
+            key,
+            "fp_fallback",
+            "This thinking was retrieved directly from SQLite!",
+            Some(&real_sig),
+            &[tool_id.to_string()],
+            &[],
+            "some visible",
+        )
+        .unwrap();
+
+        // 确保内存缓存是完全清空的，逼迫触发 L2 SQLite 穿透点查
+        store.clear();
+
+        // 2. 构造客户端回传的历史请求（缺少思考块，仅占位符）
+        let mut contents = vec![json!({
+            "role": "model",
+            "parts": [
+                {
+                    "text": "...",
+                    "thought": true,
+                    "thoughtSignature": SENTINEL_SIGNATURE
+                },
+                {
+                    "functionCall": {
+                        "name": "shell",
+                        "id": tool_id,
+                        "args": {}
+                    }
+                }
+            ]
+        })];
+
+        // 3. 执行思考复活：应当穿透到 SQLite 成功捞回！
+        let restored = store.restore_gemini_contents(key, &mut contents);
+        assert_eq!(restored, 1, "Must penetrate to SQLite and restore 1 turn!");
+
+        let parts = contents[0]["parts"].as_array().unwrap();
+        assert_eq!(parts[0]["thought"], true);
+        assert_eq!(
+            parts[0]["text"],
+            "This thinking was retrieved directly from SQLite!"
+        );
+        assert_eq!(parts[0]["thoughtSignature"], real_sig);
+        assert_eq!(parts[1]["thoughtSignature"], real_sig);
+
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(key);
     }
 }

@@ -112,18 +112,39 @@ fn init_thinking_schema(conn: &Connection) -> Result<(), String> {
         [],
     )
     .map_err(|e| e.to_string())?;
+
+    // 动态升级：增加 primary_tool_id 列用于超长会话极速穿透点查与防叠加查重
     let _ = conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_thinking_rec_session ON thinking_records (session_key, created_at ASC)",
+        "ALTER TABLE thinking_records ADD COLUMN primary_tool_id TEXT",
         [],
     );
+
+    // 1. 覆盖 load_thinking_records 的正向序列扫描 (ORDER BY id ASC)，避免内存二次排序
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_thinking_rec_seq ON thinking_records (session_key, id ASC)",
+        [],
+    );
+    // 2. 覆盖基于 primary_tool_id 的快速穿透点查 (极简 Partial Index，极致纳秒响应)
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_thinking_rec_tool ON thinking_records (session_key, primary_tool_id) WHERE primary_tool_id IS NOT NULL",
+        [],
+    );
+    // 3. 覆盖基于 fingerprint 的指纹点查
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_thinking_rec_fp ON thinking_records (session_key, fingerprint)",
         [],
     );
+    // 4. 覆盖最新记录查询 (ORDER BY id DESC)
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_thinking_rec_latest ON thinking_records (session_key, id DESC)",
         [],
     );
+    // 5. 覆盖会话创建时间索引
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_thinking_rec_session ON thinking_records (session_key, created_at ASC)",
+        [],
+    );
+    // 6. 覆盖历史清理时间索引
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_thinking_rec_accessed ON thinking_records (last_accessed ASC)",
         [],
@@ -147,26 +168,49 @@ fn init_thinking_schema(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-fn open_thinking_db() -> Result<Connection, String> {
-    let db_path = get_thinking_db_path()?;
+fn open_thinking_db_at(db_path: &PathBuf) -> Result<Connection, String> {
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
     apply_fast_pragmas(&conn)?;
     init_thinking_schema(&conn)?;
     Ok(conn)
 }
 
+fn open_thinking_db() -> Result<Connection, String> {
+    let db_path = get_thinking_db_path()?;
+    open_thinking_db_at(&db_path)
+}
+
+static THINKING_DB: OnceLock<Mutex<Option<(PathBuf, Connection)>>> = OnceLock::new();
+
+pub struct ThinkingDbGuard(MutexGuard<'static, Option<(PathBuf, Connection)>>);
+
+impl std::ops::Deref for ThinkingDbGuard {
+    type Target = Connection;
+    fn deref(&self) -> &Self::Target {
+        &self.0.as_ref().expect("thinking db connection").1
+    }
+}
+
+impl std::ops::DerefMut for ThinkingDbGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0.as_mut().expect("thinking db connection").1
+    }
+}
+
 /// Process-lifetime connection to thinking_store.db.
 /// Fill/hydrate must not open proxy_logs.db (it can be multi-GB on HDD).
-fn thinking_db() -> Result<MutexGuard<'static, Connection>, String> {
-    static DB: OnceLock<Mutex<Connection>> = OnceLock::new();
-    if DB.get().is_none() {
-        let conn = open_thinking_db()?;
-        let _ = DB.set(Mutex::new(conn));
-    }
-    DB.get()
-        .ok_or_else(|| "thinking db was not initialized".to_string())?
+/// Automatically tracks data directory changes and reuses connection with fast pragmas.
+fn thinking_db() -> Result<ThinkingDbGuard, String> {
+    let db_path = get_thinking_db_path()?;
+    let slot = THINKING_DB.get_or_init(|| Mutex::new(None));
+    let mut guard = slot
         .lock()
-        .map_err(|e| format!("thinking db lock: {e}"))
+        .map_err(|e| format!("thinking db lock: {e}"))?;
+    if guard.as_ref().map(|(p, _)| p) != Some(&db_path) {
+        let conn = open_thinking_db_at(&db_path)?;
+        *guard = Some((db_path, conn));
+    }
+    Ok(ThinkingDbGuard(guard))
 }
 
 fn mark_thinking_imported(conn: &Connection) {
@@ -519,67 +563,113 @@ pub fn save_thinking_record(
     if session_key.is_empty() {
         return Ok(());
     }
-    let conn = thinking_db()?;
+    let mut conn = thinking_db()?;
     let now = chrono::Utc::now().timestamp_millis();
     let tool_ids_json = serde_json::to_string(tool_ids).unwrap_or_else(|_| "[]".to_string());
+    let primary_tool_id = tool_ids.first().map(|s| s.as_str());
     // tool_names / full visible for tool turns are reconstructable from the next
     // request JSON at fill time. Do not write them.
     let visible_persist = persist_visible(tool_ids, visible);
     let packed_thought = pack_thought(thought);
     let signature = persist_signature(signature);
 
-    // Align with in-memory ThinkingStore: only merge consecutive chunks of the
-    // current (latest) turn. Never rewrite an older turn that happens to share
-    // a fingerprint (e.g. two "你好" replies in the same session).
-    let latest_id: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM thinking_records WHERE session_key = ?1 ORDER BY id DESC LIMIT 1",
-            params![session_key],
-            |r| r.get(0),
-        )
-        .ok();
-
-    let updated = if let Some(id) = latest_id {
-        conn.execute(
-            "UPDATE thinking_records
-             SET thought = ?1, signature = ?2, tool_ids = ?3, tool_names = '[]', visible = ?4, created_at = ?5
-             WHERE id = ?6 AND fingerprint = ?7",
-            params![
-                packed_thought.as_slice(),
-                signature,
-                &tool_ids_json,
-                visible_persist,
-                now,
-                id,
-                fingerprint,
-            ],
-        )
-        .map_err(|e| e.to_string())?
+    // 智能防叠加与幂等查重：
+    // 1. 若含有工具调用，以 (session_key, primary_tool_id) 查重；
+    // 2. 若为纯文本，以 (session_key, fingerprint) 查重。
+    let existing_id: Option<(i64, usize, Option<String>)> = if let Some(p_id) = primary_tool_id {
+        let mut stmt = conn
+            .prepare_cached(
+                "SELECT id, length(thought), signature FROM thinking_records
+                 WHERE session_key = ?1 AND primary_tool_id = ?2
+                 ORDER BY id DESC LIMIT 1",
+            )
+            .map_err(|e| e.to_string())?;
+        stmt.query_row(params![session_key, p_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .ok()
     } else {
-        0
+        let mut stmt = conn
+            .prepare_cached(
+                "SELECT id, length(thought), signature FROM thinking_records
+                 WHERE session_key = ?1 AND fingerprint = ?2
+                 ORDER BY id DESC LIMIT 1",
+            )
+            .map_err(|e| e.to_string())?;
+        stmt.query_row(params![session_key, fingerprint], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .ok()
     };
 
-    if updated == 0 {
-        conn.execute(
-            "INSERT INTO thinking_records (session_key, fingerprint, thought, signature, tool_ids, tool_names, visible, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, '[]', ?6, ?7)",
-            params![
-                session_key,
-                fingerprint,
+    if let Some((id, old_thought_len, old_sig)) = existing_id {
+        // 已存在记录：检查是否需要更新（防止将已有实质思考覆盖为占位符，但允许补全更长思考或有效签名）
+        let incoming_has_meaningful_thought = !crate::proxy::thinking_store::is_placeholder_thought(thought)
+            && !thought.trim().is_empty();
+        let old_is_dummy = old_thought_len <= 10; // "RAW1..." 或占位符非常短
+
+        let should_update_thought = incoming_has_meaningful_thought || old_is_dummy;
+        let effective_sig = signature.or(old_sig.as_deref());
+
+        if should_update_thought {
+            let mut stmt = conn
+                .prepare_cached(
+                    "UPDATE thinking_records
+                     SET thought = ?1, signature = ?2, tool_ids = ?3, visible = ?4, created_at = ?5, primary_tool_id = ?6
+                     WHERE id = ?7",
+                )
+                .map_err(|e| e.to_string())?;
+            stmt.execute(params![
                 packed_thought.as_slice(),
-                signature,
+                effective_sig,
                 &tool_ids_json,
                 visible_persist,
                 now,
-            ],
-        )
+                primary_tool_id,
+                id,
+            ])
+            .map_err(|e| e.to_string())?;
+        } else if signature.is_some() && signature != old_sig.as_deref() {
+            // 仅更新签名，保留已有的高质量实质思考
+            let mut stmt = conn
+                .prepare_cached(
+                    "UPDATE thinking_records
+                     SET signature = ?1, created_at = ?2
+                     WHERE id = ?3",
+                )
+                .map_err(|e| e.to_string())?;
+            stmt.execute(params![signature, now, id])
+                .map_err(|e| e.to_string())?;
+        }
+    } else {
+        // 全新轮次：插入新记录（包含 primary_tool_id 列）
+        let mut stmt = conn
+            .prepare_cached(
+                "INSERT INTO thinking_records (session_key, fingerprint, thought, signature, tool_ids, tool_names, visible, created_at, primary_tool_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, '[]', ?6, ?7, ?8)",
+            )
+            .map_err(|e| e.to_string())?;
+        stmt.execute(params![
+            session_key,
+            fingerprint,
+            packed_thought.as_slice(),
+            signature,
+            &tool_ids_json,
+            visible_persist,
+            now,
+            primary_tool_id,
+        ])
         .map_err(|e| e.to_string())?;
     }
-    let _ = conn.execute(
-        "INSERT INTO thinking_sessions (session_key, last_accessed) VALUES (?1, ?2)
-         ON CONFLICT(session_key) DO UPDATE SET last_accessed = excluded.last_accessed",
-        params![session_key, now],
-    );
+
+    let mut session_stmt = conn
+        .prepare_cached(
+            "INSERT INTO thinking_sessions (session_key, last_accessed) VALUES (?1, ?2)
+             ON CONFLICT(session_key) DO UPDATE SET last_accessed = excluded.last_accessed",
+        )
+        .map_err(|e| e.to_string())?;
+    let _ = session_stmt.execute(params![session_key, now]);
+
     Ok(())
 }
 
@@ -587,12 +677,12 @@ pub fn load_thinking_records(session_key: &str) -> Result<Vec<PersistedThinkingR
     if session_key.is_empty() {
         return Ok(Vec::new());
     }
-    let conn = thinking_db()?;
+    let mut conn = thinking_db()?;
     let mut stmt = conn
-        .prepare(
-            "SELECT fingerprint, thought, signature, tool_ids, tool_names, visible 
-             FROM thinking_records 
-             WHERE session_key = ?1 
+        .prepare_cached(
+            "SELECT fingerprint, thought, signature, tool_ids, tool_names, visible
+             FROM thinking_records
+             WHERE session_key = ?1
              ORDER BY id ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -632,6 +722,130 @@ pub fn load_thinking_records(session_key: &str) -> Result<Vec<PersistedThinkingR
         }
     }
     Ok(result)
+}
+
+/// 根据 tool_id 精准穿透点查历史思考（利用 primary_tool_id 极速 Partial Index）
+pub fn load_thinking_by_tool_id(
+    session_key: &str,
+    tool_id: &str,
+) -> Result<Option<PersistedThinkingRecord>, String> {
+    if session_key.is_empty() || tool_id.is_empty() {
+        return Ok(None);
+    }
+    let mut conn = thinking_db()?;
+
+    // 1. Fast Path: 优先通过 primary_tool_id 走专属索引极速点查 (0ms 纳秒级命中)
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT fingerprint, thought, signature, tool_ids, tool_names, visible
+             FROM thinking_records
+             WHERE session_key = ?1 AND primary_tool_id = ?2
+             ORDER BY id DESC LIMIT 1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut rows = stmt
+        .query(params![session_key, tool_id])
+        .map_err(|e| e.to_string())?;
+
+    if let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        let fp: String = row.get(0).map_err(|e| e.to_string())?;
+        let thought_raw: Vec<u8> = row.get(1).map_err(|e| e.to_string())?;
+        let signature: Option<String> = row.get(2).map_err(|e| e.to_string())?;
+        let tool_ids_str: String = row.get(3).map_err(|e| e.to_string())?;
+        let tool_names_str: String = row.get(4).map_err(|e| e.to_string())?;
+        let visible: String = row.get(5).map_err(|e| e.to_string())?;
+        let tool_ids: Vec<String> = serde_json::from_str(&tool_ids_str).unwrap_or_default();
+        let tool_names: Vec<String> = serde_json::from_str(&tool_names_str).unwrap_or_default();
+        return Ok(Some(PersistedThinkingRecord {
+            fingerprint: fp,
+            thought: unpack_thought(&thought_raw),
+            signature: persist_signature(signature.as_deref()).map(str::to_string),
+            tool_ids,
+            tool_names,
+            visible,
+        }));
+    }
+
+    // 2. Fallback Path: 针对历史旧记录 (tool_ids 列表内模糊包含)
+    let pattern = format!("%\"{}\"%", tool_id);
+    let mut fallback_stmt = conn
+        .prepare_cached(
+            "SELECT fingerprint, thought, signature, tool_ids, tool_names, visible
+             FROM thinking_records
+             WHERE session_key = ?1 AND tool_ids LIKE ?2
+             ORDER BY id DESC LIMIT 1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut fallback_rows = fallback_stmt
+        .query(params![session_key, pattern])
+        .map_err(|e| e.to_string())?;
+
+    if let Some(row) = fallback_rows.next().map_err(|e| e.to_string())? {
+        let fp: String = row.get(0).map_err(|e| e.to_string())?;
+        let thought_raw: Vec<u8> = row.get(1).map_err(|e| e.to_string())?;
+        let signature: Option<String> = row.get(2).map_err(|e| e.to_string())?;
+        let tool_ids_str: String = row.get(3).map_err(|e| e.to_string())?;
+        let tool_names_str: String = row.get(4).map_err(|e| e.to_string())?;
+        let visible: String = row.get(5).map_err(|e| e.to_string())?;
+        let tool_ids: Vec<String> = serde_json::from_str(&tool_ids_str).unwrap_or_default();
+        let tool_names: Vec<String> = serde_json::from_str(&tool_names_str).unwrap_or_default();
+        Ok(Some(PersistedThinkingRecord {
+            fingerprint: fp,
+            thought: unpack_thought(&thought_raw),
+            signature: persist_signature(signature.as_deref()).map(str::to_string),
+            tool_ids,
+            tool_names,
+            visible,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+/// 根据 fingerprint 精准穿透点查纯文本历史思考（利用 idx_thinking_rec_fp 索引）
+pub fn load_thinking_by_fingerprint(
+    session_key: &str,
+    fingerprint: &str,
+) -> Result<Option<PersistedThinkingRecord>, String> {
+    if session_key.is_empty() || fingerprint.is_empty() {
+        return Ok(None);
+    }
+    let mut conn = thinking_db()?;
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT fingerprint, thought, signature, tool_ids, tool_names, visible
+             FROM thinking_records
+             WHERE session_key = ?1 AND fingerprint = ?2
+             ORDER BY id DESC LIMIT 1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut rows = stmt
+        .query(params![session_key, fingerprint])
+        .map_err(|e| e.to_string())?;
+
+    if let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        let fp: String = row.get(0).map_err(|e| e.to_string())?;
+        let thought_raw: Vec<u8> = row.get(1).map_err(|e| e.to_string())?;
+        let signature: Option<String> = row.get(2).map_err(|e| e.to_string())?;
+        let tool_ids_str: String = row.get(3).map_err(|e| e.to_string())?;
+        let tool_names_str: String = row.get(4).map_err(|e| e.to_string())?;
+        let visible: String = row.get(5).map_err(|e| e.to_string())?;
+        let tool_ids: Vec<String> = serde_json::from_str(&tool_ids_str).unwrap_or_default();
+        let tool_names: Vec<String> = serde_json::from_str(&tool_names_str).unwrap_or_default();
+        Ok(Some(PersistedThinkingRecord {
+            fingerprint: fp,
+            thought: unpack_thought(&thought_raw),
+            signature: persist_signature(signature.as_deref()).map(str::to_string),
+            tool_ids,
+            tool_names,
+            visible,
+        }))
+    } else {
+        Ok(None)
+    }
 }
 
 pub fn touch_thinking_session(session_key: &str) -> Result<usize, String> {
@@ -1219,6 +1433,87 @@ mod tool_signature_tests {
         }
         assert_eq!(load_tool_signature("tool").unwrap(), Some(replacement));
         TOOL_SIGNATURE_DB.get().unwrap().lock().unwrap().take();
+    }
+}
+
+#[cfg(test)]
+mod thinking_sqlite_tests {
+    use super::*;
+    use crate::proxy::monitor::prompt_log_tests::TestDataDir;
+
+    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_thinking_record_deduplication_and_penetration_lookup() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        let _dir = TestDataDir::new();
+
+        let session_key = "test_tenant:sess-123456";
+        let tool_id = "call_abc999";
+        let real_sig = "s".repeat(60);
+
+        // 1. 首次写入：实质思考 + tool_id
+        save_thinking_record(
+            session_key,
+            "fp_turn1",
+            "This is deep analytical thinking about rust code",
+            Some(&real_sig),
+            &[tool_id.to_string()],
+            &[],
+            "visible",
+        )
+        .unwrap();
+
+        // 2. 二次写入相同 tool_id（例如客户端再次回传包含占位符的相同轮次）：绝不叠加新行，绝不将实质思考覆盖为占位符！
+        save_thinking_record(
+            session_key,
+            "fp_turn1",
+            "...",
+            Some(&real_sig),
+            &[tool_id.to_string()],
+            &[],
+            "visible",
+        )
+        .unwrap();
+
+        // 3. 验证 SQLite 中仅存 1 行，且保留高质量思考
+        let all = load_thinking_records(session_key).unwrap();
+        assert_eq!(all.len(), 1, "Duplicate tool saves must be deduplicated!");
+        assert_eq!(
+            all[0].thought,
+            "This is deep analytical thinking about rust code"
+        );
+        assert_eq!(all[0].signature, Some(real_sig.clone()));
+
+        // 4. 精准穿透点查 tool_id
+        let loaded = load_thinking_by_tool_id(session_key, tool_id).unwrap();
+        assert!(loaded.is_some());
+        let rec = loaded.unwrap();
+        assert_eq!(
+            rec.thought,
+            "This is deep analytical thinking about rust code"
+        );
+        assert_eq!(rec.signature, Some(real_sig));
+
+        // 5. 不存在的 tool_id 应当正确返回 None
+        let missing = load_thinking_by_tool_id(session_key, "call_nonexistent").unwrap();
+        assert!(missing.is_none());
+
+        // 6. 纯文本指纹点查测试
+        let text_fp = "fp_pure_text_1";
+        save_thinking_record(
+            session_key,
+            text_fp,
+            "Pure text reasoning",
+            None,
+            &[],
+            &[],
+            "pure text visible",
+        )
+        .unwrap();
+        let loaded_text = load_thinking_by_fingerprint(session_key, text_fp).unwrap();
+        assert!(loaded_text.is_some());
+        assert_eq!(loaded_text.unwrap().thought, "Pure text reasoning");
     }
 }
 

@@ -158,6 +158,7 @@ static GLOBAL_PAYLOAD_STORAGE_MODE: OnceLock<RwLock<String>> = OnceLock::new();
 static GLOBAL_LOG_RETENTION_DAYS: OnceLock<RwLock<u32>> = OnceLock::new();
 static GLOBAL_THINKING_STORE_ENABLED: OnceLock<RwLock<bool>> = OnceLock::new();
 static GLOBAL_THINKING_RETENTION_DAYS: OnceLock<RwLock<u32>> = OnceLock::new();
+static GLOBAL_THINKING_MAX_MEMORY_TURNS: OnceLock<RwLock<u32>> = OnceLock::new();
 
 fn write_or_init<T: Clone>(slot: &OnceLock<RwLock<T>>, value: T) {
     if let Some(lock) = slot.get() {
@@ -203,11 +204,21 @@ pub fn get_thinking_retention_days() -> u32 {
         .clamp(1, 3650)
 }
 
+pub fn get_thinking_max_memory_turns() -> usize {
+    GLOBAL_THINKING_MAX_MEMORY_TURNS
+        .get()
+        .and_then(|lock| lock.read().ok())
+        .map(|v| *v as usize)
+        .unwrap_or(600)
+        .clamp(10, 10_000)
+}
+
 pub fn update_global_audit_config(
     payload_storage_mode: String,
     log_retention_days: u32,
     thinking_store_enabled: bool,
     thinking_retention_days: u32,
+    thinking_max_memory_turns: Option<u32>,
 ) {
     let mode = if payload_storage_mode == "full" {
         "full"
@@ -224,12 +235,15 @@ pub fn update_global_audit_config(
         &GLOBAL_THINKING_RETENTION_DAYS,
         thinking_retention_days.clamp(1, 3650),
     );
+    let max_turns = thinking_max_memory_turns.unwrap_or(600).clamp(10, 10_000);
+    write_or_init(&GLOBAL_THINKING_MAX_MEMORY_TURNS, max_turns);
     tracing::info!(
-        "[Audit] storage_mode={}, log_retention_days={}, thinking_store={}, thinking_retention_days={}",
+        "[Audit] storage_mode={}, log_retention_days={}, thinking_store={}, thinking_retention_days={}, thinking_max_memory_turns={}",
         mode,
         log_retention_days.clamp(1, 3650),
         thinking_store_enabled,
-        thinking_retention_days.clamp(1, 3650)
+        thinking_retention_days.clamp(1, 3650),
+        max_turns
     );
 }
 
@@ -511,6 +525,10 @@ pub struct ExperimentalConfig {
     /// 思考块 SQLite 记录保留天数
     #[serde(default = "default_thinking_retention_days")]
     pub thinking_retention_days: u32,
+
+    /// 每轮会话在内存中保留的最大思考块轮次（默认 600，滑动窗口淘汰并由 SQLite 索引承接）
+    #[serde(default = "default_thinking_max_memory_turns")]
+    pub thinking_max_memory_turns: u32,
 }
 
 impl Default for ExperimentalConfig {
@@ -528,6 +546,7 @@ impl Default for ExperimentalConfig {
             log_retention_days: default_log_retention_days(),
             thinking_store_enabled: default_thinking_store_enabled(),
             thinking_retention_days: default_thinking_retention_days(),
+            thinking_max_memory_turns: default_thinking_max_memory_turns(),
         }
     }
 }
@@ -555,6 +574,9 @@ fn default_thinking_store_enabled() -> bool {
 }
 fn default_thinking_retention_days() -> u32 {
     15
+}
+fn default_thinking_max_memory_turns() -> u32 {
+    600
 }
 
 /// 思考预算控制权大选择

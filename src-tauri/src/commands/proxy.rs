@@ -253,6 +253,7 @@ pub async fn ensure_admin_server(
         config.experimental.log_retention_days,
         config.experimental.thinking_store_enabled,
         config.experimental.thinking_retention_days,
+        Some(config.experimental.thinking_max_memory_turns),
     );
     crate::proxy::config::update_global_compression_level(
         config.experimental.compression_level.clone(),
@@ -326,6 +327,7 @@ pub async fn ensure_admin_server(
         config.experimental.log_retention_days,
         config.experimental.thinking_store_enabled,
         config.experimental.thinking_retention_days,
+        Some(config.experimental.thinking_max_memory_turns),
     );
 
     Ok(())

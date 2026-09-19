@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Save, Check, ChevronDown } from "lucide-react";
+import { Save, Check, ChevronDown, Layers, HelpCircle, HardDrive } from "lucide-react";
 import {
     ThinkingBudgetConfig,
     ThinkingControlSource,
@@ -13,6 +13,10 @@ interface ThinkingBudgetProps {
     onSave?: () => Promise<void> | void;
     thinkingStoreEnabled?: boolean;
     onThinkingStoreChange?: (enabled: boolean) => void;
+    thinkingMaxMemoryTurns?: number;
+    onThinkingMaxMemoryTurnsChange?: (turns: number) => void;
+    thinkingRetentionDays?: number;
+    onThinkingRetentionDaysChange?: (days: number) => void;
 }
 
 const DEFAULT_CONFIG: ThinkingBudgetConfig = {
@@ -72,6 +76,10 @@ export default function ThinkingBudget({
     onSave,
     thinkingStoreEnabled = true,
     onThinkingStoreChange,
+    thinkingMaxMemoryTurns = 600,
+    onThinkingMaxMemoryTurnsChange,
+    thinkingRetentionDays = 15,
+    onThinkingRetentionDaysChange,
 }: ThinkingBudgetProps) {
     const { t } = useTranslation();
     const [isSaving, setIsSaving] = useState(false);
@@ -360,6 +368,171 @@ export default function ThinkingBudget({
                         checked={thinkingStoreEnabled}
                         onChange={(e) => onThinkingStoreChange(e.target.checked)}
                     />
+                </div>
+            )}
+
+            {/* 每轮对话的内存thinking与SQLite存储滑动窗口 */}
+            {(onThinkingMaxMemoryTurnsChange || onThinkingRetentionDaysChange) && (
+                <div className="p-3.5 bg-blue-50/70 dark:bg-blue-900/20 border border-blue-200/80 dark:border-blue-800/40 rounded-xl space-y-3 shadow-2xs">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-gray-900 dark:text-white flex items-center gap-1.5">
+                                <Layers size={14} className="text-blue-600 dark:text-blue-400" />
+                                {t("proxy.config.thinking_budget.window_settings_title", {
+                                    defaultValue: "思考块双层滑动窗口与容量配置 (RAM + SQLite)",
+                                })}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60">
+                                {t("proxy.config.thinking_budget.dual_layer_tag", {
+                                    defaultValue: "双层索引穿透",
+                                })}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {/* 1. 内存常驻思考轮次 (L1 RAM) */}
+                        {onThinkingMaxMemoryTurnsChange && (
+                            <div className="p-3 bg-white/90 dark:bg-base-100 rounded-lg border border-blue-200/70 dark:border-base-200 shadow-2xs flex items-center justify-between gap-3">
+                                <div className="space-y-0.5 min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                        <Layers size={13} className="text-blue-600 dark:text-blue-400 shrink-0" />
+                                        <span className="text-xs font-bold text-gray-800 dark:text-gray-200 truncate">
+                                            {t("proxy.config.thinking_budget.max_memory_turns_label", {
+                                                defaultValue: "内存常驻轮次 (RAM 窗口)",
+                                            })}
+                                        </span>
+                                        <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 shrink-0">
+                                            默认 600
+                                        </span>
+                                    </div>
+                                    <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight">
+                                        单轮思考约 2 KB；600 轮 ≈ 1.2 MB / 会话。
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                    <input
+                                        type="number"
+                                        min={10}
+                                        max={10000}
+                                        step={50}
+                                        className="input input-xs input-bordered w-20 text-center font-mono font-bold bg-gray-50 dark:bg-base-200 text-gray-900 dark:text-white"
+                                        value={thinkingMaxMemoryTurns}
+                                        onChange={(e) => {
+                                            const val = parseInt(e.target.value, 10);
+                                            if (!isNaN(val)) {
+                                                onThinkingMaxMemoryTurnsChange(Math.max(10, Math.min(10000, val)));
+                                            }
+                                        }}
+                                    />
+                                    <span className="text-xs font-medium text-gray-500">
+                                        {t("proxy.config.thinking_budget.turns_unit", { defaultValue: "轮" })}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 2. SQLite 思考库保留周期 (L2 Disk) */}
+                        {onThinkingRetentionDaysChange && (
+                            <div className="p-3 bg-white/90 dark:bg-base-100 rounded-lg border border-purple-200/70 dark:border-base-200 shadow-2xs flex items-center justify-between gap-3">
+                                <div className="space-y-0.5 min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                        <HardDrive size={13} className="text-purple-600 dark:text-purple-400 shrink-0" />
+                                        <span className="text-xs font-bold text-gray-800 dark:text-gray-200 truncate">
+                                            {t("proxy.config.experimental.thinking_retention_days_label", {
+                                                defaultValue: "思考库保留周期 (SQLite)",
+                                            })}
+                                        </span>
+                                        <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 shrink-0">
+                                            默认 15天
+                                        </span>
+                                    </div>
+                                    <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight">
+                                        活跃会话每次请求自动顺延，无请求才过期。
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={365}
+                                        className="input input-xs input-bordered w-20 text-center font-mono font-bold bg-gray-50 dark:bg-base-200 text-gray-900 dark:text-white"
+                                        value={thinkingRetentionDays}
+                                        onChange={(e) => {
+                                            const val = parseInt(e.target.value, 10);
+                                            if (!isNaN(val)) {
+                                                onThinkingRetentionDaysChange(Math.max(1, Math.min(365, val)));
+                                            }
+                                        }}
+                                    />
+                                    <span className="text-xs font-medium text-gray-500">
+                                        {t("proxy.config.thinking_budget.days_unit", { defaultValue: "天" })}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* 滑动窗口机制与服务器内存配置建议指南 */}
+                    <div className="p-3 rounded-lg bg-white/80 dark:bg-base-200/80 border border-blue-100 dark:border-blue-900/40 text-xs space-y-2 text-gray-600 dark:text-gray-300">
+                        <div className="flex items-start gap-1.5 font-semibold text-blue-950 dark:text-blue-200">
+                            <HelpCircle size={14} className="text-blue-500 shrink-0 mt-0.5" />
+                            <span>
+                                {t("proxy.config.thinking_budget.window_guide_title", {
+                                    defaultValue: "滑动窗口淘汰机制与各并发规模选型建议",
+                                })}
+                                :
+                            </span>
+                        </div>
+                        <p className="leading-relaxed pl-5 text-[11px] text-gray-500 dark:text-gray-400">
+                            {t("proxy.config.thinking_budget.window_guide_desc", {
+                                defaultValue:
+                                    "超长会话超过此设定轮次时，系统自动执行滑动窗口先进先出（FIFO）淘汰；被淘汰轮次绝不降级为破坏缓存的占位符，而是由本地 SQLite 专属索引（primary_tool_id）在纳秒级精准穿透回捞，保证 Prompt Cache 100% 字节级严格对齐且绝不 OOM。",
+                            })}
+                        </p>
+                        <div className="pl-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-[11px] pt-1">
+                            <div className="p-2 rounded bg-blue-50/40 dark:bg-base-300/40 border border-blue-100/60 dark:border-base-300">
+                                <span className="font-bold text-gray-800 dark:text-gray-200 block">
+                                    🖥️ 1GB 内存轻量服务器:
+                                </span>
+                                <span className="text-gray-500 dark:text-gray-400">
+                                    推荐填写 <strong className="text-blue-600 dark:text-blue-400">100 ~ 200 轮</strong>。几百个并发会话仅消耗约 50MB 内存，极端抗爆。
+                                </span>
+                            </div>
+                            <div className="p-2 rounded bg-blue-50/40 dark:bg-base-300/40 border border-blue-100/60 dark:border-base-300">
+                                <span className="font-bold text-gray-800 dark:text-gray-200 block">
+                                    👥 个人 ~ 10 人自用团队:
+                                </span>
+                                <span className="text-gray-500 dark:text-gray-400">
+                                    推荐填写 <strong className="text-blue-600 dark:text-blue-400">600 ~ 1000 轮</strong>。数千轮历史对话常驻物理内存 0ms 闪电直出。
+                                </span>
+                            </div>
+                            <div className="p-2 rounded bg-blue-50/40 dark:bg-base-300/40 border border-blue-100/60 dark:border-base-300">
+                                <span className="font-bold text-gray-800 dark:text-gray-200 block">
+                                    🏢 100 人企业级并发 (2G-4G):
+                                </span>
+                                <span className="text-gray-500 dark:text-gray-400">
+                                    推荐填写 <strong className="text-blue-600 dark:text-blue-400">300 ~ 600 轮</strong>。95%+ 请求命中 RAM，兼具极致性能与绝对稳健。
+                                </span>
+                            </div>
+                            <div className="p-2 rounded bg-blue-50/40 dark:bg-base-300/40 border border-blue-100/60 dark:border-base-300">
+                                <span className="font-bold text-gray-800 dark:text-gray-200 block">
+                                    🌐 1K+ 用户公共中转站 (4G-8G):
+                                </span>
+                                <span className="text-gray-500 dark:text-gray-400">
+                                    推荐填写 <strong className="text-blue-600 dark:text-blue-400">150 ~ 300 轮</strong>。内存优先倾斜给长连接池，长对话冷历史托付 SQLite。
+                                </span>
+                            </div>
+                            <div className="p-2 rounded bg-blue-50/40 dark:bg-base-300/40 border border-blue-100/60 dark:border-base-300">
+                                <span className="font-bold text-gray-800 dark:text-gray-200 block">
+                                    🚀 1W+ ~ 10W+ 海量并发集群:
+                                </span>
+                                <span className="text-gray-500 dark:text-gray-400">
+                                    推荐填写 <strong className="text-blue-600 dark:text-blue-400">50 ~ 100 轮</strong>。单机无压承载数万并发会话，WAL 高速索引并发无锁秒级响应。
+                                </span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
 
