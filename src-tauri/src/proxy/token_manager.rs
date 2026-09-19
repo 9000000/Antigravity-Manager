@@ -322,10 +322,10 @@ impl TokenManager {
 
         match self.load_single_account(&path).await {
             Ok(Some(token)) => {
-                // 如果账号配额恢复（存在 >0% 的配额），自动清除此前的限流与熔断记录
+                // 如果账号配额恢复（存在 >0% 的配额），自动清除此前的账号级全局限流
                 if let Some(quota) = token.remaining_quota {
                     if quota > 0 {
-                        self.rate_limit_tracker.clear(account_id);
+                        self.rate_limit_tracker.clear_account_only(account_id);
                     }
                 }
                 self.tokens.insert(account_id.to_string(), token);
@@ -3767,30 +3767,29 @@ impl TokenManager {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("unknown");
 
-                            // 精确划分模型组 Key，避免连坐同一个账号下额度充沛的其它模型
-                            let target_model = if is_claude_group || bucket_id.contains("3p") {
-                                Some("claude".to_string())
+                            let target_models = if is_claude_group || bucket_id.contains("3p") {
+                                vec!["claude".to_string(), "claude-sonnet-4-6".to_string()]
                             } else if is_gemini_group || bucket_id.contains("gemini") {
-                                Some("gemini-3-flash".to_string())
+                                vec![
+                                    "gemini-3-flash".to_string(),
+                                    "gemini-3.1-pro-high".to_string(),
+                                    "gemini-3.1-flash-image".to_string(),
+                                    "gemini-3.8-flash-tiered".to_string(),
+                                    "gemini-3.8-flash-high".to_string(),
+                                ]
                             } else {
-                                None
+                                vec![]
                             };
 
-                            tracing::warn!(
-                                "[CircuitBreaker] 账号 {} 的配额桶 {} 已耗尽 (0%), 针对模型 {:?} 持续锁定至 {}",
-                                account_id,
-                                bucket_id,
-                                target_model,
-                                reset_time
-                            );
-
-                            self.rate_limit_tracker.set_lockout_until_iso_with_cap(
-                                account_id,
-                                reset_time,
-                                crate::proxy::rate_limit::RateLimitReason::QuotaExhausted,
-                                target_model,
-                                false, // 不截断为 300s，持续锁定到真实 reset_time
-                            );
+                            for tm in &target_models {
+                                self.rate_limit_tracker.set_lockout_until_iso_with_cap(
+                                    account_id,
+                                    reset_time,
+                                    crate::proxy::rate_limit::RateLimitReason::QuotaExhausted,
+                                    Some(tm.clone()),
+                                    false,
+                                );
+                            }
                         }
                     }
                 }
