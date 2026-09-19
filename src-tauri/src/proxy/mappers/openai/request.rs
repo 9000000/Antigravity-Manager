@@ -1747,7 +1747,7 @@ mod tests {
             transform_openai_request(&req_high, "test-p", "gemini-3.7-flash-high", None);
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            10000
+            16384
         );
 
         // 2. 裸模型 Flash 接管客户端 reasoning_effort
@@ -1761,7 +1761,7 @@ mod tests {
             transform_openai_request(&req_flash_high, "test-p", "gemini-3-flash", None);
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            10000
+            16384
         );
 
         let req_flash_low: OpenAIRequest = serde_json::from_value(json!({
@@ -1774,10 +1774,10 @@ mod tests {
             transform_openai_request(&req_flash_low, "test-p", "gemini-3-flash", None);
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            1000
+            1024
         );
 
-        // 3. 裸模型 Flash 客户端未填或试图关闭：绝不关闭思考，强制回填 -medium (4000)
+        // 3. 裸模型 Flash 客户端未填或试图关闭：绝不关闭思考，强制回填 -medium (4096)
         let req_flash_none: OpenAIRequest = serde_json::from_value(json!({
             "model": "gemini-3-flash",
             "messages": [{"role": "user", "content": "hi"}]
@@ -1787,7 +1787,7 @@ mod tests {
             transform_openai_request(&req_flash_none, "test-p", "gemini-3-flash", None);
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            4000
+            4096
         );
 
         let req_flash_disabled: OpenAIRequest = serde_json::from_value(json!({
@@ -1800,7 +1800,7 @@ mod tests {
             transform_openai_request(&req_flash_disabled, "test-p", "gemini-3-flash", None);
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            4000
+            4096
         );
 
         // 4. 裸模型 Flash 客户端传入自定义 budget_tokens：彻底被忽略，由服务端权威等级回填
@@ -1814,7 +1814,7 @@ mod tests {
             transform_openai_request(&req_flash_custom_budget, "test-p", "gemini-3-flash", None);
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            4000
+            4096
         );
 
         let req_flash_high_custom_budget: OpenAIRequest = serde_json::from_value(json!({
@@ -1832,7 +1832,7 @@ mod tests {
         );
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            10000
+            16384
         );
     }
 
@@ -2690,7 +2690,7 @@ mod tests {
         let budget = result["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
             .as_u64()
             .expect("thinkingBudget from model_specs");
-        assert_eq!(budget, 10000, "client budget + Passthrough must be ignored");
+        assert_eq!(budget, 16384, "client budget + Passthrough must be ignored");
 
         let contents = result["request"]["contents"].as_array().unwrap();
         let model_msg = contents

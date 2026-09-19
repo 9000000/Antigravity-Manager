@@ -2185,7 +2185,7 @@ mod tests {
 
         assert!(system_texts.contains(&CLAUDE_CODE_CLI_IDENTITY));
         assert!(!system_texts.contains(&CLAUDE_AGENT_SDK_IDENTITY));
-        assert!(system_texts.contains(&"x-anthropic-billing-header: cc_entrypoint=sdk-cli;"));
+        assert!(!system_texts.contains(&"x-anthropic-billing-header: cc_entrypoint=sdk-cli;"));
     }
 
     #[test]
@@ -2648,10 +2648,14 @@ mod tests {
         let contents = body["request"]["contents"].as_array().unwrap();
         let parts = contents[0]["parts"].as_array().unwrap();
 
-        // 验证空 thinking 块被降级为包含 "..." 的非 thought 文本块
-        let downgraded_part = parts
-            .iter()
-            .find(|p| p.get("text") == Some(&json!("...")) && p.get("thought").is_none());
+        // 验证空 thinking 块被降级为包含 "..." 的非 thought 文本部分（并与后续文本紧凑合并）
+        let downgraded_part = parts.iter().find(|p| {
+            p.get("text")
+                .and_then(|t| t.as_str())
+                .map(|s| s.contains("..."))
+                .unwrap_or(false)
+                && p.get("thought").is_none()
+        });
         assert!(
             downgraded_part.is_some(),
             "Empty thinking should be downgraded to text without thought: true"
@@ -3161,7 +3165,7 @@ mod tests {
 
         // Check injection: Claude models use thinkingLevel in adaptive mode
         assert_eq!(thinking_config["includeThoughts"], true);
-        assert_eq!(thinking_config["thinkingLevel"], "high");
+        assert_eq!(thinking_config["thinkingLevel"], "HIGH");
         assert!(thinking_config.get("thinkingBudget").is_none());
         assert!(thinking_config.get("thinkingType").is_none());
         assert!(thinking_config.get("effort").is_none());
@@ -3643,8 +3647,8 @@ mod tests {
 
         assert_eq!(thinking_config["includeThoughts"], true);
         assert_eq!(
-            thinking_config["thinkingBudget"], 10000,
-            "Client budget (99999) must be ignored in favor of tier dictionary budget (10000)"
+            thinking_config["thinkingBudget"], 16384,
+            "Client budget (99999) must be ignored in favor of tier dictionary budget (16384)"
         );
     }
 
