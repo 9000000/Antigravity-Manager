@@ -30,8 +30,9 @@ impl InboundThinkingPipeline {
 
             if let Some(parts) = content.get_mut("parts").and_then(|p| p.as_array_mut()) {
                 if is_model {
-                    let mut new_parts = Vec::with_capacity(parts.len());
-                    let mut saw_non_thinking = false;
+                    let mut thinking_part = None;
+                    let mut extra_thinking_parts = Vec::new();
+                    let mut other_parts = Vec::new();
 
                     for part in parts.drain(..) {
                         let is_thought = part
@@ -52,15 +53,6 @@ impl InboundThinkingPipeline {
                             } else {
                                 text
                             };
-
-                            // 若非首位，或者前面已有文本部件，降级为普通文本
-                            if saw_non_thinking || !new_parts.is_empty() {
-                                if !final_thought_text.is_empty() {
-                                    new_parts.push(json!({ "text": final_thought_text }));
-                                    saw_non_thinking = true;
-                                }
-                                continue;
-                            }
 
                             // 校验客户端签名有效性与模型兼容性
                             let mut effective_sig = None;
@@ -97,7 +89,15 @@ impl InboundThinkingPipeline {
                             if let Some(sig) = effective_sig {
                                 thought_obj["thoughtSignature"] = json!(sig);
                             }
-                            new_parts.push(thought_obj);
+
+                            if thinking_part.is_none() {
+                                thinking_part = Some(thought_obj);
+                            } else {
+                                // 多个思考块时，非首位的多余思考块降级为普通文本
+                                if !final_thought_text.is_empty() && final_thought_text != "..." {
+                                    extra_thinking_parts.push(json!({ "text": final_thought_text }));
+                                }
+                            }
                         } else {
                             // 非思考部件：可能是普通正文/过程进度说明（commentary），也可能是 functionCall 等
                             let is_plain_text = part.get("text").is_some()
@@ -114,31 +114,37 @@ impl InboundThinkingPipeline {
                                 // 协议无关自愈：检查是否夹带旧版遗留思考前缀 (如 **Thinking**)
                                 if raw_text.trim_start().starts_with("**Thinking**") {
                                     let clean_thought = Self::strip_thinking_prefix(raw_text);
-                                    if !saw_non_thinking && new_parts.is_empty() {
+                                    if thinking_part.is_none() {
                                         // 历史无原生思考块时，将遗留思考文字提炼为合法的首位思考块
                                         let final_thought = if clean_thought.trim().is_empty() {
                                             "..."
                                         } else {
                                             &clean_thought
                                         };
-                                        new_parts.push(json!({
+                                        thinking_part = Some(json!({
                                             "text": final_thought,
                                             "thought": true,
                                             "thoughtSignature": crate::proxy::thinking_store::SENTINEL_SIGNATURE,
                                         }));
                                     }
-                                    // 若已有思考块或已有正文，该遗留思考块作为陈旧副本剥离，防止二次污染正文
+                                    // 若已有思考块，该遗留思考块作为陈旧副本剥离，防止二次污染正文
                                     continue;
                                 }
 
-                                saw_non_thinking = true;
-                                new_parts.push(part);
+                                other_parts.push(part);
                             } else {
-                                saw_non_thinking = true;
-                                new_parts.push(part);
+                                other_parts.push(part);
                             }
                         }
                     }
+
+                    // 核心前缀保序：首位强制存在且仅存在一个 thinking_part，其余正文与工具调用紧随其后
+                    let mut new_parts = Vec::with_capacity(parts.len() + 1);
+                    if let Some(tp) = thinking_part {
+                        new_parts.push(tp);
+                    }
+                    new_parts.extend(extra_thinking_parts);
+                    new_parts.extend(other_parts);
                     *parts = new_parts;
                 }
             }

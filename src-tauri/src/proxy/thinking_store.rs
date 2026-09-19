@@ -496,8 +496,13 @@ impl ThinkingStore {
             if let Some(ref sig) = turn.existing_sig {
                 if let Some(&rec_idx) = by_sig.get(sig.as_str()) {
                     if !used[rec_idx] {
-                        turn.matched_record_idx = Some(rec_idx);
-                        used[rec_idx] = true;
+                        // 防错配保护：工具调用轮次绝不能匹配纯文本记录，纯文本轮次绝不能匹配工具记录！
+                        let turn_has_tools = !turn.tool_ids.is_empty() || !turn.tool_names.is_empty();
+                        let rec_has_tools = !records[rec_idx].tool_ids.is_empty() || !records[rec_idx].tool_names.is_empty();
+                        if turn_has_tools == rec_has_tools {
+                            turn.matched_record_idx = Some(rec_idx);
+                            used[rec_idx] = true;
+                        }
                     }
                 }
             }
@@ -612,14 +617,18 @@ impl ThinkingStore {
                 if let Ok(Some(persisted)) =
                     crate::modules::proxy_db::load_thinking_by_signature(store_key, sig)
                 {
-                    fetched_rec = Some(ThinkingRecord {
-                        fingerprint: persisted.fingerprint,
-                        thought: persisted.thought,
-                        signature: persisted.signature,
-                        tool_ids: persisted.tool_ids,
-                        tool_names: persisted.tool_names,
-                        visible: persisted.visible,
-                    });
+                    let turn_has_tools = !turn.tool_ids.is_empty() || !turn.tool_names.is_empty();
+                    let rec_has_tools = !persisted.tool_ids.is_empty() || !persisted.tool_names.is_empty();
+                    if turn_has_tools == rec_has_tools {
+                        fetched_rec = Some(ThinkingRecord {
+                            fingerprint: persisted.fingerprint,
+                            thought: persisted.thought,
+                            signature: persisted.signature,
+                            tool_ids: persisted.tool_ids,
+                            tool_names: persisted.tool_names,
+                            visible: persisted.visible,
+                        });
+                    }
                 }
             }
 
@@ -741,20 +750,29 @@ impl ThinkingStore {
                 "text": thought_text,
                 "thought": true,
             });
-            if let Some(sig) = rec.signature.as_ref().filter(|s| is_real_signature(s)) {
-                thought_part["thoughtSignature"] = json!(sig);
-                for part in parts.iter_mut() {
-                    if part.get("functionCall").is_some() {
-                        part["thoughtSignature"] = json!(sig);
+            let has_function_call = parts.iter().any(|p| p.get("functionCall").is_some());
+
+            // 核心法则：只有出现 tool_call 才有签名，任何没有 tool_call 的纯文本签名统一用哨兵占位；
+            // 匹配的时候以 tool_id 精确锚定，匹配不上统一用哨兵占位
+            if has_function_call {
+                if let Some(sig) = rec.signature.as_ref().filter(|s| is_real_signature(s)) {
+                    thought_part["thoughtSignature"] = json!(sig);
+                    for part in parts.iter_mut() {
+                        if part.get("functionCall").is_some() {
+                            part["thoughtSignature"] = json!(sig);
+                        }
+                    }
+                } else {
+                    thought_part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                    for part in parts.iter_mut() {
+                        if part.get("functionCall").is_some() && !part_has_signature(part) {
+                            part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                        }
                     }
                 }
             } else {
+                // 纯文本轮次（无 tool_call）：任何没有 tool_call 的签名，严格使用哨兵占位！
                 thought_part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
-                for part in parts.iter_mut() {
-                    if part.get("functionCall").is_some() && !part_has_signature(part) {
-                        part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
-                    }
-                }
             }
             parts.insert(0, thought_part);
             restored += 1;
@@ -1130,10 +1148,12 @@ pub fn hydrate_gemini_contents(store_key: &str, contents: &mut Vec<Value>) -> us
     }
     let store = ThinkingStore::global();
     store.touch_session(store_key);
+    // 优先执行拓扑还原，保证历史已有记录对齐为真实真签名
+    let restored = store.restore_gemini_contents(store_key, contents);
+    // 只有在完成还原后，若仍有客户端自带的合法实质思考块，才安全吸纳进库
     if contents_have_capturable_thought(contents) {
         store.ingest_from_contents(store_key, contents);
     }
-    let restored = store.restore_gemini_contents(store_key, contents);
     store.prune_orphaned_records(store_key, contents);
     restored
 }
@@ -1270,41 +1290,58 @@ pub fn finalize_gemini_contents_thinking(contents: &mut [Value], is_thinking_ena
                     }
                 });
 
-                if thinking_parts.is_empty() {
-                    // 优先继承本轮工具调用身上的真实加密签名
-                    let turn_sig = turn_real_sig.as_deref().unwrap_or(SENTINEL_SIGNATURE);
+                let has_function_call = other_parts.iter().any(|p| p.get("functionCall").is_some());
 
-                    thinking_parts.push(json!({
-                        "text": "...",
-                        "thought": true,
-                        "thoughtSignature": turn_sig,
-                    }));
-                } else if let Some(ref real_sig) = turn_real_sig {
-                    // Thought placeholder/sentinel must not block a real tool signature that
-                    // SignatureCache or ThinkingStore already placed on functionCall.
-                    for tp in thinking_parts.iter_mut() {
-                        let valid = tp
-                            .get("thoughtSignature")
-                            .and_then(|s| s.as_str())
-                            .map(is_real_signature)
-                            .unwrap_or(false);
-                        if !valid {
-                            tp["thoughtSignature"] = json!(real_sig);
+                if has_function_call {
+                    if thinking_parts.is_empty() {
+                        // 优先继承本轮工具调用身上的真实加密签名
+                        let turn_sig = turn_real_sig.as_deref().unwrap_or(SENTINEL_SIGNATURE);
+
+                        thinking_parts.push(json!({
+                            "text": "...",
+                            "thought": true,
+                            "thoughtSignature": turn_sig,
+                        }));
+                    } else if let Some(ref real_sig) = turn_real_sig {
+                        // Thought placeholder/sentinel must not block a real tool signature that
+                        // SignatureCache or ThinkingStore already placed on functionCall.
+                        for tp in thinking_parts.iter_mut() {
+                            let valid = tp
+                                .get("thoughtSignature")
+                                .and_then(|s| s.as_str())
+                                .map(is_real_signature)
+                                .unwrap_or(false);
+                            if !valid {
+                                tp["thoughtSignature"] = json!(real_sig);
+                            }
+                        }
+                    } else {
+                        for tp in thinking_parts.iter_mut() {
+                            if tp.get("thoughtSignature").is_none() {
+                                tp["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                            }
+                        }
+                    }
+
+                    // 为所有缺失签名的工具调用打上保底哨兵
+                    for part in other_parts.iter_mut() {
+                        if part.get("functionCall").is_some() && part.get("thoughtSignature").is_none()
+                        {
+                            part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
                         }
                     }
                 } else {
-                    for tp in thinking_parts.iter_mut() {
-                        if tp.get("thoughtSignature").is_none() {
+                    // 纯文本轮次（无 tool_call）：任何没有 tool_call 的签名，都是用哨兵占位！
+                    if thinking_parts.is_empty() {
+                        thinking_parts.push(json!({
+                            "text": "...",
+                            "thought": true,
+                            "thoughtSignature": SENTINEL_SIGNATURE,
+                        }));
+                    } else {
+                        for tp in thinking_parts.iter_mut() {
                             tp["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
                         }
-                    }
-                }
-
-                // 为所有缺失签名的工具调用打上保底哨兵
-                for part in other_parts.iter_mut() {
-                    if part.get("functionCall").is_some() && part.get("thoughtSignature").is_none()
-                    {
-                        part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
                     }
                 }
 
@@ -1772,6 +1809,10 @@ pub fn is_meaningful_thought(thought: &str) -> bool {
 }
 
 fn is_capturable_thought(thought: &str, signature: Option<&str>) -> bool {
+    // 占位符或纯空白思考绝对不可捕获为新的持久化思考记录！
+    if is_placeholder_thought(thought) || thought.trim().is_empty() {
+        return false;
+    }
     if signature.is_some_and(is_real_signature) {
         return true;
     }

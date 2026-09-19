@@ -508,12 +508,19 @@ pub fn transform_openai_request_with_session(
         .take_while(|m| m.role == "system" || m.role == "developer")
         .count();
 
+    // 找出 messages 中最后一个 assistant 角色的下标 (绝对索引)
+    let last_assistant_msg_idx = request
+        .messages
+        .iter()
+        .enumerate()
+        .rposition(|(_, m)| m.role == "assistant");
+
     let contents: Vec<Value> = request
         .messages
         .iter()
         .enumerate()
         .filter(|(idx, _)| *idx >= leading_system_count)
-        .map(|(_msg_index, msg)| {
+        .map(|(msg_index, msg)| {
             let role = match msg.role.as_str() {
                 "assistant" => "model",
                 "tool" | "function" => "user",
@@ -542,6 +549,8 @@ pub fn transform_openai_request_with_session(
                         "..."
                     };
 
+                    let is_last_assistant = Some(msg_index) == last_assistant_msg_idx;
+
                     // 签名处理：Responses 协议对齐 Anthropic 校验并采纳客户端合法签名；Chat 协议签名完全由服务端参与回填
                     let effective_sig = if is_responses_api {
                         let mut sig_opt = None;
@@ -561,12 +570,26 @@ pub fn transform_openai_request_with_session(
                             }
                         }
                         if sig_opt.is_none() {
-                            sig_opt = thought_sig.clone();
+                            // 关键修复：只有最新一条 assistant 消息（对应 previous_response_id）才允许采纳全局 thought_sig；
+                            // 历史更早的 assistant 轮次，绝不能被最新签名覆盖篡改！
+                            // 历史轮次优先从位置缓存获取；若无则设为哨兵占位符，由后续 ThinkingStore hydrate 拓扑保序精准恢复
+                            if is_last_assistant {
+                                sig_opt = thought_sig.clone();
+                            } else {
+                                sig_opt = crate::proxy::SignatureCache::global()
+                                    .get_session_signature_at(&session_id, msg_index);
+                            }
                         }
                         sig_opt.unwrap_or_else(|| crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string())
                     } else {
-                        // OpenAI Chat 协议：签名完全由服务端参与回填
-                        thought_sig.clone().unwrap_or_else(|| crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string())
+                        // OpenAI Chat 协议：同样只有最新一条 assistant 允许使用当前最新签名
+                        if is_last_assistant {
+                            thought_sig.clone().unwrap_or_else(|| crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string())
+                        } else {
+                            crate::proxy::SignatureCache::global()
+                                .get_session_signature_at(&session_id, msg_index)
+                                .unwrap_or_else(|| crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string())
+                        }
                     };
 
                     parts.push(json!({
@@ -2963,5 +2986,113 @@ mod tests {
             !req_arr.iter().any(|v| v == "description"),
             "description must not be required"
         );
+    }
+
+    #[test]
+    fn test_multi_turn_responses_preserves_historical_signature_prefix() {
+        let sid = format!("test-sess-{}", uuid::Uuid::new_v4());
+        let sig_round_1 = "s1_".to_string() + &"a".repeat(60);
+        let sig_round_2 = "s2_".to_string() + &"b".repeat(60);
+
+        // 缓存第 1 轮工具的专属签名
+        crate::proxy::SignatureCache::global().cache_tool_signature("call_1", sig_round_1.clone());
+
+        // 模拟第 2 轮刚完成，产生了会话级别的最新签名 sig_round_2 (通过 previous_response_id)
+        let prev_resp_id = format!("resp-prev-{}", uuid::Uuid::new_v4());
+        crate::proxy::SignatureCache::global().cache_session_signature(
+            &prev_resp_id,
+            sig_round_2.clone(),
+            3,
+        );
+
+        // 构造第 3 轮请求：包含历史第 1 轮、第 2 轮的完整上下文
+        let req = OpenAIRequest {
+            model: "gemini-3.8-flash-high".to_string(),
+            messages: vec![
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    content: Some(OpenAIContent::String("第 1 轮指令".to_string())),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: "call_1".to_string(),
+                        r#type: "function".to_string(),
+                        function: Some(ToolFunction {
+                            name: "run_command".to_string(),
+                            arguments: "{\"command\":\"ls\"}".to_string(),
+                        }),
+                        status: None,
+                        call_id: None,
+                        operation: None,
+                        signature: None,
+                    }]),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "tool".to_string(),
+                    tool_call_id: Some("call_1".to_string()),
+                    content: Some(OpenAIContent::String("file1.txt".to_string())),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: "call_2".to_string(),
+                        r#type: "function".to_string(),
+                        function: Some(ToolFunction {
+                            name: "run_command".to_string(),
+                            arguments: "{\"command\":\"cat file1.txt\"}".to_string(),
+                        }),
+                        status: None,
+                        call_id: None,
+                        operation: None,
+                        signature: None,
+                    }]),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "tool".to_string(),
+                    tool_call_id: Some("call_2".to_string()),
+                    content: Some(OpenAIContent::String("hello world".to_string())),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    content: Some(OpenAIContent::String("第 3 轮指令".to_string())),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let (result, _, _, _) = transform_openai_request_with_session(
+            &req,
+            "test-proj",
+            "gemini-3.8-flash-high",
+            None,
+            &sid,
+            Some(&prev_resp_id),
+            true, // is_responses_api
+        );
+
+        let contents = result["request"]["contents"].as_array().unwrap();
+
+        // 验证：第 1 轮 model
+        let model_1_parts = contents[1]["parts"].as_array().unwrap();
+        assert_eq!(model_1_parts[0]["thought"], true, "第 1 轮首位必须是思考块");
+        let sig_1 = model_1_parts[0]["thoughtSignature"].as_str().unwrap();
+        // 核心断言：历史第 1 轮绝不能被最新一轮的签名 sig_round_2 覆盖！
+        assert_ne!(sig_1, sig_round_2, "历史第 1 轮绝不能被最新签名覆盖");
+
+        // 验证：最新一条 model（第 2 轮）
+        let model_2_parts = contents[3]["parts"].as_array().unwrap();
+        assert_eq!(model_2_parts[0]["thought"], true, "第 2 轮首位必须是思考块");
+        let sig_2 = model_2_parts[0]["thoughtSignature"].as_str().unwrap();
+        // 最新一条 model 应当正确采纳 prev_resp_id 的签名
+        assert_eq!(sig_2, sig_round_2, "最新一条 model 应当正确继承上一轮签名");
     }
 }
