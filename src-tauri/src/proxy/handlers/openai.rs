@@ -1517,15 +1517,23 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
         assert_eq!(messages[0]["content"], "检查系统故障");
 
         // 验证：私有思考 msg_thought_123 被成功过滤，未进入 messages
-        assert!(messages.iter().all(|m| m.get("content").and_then(Value::as_str) != Some("private thought")));
+        assert!(messages
+            .iter()
+            .all(|m| m.get("content").and_then(Value::as_str) != Some("private thought")));
 
         // 验证：普通进度 commentary 消息被成功保留
         assert_eq!(messages[1]["role"], "assistant");
-        assert_eq!(messages[1]["content"], "概览显示 HTTP 502，接下来检查网关连接。");
+        assert_eq!(
+            messages[1]["content"],
+            "概览显示 HTTP 502，接下来检查网关连接。"
+        );
 
         // 验证：工具调用正常跟随
         assert_eq!(messages[2]["role"], "assistant");
-        assert_eq!(messages[2]["tool_calls"][0]["function"]["name"], "inspect_case");
+        assert_eq!(
+            messages[2]["tool_calls"][0]["function"]["name"],
+            "inspect_case"
+        );
     }
 
     #[test]
@@ -6780,8 +6788,7 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
                         messages.push(json!({ "role": role, "content": content }));
                     } else {
                         let mut content_blocks = Vec::new();
-                        let marker_text =
-                            prefix_with_step_marker(step_marker, joined_text);
+                        let marker_text = prefix_with_step_marker(step_marker, joined_text);
                         if !marker_text.is_empty() {
                             content_blocks.push(json!({ "type": "text", "text": marker_text }));
                         }

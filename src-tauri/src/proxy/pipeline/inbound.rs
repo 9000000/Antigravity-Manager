@@ -95,7 +95,8 @@ impl InboundThinkingPipeline {
                             } else {
                                 // 多个思考块时，非首位的多余思考块降级为普通文本
                                 if !final_thought_text.is_empty() && final_thought_text != "..." {
-                                    extra_thinking_parts.push(json!({ "text": final_thought_text }));
+                                    extra_thinking_parts
+                                        .push(json!({ "text": final_thought_text }));
                                 }
                             }
                         } else {
@@ -105,7 +106,8 @@ impl InboundThinkingPipeline {
                                 && part.get("functionResponse").is_none();
 
                             if is_plain_text {
-                                let raw_text = part.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                                let raw_text =
+                                    part.get("text").and_then(|v| v.as_str()).unwrap_or("");
                                 if raw_text.trim().is_empty() {
                                     // 丢弃纯空白文本部件，避免触发 Gemini 400 校验或破坏前缀缓存哈希稳定性
                                     continue;
@@ -169,7 +171,8 @@ impl InboundThinkingPipeline {
         let trimmed = text.trim_start();
         if let Some(rest) = trimmed.strip_prefix("**Thinking**") {
             let rest = rest.trim_start_matches(':');
-            rest.trim_start_matches(|c| c == '\r' || c == '\n' || c == ' ' || c == '\t').to_string()
+            rest.trim_start_matches(|c| c == '\r' || c == '\n' || c == ' ' || c == '\t')
+                .to_string()
         } else {
             text.to_string()
         }
@@ -206,7 +209,10 @@ mod tests {
 
         let parts = contents[0]["parts"].as_array().expect("parts array");
         // 开启思考时，补齐首位思考块，随后的普通进度文本与工具调用均完整保留
-        assert!(parts[0].get("thought").and_then(Value::as_bool).unwrap_or(false));
+        assert!(parts[0]
+            .get("thought")
+            .and_then(Value::as_bool)
+            .unwrap_or(false));
         assert_eq!(parts[1]["text"], "正在检查网关与后端的连接配置。");
         assert!(parts[2].get("functionCall").is_some());
     }
@@ -269,7 +275,10 @@ mod tests {
         );
 
         let parts = contents[0]["parts"].as_array().expect("parts array");
-        assert!(parts[0].get("thought").and_then(Value::as_bool).unwrap_or(false));
+        assert!(parts[0]
+            .get("thought")
+            .and_then(Value::as_bool)
+            .unwrap_or(false));
         assert_eq!(parts[0]["text"], "分析了案例数据，准备调用工具。");
         assert_eq!(parts[1]["text"], "正在执行检查。");
         assert!(parts[2].get("functionCall").is_some());

@@ -2110,7 +2110,10 @@ async fn admin_clear_thinking_store() -> impl IntoResponse {
     let res = tokio::task::spawn_blocking(crate::modules::proxy_db::clear_all_thinking_data).await;
     match res {
         Ok(Ok(deleted)) => {
-            logger::log_info(&format!("[API] 已清空思考块存储 (共删除 {} 条记录)", deleted));
+            logger::log_info(&format!(
+                "[API] 已清空思考块存储 (共删除 {} 条记录)",
+                deleted
+            ));
             (StatusCode::OK, Json(json!({ "deleted": deleted })))
         }
         Ok(Err(e)) => {

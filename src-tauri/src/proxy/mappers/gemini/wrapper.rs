@@ -1198,7 +1198,10 @@ mod test_fixes {
         let injected_sig = result["request"]["contents"][0]["parts"][0]["thoughtSignature"]
             .as_str()
             .unwrap();
-        assert!(injected_sig == signature || injected_sig == crate::proxy::thinking_store::SENTINEL_SIGNATURE);
+        assert!(
+            injected_sig == signature
+                || injected_sig == crate::proxy::thinking_store::SENTINEL_SIGNATURE
+        );
     }
 
     #[test]

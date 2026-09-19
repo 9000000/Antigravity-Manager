@@ -497,8 +497,10 @@ impl ThinkingStore {
                 if let Some(&rec_idx) = by_sig.get(sig.as_str()) {
                     if !used[rec_idx] {
                         // 防错配保护：工具调用轮次绝不能匹配纯文本记录，纯文本轮次绝不能匹配工具记录！
-                        let turn_has_tools = !turn.tool_ids.is_empty() || !turn.tool_names.is_empty();
-                        let rec_has_tools = !records[rec_idx].tool_ids.is_empty() || !records[rec_idx].tool_names.is_empty();
+                        let turn_has_tools =
+                            !turn.tool_ids.is_empty() || !turn.tool_names.is_empty();
+                        let rec_has_tools = !records[rec_idx].tool_ids.is_empty()
+                            || !records[rec_idx].tool_names.is_empty();
                         if turn_has_tools == rec_has_tools {
                             turn.matched_record_idx = Some(rec_idx);
                             used[rec_idx] = true;
@@ -618,7 +620,8 @@ impl ThinkingStore {
                     crate::modules::proxy_db::load_thinking_by_signature(store_key, sig)
                 {
                     let turn_has_tools = !turn.tool_ids.is_empty() || !turn.tool_names.is_empty();
-                    let rec_has_tools = !persisted.tool_ids.is_empty() || !persisted.tool_names.is_empty();
+                    let rec_has_tools =
+                        !persisted.tool_ids.is_empty() || !persisted.tool_names.is_empty();
                     if turn_has_tools == rec_has_tools {
                         fetched_rec = Some(ThinkingRecord {
                             fingerprint: persisted.fingerprint,
@@ -1324,7 +1327,8 @@ pub fn finalize_gemini_contents_thinking(contents: &mut [Value], is_thinking_ena
 
                     // 为所有缺失签名的工具调用打上保底哨兵
                     for part in other_parts.iter_mut() {
-                        if part.get("functionCall").is_some() && part.get("thoughtSignature").is_none()
+                        if part.get("functionCall").is_some()
+                            && part.get("thoughtSignature").is_none()
                         {
                             part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
                         }
