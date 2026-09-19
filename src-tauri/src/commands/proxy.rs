@@ -462,6 +462,19 @@ pub async fn clear_proxy_logs(state: State<'_, ProxyServiceState>) -> Result<(),
     Ok(())
 }
 
+/// 清空所有思考块缓存与持久化数据 (包含 RAM 内存滑动窗口与 SQLite 数据库，但不删除任何请求日志)
+#[tauri::command]
+pub async fn clear_thinking_store() -> Result<usize, String> {
+    // 1. 清空内存中 ThinkingStore 实例与 SignatureCache
+    crate::proxy::thinking_store::ThinkingStore::global().clear();
+    crate::proxy::SignatureCache::global().clear();
+
+    // 2. 清空 SQLite 数据库中所有的 thinking_records 与 thinking_sessions
+    tokio::task::spawn_blocking(crate::modules::proxy_db::clear_all_thinking_data)
+        .await
+        .map_err(|e| format!("Spawn blocking failed: {}", e))?
+}
+
 /// 获取反代请求日志 (分页)
 #[tauri::command]
 pub async fn get_proxy_logs_paginated(

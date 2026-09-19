@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { useTranslation, Trans } from "react-i18next";
-import { Save, Check, ChevronDown, Layers, HelpCircle, HardDrive } from "lucide-react";
+import { Save, Check, ChevronDown, Layers, HelpCircle, HardDrive, Trash2, AlertTriangle } from "lucide-react";
+import { request } from "../../utils/request";
+import { showToast } from "../common/ToastContainer";
 import {
     ThinkingBudgetConfig,
     ThinkingControlSource,
@@ -137,6 +139,34 @@ export default function ThinkingBudget({
     const [isSaving, setIsSaving] = useState(false);
     const [isSaved, setIsSaved] = useState(false);
     const [showClaudeAdvanced, setShowClaudeAdvanced] = useState(false);
+    const [isClearingThinking, setIsClearingThinking] = useState(false);
+    const [showClearThinkingConfirm, setShowClearThinkingConfirm] = useState(false);
+
+    const handleClearThinkingStore = async () => {
+        setIsClearingThinking(true);
+        try {
+            const res = await request<number | { deleted?: number }>("clear_thinking_store");
+            const count = typeof res === "number" ? res : res?.deleted ?? 0;
+            showToast(
+                t("proxy.config.thinking_budget.clear_success", {
+                    count,
+                    defaultValue: `已成功清空思考块存储 (共清理 ${count} 条历史记录)`,
+                }),
+                "success"
+            );
+            setShowClearThinkingConfirm(false);
+        } catch (err: any) {
+            showToast(
+                t("proxy.config.thinking_budget.clear_error", {
+                    error: String(err),
+                    defaultValue: `清空思考块失败: ${String(err)}`,
+                }),
+                "error"
+            );
+        } finally {
+            setIsClearingThinking(false);
+        }
+    };
 
     const currentConfig: ThinkingBudgetConfig = {
         ...DEFAULT_CONFIG,
@@ -426,7 +456,7 @@ export default function ThinkingBudget({
             {/* 每轮对话的内存thinking与SQLite存储滑动窗口 */}
             {(onThinkingMaxMemoryTurnsChange || onThinkingRetentionDaysChange) && (
                 <div className="p-3.5 bg-blue-50/70 dark:bg-blue-900/20 border border-blue-200/80 dark:border-blue-800/40 rounded-xl space-y-3 shadow-2xs">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
                         <div className="flex items-center gap-2">
                             <span className="text-xs font-bold text-gray-900 dark:text-white flex items-center gap-1.5">
                                 <Layers size={14} className="text-blue-600 dark:text-blue-400" />
@@ -439,6 +469,29 @@ export default function ThinkingBudget({
                                     defaultValue: "双层索引穿透",
                                 })}
                             </span>
+                        </div>
+
+                        {/* 清空思考块按钮与小字提示 */}
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-gray-500 dark:text-gray-400 hidden sm:inline-block">
+                                {t("proxy.config.thinking_budget.clear_tip", {
+                                    defaultValue: "仅当缓存命中异常、版本更新或开发者要求时才删除",
+                                })}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setShowClearThinkingConfirm(true)}
+                                disabled={isClearingThinking}
+                                title={t("proxy.config.thinking_budget.clear_btn_tooltip", {
+                                    defaultValue: "清空所有思考块缓存与数据库（不影响请求日志）",
+                                })}
+                                className="btn btn-xs btn-outline btn-error gap-1.5 h-6 min-h-6 px-2.5 text-[11px] font-medium rounded-lg shadow-2xs hover:shadow-xs transition-all"
+                            >
+                                <Trash2 size={12} className={isClearingThinking ? "animate-spin" : ""} />
+                                {t("proxy.config.thinking_budget.clear_btn", {
+                                    defaultValue: "清空思考块",
+                                })}
+                            </button>
                         </div>
                     </div>
 
@@ -1187,6 +1240,68 @@ export default function ThinkingBudget({
                             </>
                         )}
                     </button>
+                </div>
+            )}
+
+            {/* 清空思考块二次确认弹窗 */}
+            {showClearThinkingConfirm && (
+                <div className="modal modal-open">
+                    <div className="modal-box max-w-md bg-white dark:bg-base-100 border border-base-300 shadow-2xl p-5">
+                        <div className="flex items-start gap-3">
+                            <div className="p-2 rounded-full bg-error/10 text-error shrink-0 mt-0.5">
+                                <AlertTriangle size={20} />
+                            </div>
+                            <div className="space-y-2 min-w-0">
+                                <h3 className="text-sm font-bold text-gray-900 dark:text-white">
+                                    {t("proxy.config.thinking_budget.clear_modal_title", {
+                                        defaultValue: "确认清空思考块存储？",
+                                    })}
+                                </h3>
+                                <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed whitespace-pre-line">
+                                    {t("proxy.config.thinking_budget.clear_modal_desc", {
+                                        defaultValue:
+                                            "此操作将彻底清空内存常驻轮次 (RAM) 与本地 SQLite 数据库中所有的历史思维链和工具签名记录。\n\n⚠️ 注意：此操作仅清理思考块数据，绝不删除任何反向代理请求日志。",
+                                    })}
+                                </p>
+                                <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
+                                    {t("proxy.config.thinking_budget.clear_modal_warning", {
+                                        defaultValue:
+                                            "建议仅在出现缓存命中异常、版本升级或开发者明确要求时执行。清空后新请求将重新建立干净的前缀索引。",
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="modal-action mt-5 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                className="btn btn-sm btn-ghost"
+                                onClick={() => setShowClearThinkingConfirm(false)}
+                                disabled={isClearingThinking}
+                            >
+                                {t("common.cancel", { defaultValue: "取消" })}
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-sm btn-error text-white gap-1.5"
+                                onClick={handleClearThinkingStore}
+                                disabled={isClearingThinking}
+                            >
+                                {isClearingThinking ? (
+                                    <span className="loading loading-spinner loading-xs" />
+                                ) : (
+                                    <Trash2 size={13} />
+                                )}
+                                {t("proxy.config.thinking_budget.clear_confirm_btn", {
+                                    defaultValue: "确认清空",
+                                })}
+                            </button>
+                        </div>
+                    </div>
+                    <div
+                        className="modal-backdrop bg-black/40"
+                        onClick={() => !isClearingThinking && setShowClearThinkingConfirm(false)}
+                    />
                 </div>
             )}
         </div>

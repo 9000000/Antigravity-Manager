@@ -940,6 +940,28 @@ pub fn delete_thinking_records_for_session(session_key: &str) -> Result<usize, S
     .map_err(|e| e.to_string())
 }
 
+/// 全量清空思考块数据库 (仅清空 thinking_records / thinking_sessions / tool_signatures，绝不触碰 request_logs 日志)
+pub fn clear_all_thinking_data() -> Result<usize, String> {
+    let mut total_deleted = 0;
+    // 1. 清空 thinking_store.db 中的记录与会话
+    let conn = thinking_db()?;
+    let deleted = conn
+        .execute("DELETE FROM thinking_records", [])
+        .map_err(|e| e.to_string())?;
+    total_deleted += deleted;
+    let _ = conn.execute("DELETE FROM thinking_sessions", []);
+    let _ = conn.execute("VACUUM", []);
+
+    // 2. 清空 proxy_logs.db 中残留的历史工具签名表与陈旧思考表 (绝不触碰 request_logs)
+    if let Ok(log_conn) = connect_db() {
+        let _ = log_conn.execute("DELETE FROM tool_signatures", []);
+        let _ = log_conn.execute("DELETE FROM thinking_records", []);
+        let _ = log_conn.execute("DELETE FROM thinking_sessions", []);
+    }
+
+    Ok(total_deleted)
+}
+
 pub fn cleanup_old_thinking_records(days: i64) -> Result<usize, String> {
     let cutoff = chrono::Utc::now().timestamp_millis() - (days * 24 * 3600 * 1000);
     let deleted_tools = connect_db()

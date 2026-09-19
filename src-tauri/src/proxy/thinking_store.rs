@@ -923,7 +923,6 @@ impl ThinkingStore {
             .map(|e| (e.turns.len(), e.bytes))
     }
 
-    #[cfg(test)]
     pub fn clear(&self) {
         self.sessions.clear();
     }
