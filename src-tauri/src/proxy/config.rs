@@ -1020,7 +1020,7 @@ impl LogRetentionConfig {
         } else if self.max_disk_mb > 0 {
             self.max_disk_mb.saturating_mul(1024 * 1024)
         } else {
-            1024 * 1024 * 1024 // 1.0 GB
+            0
         }
     }
 }

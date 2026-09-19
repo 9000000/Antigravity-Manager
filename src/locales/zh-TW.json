@@ -976,7 +976,7 @@
         "default_on_tag": "預設開啟",
         "claude_thinking_note": "💡 Claude 模型說明：Anthropic 官方模型列表僅區分帶 `-thinking`（如 claude-3-7-sonnet-thinking）與普通模型。本自訂預算專門控制帶 thinking 模型的思考配額；若調用普通非 thinking 模型，上游不產生思考過程。",
         "max_memory_turns_label": "每輪對話的記憶體 Thinking 儲存最大輪次",
-        "default_600_tag": "預設 600 輪",
+        "default_600_tag": "預設 600",
         "max_memory_turns_desc": "控制單一工作階段在記憶體 (RAM) 中常駐保留的歷史思考區塊輪次。單輪思考區塊預估記憶體消耗約為 1.5 KB ~ 2.5 KB（600 輪約佔用 1.2 MB / 工作階段）。",
         "turns_unit": "輪",
         "window_guide_title": "滑動窗口淘汰機制與各並發規模選型建議",
@@ -1002,7 +1002,20 @@
         "claude_show_advanced": "展開進階設定：用戶端 Effort 檔位對應 (low / medium / high)",
         "claude_effort_mapping_desc": "當部分商業用戶端（如 Cline, Roo 等）在請求標頭或參數中附加 reasoning_effort 時，按以下預算對應：",
         "save_hint": "修改思考預算設定後點擊儲存即可立即生效，設定將即時熱更新至目前執行的反代服務。",
-        "save_btn": "儲存思考設定並熱生效"
+        "save_btn": "儲存思考設定並熱生效",
+        "max_memory_turns_subdesc": "單輪思考約 2 KB；600 輪 ≈ 1.2 MB / 工作階段。",
+        "default_15_days_tag": "預設 15天",
+        "retention_days_subdesc": "活躍工作階段每次請求自動順延，無請求才過期。",
+        "guide_preset_1g_title": "1GB 記憶體輕量伺服器:",
+        "guide_preset_1g_desc": "推薦填寫 <1>100 ~ 200 輪</1>。數百個並發工作階段僅消耗約 50MB 記憶體，極端抗爆。",
+        "guide_preset_team_title": "個人 ~ 10 人自用團隊:",
+        "guide_preset_team_desc": "推薦填寫 <1>600 ~ 1000 輪</1>。數千輪歷史對話常駐實體記憶體 0ms 閃電直出。",
+        "guide_preset_enterprise_title": "100 人企業級並發 (2G-4G):",
+        "guide_preset_enterprise_desc": "推薦填寫 <1>300 ~ 600 輪</1>。95%+ 請求命中 RAM，兼具極致效能與絕對穩健。",
+        "guide_preset_relay_title": "1K+ 使用者公共中轉站 (4G-8G):",
+        "guide_preset_relay_desc": "推薦填寫 <1>150 ~ 300 輪</1>。記憶體優先傾斜給長連線池，長對話冷歷史託付 SQLite。",
+        "guide_preset_cluster_title": "1W+ ~ 10W+ 海量並發叢集:",
+        "guide_preset_cluster_desc": "推薦填寫 <1>50 ~ 100 輪</1>。單機無壓承載數萬並發工作階段，WAL 高速索引並發無鎖秒級回應。"
       },
       "thinking_settings": {
         "title": "思考設定 (Thinking Settings)"

@@ -990,7 +990,7 @@
         "default_on_tag": "Включено по умолчанию",
         "claude_thinking_note": "💡 Примечание к моделям Claude: Официальный список моделей Anthropic разделяет только модели с `-thinking` (напр., claude-3-7-sonnet-thinking) и обычные. Этот бюджет управляет квотами моделей thinking; обычные модели не генерируют процесс размышления.",
         "max_memory_turns_label": "Max Memory Thinking Turns per Session",
-        "default_600_tag": "Default: 600 turns",
+        "default_600_tag": "По умолчанию: 600",
         "max_memory_turns_desc": "Controls the maximum number of historical thinking turns kept in RAM per session. Estimated RAM usage per turn is ~1.5 KB - 2.5 KB (~1.2 MB / session for 600 turns).",
         "turns_unit": "turns",
         "window_guide_title": "FIFO Sliding Window Eviction & Concurrency Sizing Guide",
@@ -1016,7 +1016,20 @@
         "claude_show_advanced": "Advanced: Client Effort Tier Mapping (low / medium / high)",
         "claude_effort_mapping_desc": "When commercial agents (Cline, Roo, etc.) send reasoning_effort in parameters or headers, budgets are mapped as follows:",
         "save_hint": "Changes take effect immediately upon saving and are hot-reloaded into the running proxy service.",
-        "save_btn": "Save & Hot Reload Thinking Config"
+        "save_btn": "Save & Hot Reload Thinking Config",
+        "max_memory_turns_subdesc": "~2 КБ на ход; 600 ходов ≈ 1.2 МБ / сессия.",
+        "default_15_days_tag": "По умолчанию: 15 дней",
+        "retention_days_subdesc": "Активные сессии автоматически продлеваются при каждом запросе; истекают только при бездействии.",
+        "guide_preset_1g_title": "Легковесный сервер с 1 ГБ RAM:",
+        "guide_preset_1g_desc": "Рекомендуется: <1>100 ~ 200 ходов</1>. Сотни параллельных сессий расходуют всего ~50 МБ RAM, отличная защита от OOM.",
+        "guide_preset_team_title": "Для одного или команды (1–10 чел):",
+        "guide_preset_team_desc": "Рекомендуется: <1>600 ~ 1000 ходов</1>. Тысячи ходов диалога постоянно в физической памяти, отклик 0 мс.",
+        "guide_preset_enterprise_title": "Корпоративная нагрузка на 100 чел (2–4 ГБ):",
+        "guide_preset_enterprise_desc": "Рекомендуется: <1>300 ~ 600 ходов</1>. 95%+ запросов попадают в RAM, сочетая высокую скорость и надежность.",
+        "guide_preset_relay_title": "Публичный ретранслятор на 1K+ пользователей (4–8 ГБ):",
+        "guide_preset_relay_desc": "Рекомендуется: <1>150 ~ 300 ходов</1>. Память отдается пулу соединений, долгая история выгружается в SQLite.",
+        "guide_preset_cluster_title": "Высоконагруженный кластер (10K ~ 100K+ сессий):",
+        "guide_preset_cluster_desc": "Рекомендуется: <1>50 ~ 100 ходов</1>. Легко выдерживает десятки тысяч сессий; быстрый неблокирующий индекс WAL."
       },
       "thinking_settings": {
         "title": "Настройки мышления (Thinking Settings)"

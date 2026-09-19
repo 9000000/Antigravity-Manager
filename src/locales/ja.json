@@ -990,7 +990,7 @@
         "default_on_tag": "デフォルト有効",
         "claude_thinking_note": "💡 Claude モデルについて：Anthropic 公式モデル一覧では `-thinking` 付きモデル（例: claude-3-7-sonnet-thinking）と通常モデルのみを区別します。このカスタム予算は thinking モデル専用であり、通常モデルの呼び出しでは思考プロセスは生成されません。",
         "max_memory_turns_label": "セッションあたりのメモリ保持Thinking最大ターン数",
-        "default_600_tag": "デフォルト: 600ターン",
+        "default_600_tag": "デフォルト 600",
         "max_memory_turns_desc": "セッションごとにメモリ(RAM)上に常駐保持する過去の思考ブロックターン数を制限します。1ターンあたりの推定メモリ消費は約1.5KB〜2.5KBです（600ターンで約1.2MB/セッション）。",
         "turns_unit": "ターン",
         "window_guide_title": "スライディングウィンドウ退避機構と推奨スペック設計ガイド",
@@ -1016,7 +1016,20 @@
         "claude_show_advanced": "詳細設定：クライアントEffortマッピング (low / medium / high)",
         "claude_effort_mapping_desc": "ClineやRooなどのクライアントがreasoning_effortを送信した場合、以下の予算にマッピングされます：",
         "save_hint": "思考予算の変更は保存すると即座に有効化され、実行中のプロキシサービスにホットリロードされます。",
-        "save_btn": "思考設定を保存してホットリロード"
+        "save_btn": "思考設定を保存してホットリロード",
+        "max_memory_turns_subdesc": "1ターンあたり約2KB。600ターンで約1.2MB/セッション。",
+        "default_15_days_tag": "デフォルト 15日",
+        "retention_days_subdesc": "アクティブなセッションはリクエストごとに自動延長され、無通信時のみ失効します。",
+        "guide_preset_1g_title": "1GB メモリ軽量サーバー:",
+        "guide_preset_1g_desc": "推奨設定: <1>100 〜 200 ターン</1>。数百の同時セッションでも約50MBのメモリしか消費せず、OOMに極めて強い耐性を持ちます。",
+        "guide_preset_team_title": "個人 〜 10人規模のチーム:",
+        "guide_preset_team_desc": "推奨設定: <1>600 〜 1000 ターン</1>。数千ターンの会話履歴が物理RAMに常駐し、0msで瞬時に応答します。",
+        "guide_preset_enterprise_title": "100人規模のエンタープライズ同時実行 (2G-4G):",
+        "guide_preset_enterprise_desc": "推奨設定: <1>300 〜 600 ターン</1>。95%以上のリクエストがRAMにヒットし、圧倒的なパフォーマンスと絶対的な安定性を両立します。",
+        "guide_preset_relay_title": "1K+ ユーザー公共中継ステーション (4G-8G):",
+        "guide_preset_relay_desc": "推奨設定: <1>150 〜 300 ターン</1>。メモリを常時接続プールに優先配分し、長期会話のコールド履歴はSQLiteに委任します。",
+        "guide_preset_cluster_title": "1万 〜 10万+ 大規模並行クラスター:",
+        "guide_preset_cluster_desc": "推奨設定: <1>50 〜 100 ターン</1>。数万の同時セッションを単一マシンで軽快に処理し、WAL高速インデックスによりロックフリーで高速応答します。"
       },
       "thinking_settings": {
         "title": "思考設定 (Thinking Settings)"

@@ -927,7 +927,7 @@
         "default_on_tag": "مفعل افتراضيًا",
         "claude_thinking_note": "💡 ملاحظة حول نماذج Claude: تميز قائمة نماذج Anthropic الرسمية فقط بين النماذج التي تحتوي على `-thinking` (مثل claude-3-7-sonnet-thinking) والنماذج العادية. هذه الميزانية مخصصة لنماذج thinking؛ ولن تولد النماذج العادية تفكيرًا.",
         "max_memory_turns_label": "Max Memory Thinking Turns per Session",
-        "default_600_tag": "Default: 600 turns",
+        "default_600_tag": "الافتراضي: 600",
         "max_memory_turns_desc": "Controls the maximum number of historical thinking turns kept in RAM per session. Estimated RAM usage per turn is ~1.5 KB - 2.5 KB (~1.2 MB / session for 600 turns).",
         "turns_unit": "turns",
         "window_guide_title": "FIFO Sliding Window Eviction & Concurrency Sizing Guide",
@@ -953,7 +953,20 @@
         "claude_show_advanced": "Advanced: Client Effort Tier Mapping (low / medium / high)",
         "claude_effort_mapping_desc": "When commercial agents (Cline, Roo, etc.) send reasoning_effort in parameters or headers, budgets are mapped as follows:",
         "save_hint": "Changes take effect immediately upon saving and are hot-reloaded into the running proxy service.",
-        "save_btn": "Save & Hot Reload Thinking Config"
+        "save_btn": "Save & Hot Reload Thinking Config",
+        "max_memory_turns_subdesc": "~2 ك.ب لكل جولة؛ 600 جولة ≈ 1.2 م.ب / جلسة.",
+        "default_15_days_tag": "الافتراضي: 15 يوماً",
+        "retention_days_subdesc": "تمتد الجلسات النشطة تلقائياً مع كل طلب؛ وتنتهي فقط عند الخمول.",
+        "guide_preset_1g_title": "خادم خفيف بذاكرة 1 غ.ب:",
+        "guide_preset_1g_desc": "الموصى به: <1>100 ~ 200 جولة</1>. مئات الجلسات المتزامنة تستهلك ~50 م.ب فقط من الذاكرة، حماية فائقة من نفاد الذاكرة (OOM).",
+        "guide_preset_team_title": "استخدام شخصي وفِرَق صغيرة (1-10 مستخدمين):",
+        "guide_preset_team_desc": "الموصى به: <1>600 ~ 1000 جولة</1>. آلاف الجولات السابقة تبقى في الذاكرة الفعلية لاستجابة فائقة السرعة خلال 0 مللي ثانية.",
+        "guide_preset_enterprise_title": "تزامن مؤسسي لـ 100 مستخدم (2-4 غ.ب):",
+        "guide_preset_enterprise_desc": "الموصى به: <1>300 ~ 600 جولة</1>. أكثر من 95% من الطلبات تصل إلى الذاكرة، مما يجمع بين الأداء العالي والاستقرار المطلق.",
+        "guide_preset_relay_title": "محطة ترحيل عامة لأكثر من 1K مستخدم (4-8 غ.ب):",
+        "guide_preset_relay_desc": "الموصى به: <1>150 ~ 300 جولة</1>. تعطى الأولوية في الذاكرة لتجمعات الاتصال، وتحفظ السجلات القديمة في SQLite.",
+        "guide_preset_cluster_title": "عنقود ضخم بتزامن 10K ~ 100K+ مستخدم:",
+        "guide_preset_cluster_desc": "الموصى به: <1>50 ~ 100 جولة</1>. استيعاب عشرات الآلاف من الجلسات بسلاسة؛ فهرسة WAL السريعة توفر استجابة فورية دون إقفال."
       },
       "thinking_settings": {
         "title": "إعدادات التفكير (Thinking Settings)"

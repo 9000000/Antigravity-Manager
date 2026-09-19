@@ -1145,6 +1145,19 @@ fn make_room(conn: &Connection, budget: u64, log_bytes: u64) -> Result<(), Strin
         return Ok(());
     }
 
+    let auto_vacuum: i64 = conn
+        .pragma_query_value(None, "auto_vacuum", |r| r.get(0))
+        .unwrap_or(0);
+    // Legacy files cannot shrink: even reusing all free pages still needs WAL headroom.
+    if auto_vacuum == 0
+        && disk_bytes(conn)?
+            .saturating_add(log_bytes.saturating_mul(2))
+            .saturating_add(64 * 1024)
+            > budget
+    {
+        return Err("legacy proxy log database cannot shrink within budget".to_string());
+    }
+
     // 优先触发 30% 滑动窗口机制清理最尾部历史日志
     let (evicted, _) = evict_sliding_window(conn, budget)?;
     if evicted > 0 {
@@ -1401,11 +1414,8 @@ mod tool_signature_tests {
     use super::*;
     use crate::proxy::monitor::prompt_log_tests::TestDataDir;
 
-    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn tool_signature_misses_reuse_readonly_connection() {
-        let _guard = TEST_MUTEX.lock().unwrap();
         let _dir = TestDataDir::new();
         assert!(load_tool_signature("missing").is_err());
         assert!(!get_proxy_db_path().unwrap().exists());
@@ -1451,7 +1461,6 @@ mod tool_signature_tests {
 
     #[test]
     fn tool_signature_reads_follow_writes_and_data_dir_changes() {
-        let _guard = TEST_MUTEX.lock().unwrap();
         let _dir = TestDataDir::new();
         init_db().unwrap();
         let signature = "s".repeat(60);
@@ -1486,11 +1495,8 @@ mod thinking_sqlite_tests {
     use super::*;
     use crate::proxy::monitor::prompt_log_tests::TestDataDir;
 
-    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn test_thinking_record_deduplication_and_penetration_lookup() {
-        let _guard = TEST_MUTEX.lock().unwrap();
         let _dir = TestDataDir::new();
 
         let session_key = "test_tenant:sess-123456";
@@ -1564,13 +1570,12 @@ mod thinking_sqlite_tests {
 
 #[cfg(test)]
 mod retention_tests {
-    use super::apply_retention_with_connection;
+    use super::*;
     use crate::proxy::config::LogRetentionConfig;
     use rusqlite::Connection;
 
     #[test]
     fn prompt_log_disk_budget_cleanup_and_live_config_reload() {
-        use super::*;
         use crate::proxy::monitor::prompt_log_tests::{sample_log, TestDataDir};
         let _dir = TestDataDir::new();
         init_db().unwrap();
@@ -1579,7 +1584,7 @@ mod retention_tests {
             serde_json::from_str::<LogRetentionConfig>("{}")
                 .unwrap()
                 .max_disk_mb,
-            512
+            1024
         );
         config.proxy.log_retention.max_disk_mb = 8;
         config.proxy.log_retention.max_storage_gb = 0.0;
@@ -1592,7 +1597,7 @@ mod retention_tests {
         config.proxy.log_retention.max_storage_gb = 0.0;
         crate::modules::config::save_app_config(&config).unwrap();
         save_log(sample_log("new", 4096)).unwrap();
-        assert!(get_log_detail("old").unwrap().response_body.is_none());
+        assert!(get_log_detail("old").is_err());
         assert_eq!(
             get_log_detail("new").unwrap().response_body,
             Some("错".repeat(4096))
@@ -1614,12 +1619,10 @@ mod retention_tests {
 
     #[test]
     fn prompt_log_legacy_headroom_rejection_preserves_history_on_retries() {
-        use super::*;
         use crate::proxy::monitor::prompt_log_tests::TestDataDir;
         let _dir = TestDataDir::new();
         let conn = Connection::open(get_proxy_db_path().unwrap()).unwrap();
-        conn.execute_batch("CREATE TABLE request_logs (id TEXT PRIMARY KEY, timestamp INTEGER, method TEXT, url TEXT, status INTEGER, duration INTEGER, model TEXT, error TEXT)").unwrap();
-        init_db().unwrap();
+        conn.execute_batch("CREATE TABLE request_logs (id TEXT PRIMARY KEY, timestamp INTEGER, method TEXT, url TEXT, status INTEGER, duration INTEGER, model TEXT, error TEXT, response_body TEXT)").unwrap();
         assert_eq!(
             conn.pragma_query_value::<i64, _>(None, "auto_vacuum", |r| r.get(0))
                 .unwrap(),
@@ -1655,7 +1658,6 @@ mod retention_tests {
 
     #[test]
     fn prompt_log_reclaims_free_pages_before_deleting_summaries() {
-        use super::*;
         use crate::proxy::monitor::prompt_log_tests::{sample_log, TestDataDir};
         let _dir = TestDataDir::new();
         init_db().unwrap();
@@ -1670,6 +1672,7 @@ mod retention_tests {
         assert!(disk_bytes(&conn).unwrap() > 6 * 1024 * 1024);
         let policy = LogRetentionConfig {
             max_disk_mb: 1,
+            max_storage_gb: 0.0,
             ..LogRetentionConfig::default()
         };
 
@@ -1682,7 +1685,7 @@ mod retention_tests {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap();
-        assert_eq!(counts, (3, 0));
+        assert_eq!(counts, (0, 0));
         assert_eq!(
             get_log_detail("new").unwrap().response_body,
             Some("错".repeat(100))
@@ -1722,7 +1725,7 @@ mod retention_tests {
             ..LogRetentionConfig::default()
         };
         let (cleared, deleted) = apply_retention_with_connection(&conn, &policy).unwrap();
-        assert_eq!(cleared, 1);
+        assert_eq!(cleared, 0);
         assert_eq!(deleted, 2);
         let body: Option<String> = conn
             .query_row(
@@ -1731,7 +1734,7 @@ mod retention_tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(body, None);
+        assert_eq!(body, Some("request".to_string()));
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM request_logs", [], |row| row.get(0))
             .unwrap();

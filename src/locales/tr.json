@@ -976,7 +976,7 @@
         "default_on_tag": "Varsayılan Açık",
         "claude_thinking_note": "💡 Claude Modelleri Notu: Anthropic resmi modelleri yalnızca `-thinking` ekli olanlar (örn. claude-3-7-sonnet-thinking) ile standart olanlar arasında ayrım yapar. Bu bütçe düşünme modellerini kontrol eder; standart modeller düşünce süreci üretmez.",
         "max_memory_turns_label": "Max Memory Thinking Turns per Session",
-        "default_600_tag": "Default: 600 turns",
+        "default_600_tag": "Varsayılan: 600",
         "max_memory_turns_desc": "Controls the maximum number of historical thinking turns kept in RAM per session. Estimated RAM usage per turn is ~1.5 KB - 2.5 KB (~1.2 MB / session for 600 turns).",
         "turns_unit": "turns",
         "window_guide_title": "FIFO Sliding Window Eviction & Concurrency Sizing Guide",
@@ -1002,7 +1002,20 @@
         "claude_show_advanced": "Advanced: Client Effort Tier Mapping (low / medium / high)",
         "claude_effort_mapping_desc": "When commercial agents (Cline, Roo, etc.) send reasoning_effort in parameters or headers, budgets are mapped as follows:",
         "save_hint": "Changes take effect immediately upon saving and are hot-reloaded into the running proxy service.",
-        "save_btn": "Save & Hot Reload Thinking Config"
+        "save_btn": "Save & Hot Reload Thinking Config",
+        "max_memory_turns_subdesc": "Tur başına ~2 KB; 600 tur ≈ 1.2 MB / oturum.",
+        "default_15_days_tag": "Varsayılan: 15 gün",
+        "retention_days_subdesc": "Etkin oturumlar her istekte otomatik uzatılır; yalnızca boşta kaldığında süresi dolar.",
+        "guide_preset_1g_title": "1GB RAM Hafif Sunucu:",
+        "guide_preset_1g_desc": "Önerilen: <1>100 ~ 200 tur</1>. Yüzlerce eşzamanlı oturum yalnızca ~50MB RAM tüketir, OOM hatalarına karşı son derece dirençlidir.",
+        "guide_preset_team_title": "Bireysel ve Küçük Ekipler (1-10 Kullanıcı):",
+        "guide_preset_team_desc": "Önerilen: <1>600 ~ 1000 tur</1>. Binlerce tur geçmişi fiziksel bellekte kalır ve 0ms yıldırım hızında yanıt verir.",
+        "guide_preset_enterprise_title": "100 Kişilik Kurumsal Eşzamanlılık (2G-4G):",
+        "guide_preset_enterprise_desc": "Önerilen: <1>300 ~ 600 tur</1>. İsteklerin %95+'i RAM'e isabet eder, üstün performans ve mutlak kararlılık sunar.",
+        "guide_preset_relay_title": "1K+ Kullanıcılı Genel Aktarım İstasyonu (4G-8G):",
+        "guide_preset_relay_desc": "Önerilen: <1>150 ~ 300 tur</1>. Bellek bağlantı havuzlarına önceliklendirilir, uzun geçmişler SQLite'a devredilir.",
+        "guide_preset_cluster_title": "10K ~ 100K+ Yoğun Eşzamanlı Küme:",
+        "guide_preset_cluster_desc": "Önerilen: <1>50 ~ 100 tur</1>. On binlerce eşzamanlı oturumu rahatça barındırır; WAL hızlı dizini kilitsiz anlık yanıt sağlar."
       },
       "thinking_settings": {
         "title": "Düşünme Ayarları (Thinking Settings)"

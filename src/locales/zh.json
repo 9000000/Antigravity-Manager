@@ -987,7 +987,7 @@
         "default_on_tag": "默认开启",
         "claude_thinking_note": "💡 Claude 模型说明：Anthropic 官方模型列表仅区分带 `-thinking`（如 claude-3-7-sonnet-thinking）与普通模型。本自定义预算专门控制带 thinking 模型的思考配额；若调用普通非 thinking 模型，上游不产生思考过程。",
         "max_memory_turns_label": "每轮对话的内存 Thinking 存储最大轮次",
-        "default_600_tag": "默认 600 轮",
+        "default_600_tag": "默认 600",
         "max_memory_turns_desc": "控制单会话在内存 (RAM) 中常驻保留的历史思考块轮次。单轮思考块的预估内存消耗约为 1.5 KB ~ 2.5 KB（600 轮约占用 1.2 MB / 会话）。",
         "turns_unit": "轮",
         "window_guide_title": "滑动窗口淘汰机制与各并发规模选型建议",
@@ -1013,7 +1013,20 @@
         "claude_show_advanced": "展开高级设置：客户端 Effort 档位映射 (low / medium / high)",
         "claude_effort_mapping_desc": "当部分商业客户端（如 Cline, Roo 等）在请求头或参数中附带 reasoning_effort 时，按以下预算映射：",
         "save_hint": "修改思考预算设置后点击保存即可立即生效，配置将即时热更新至当前运行的反代服务。",
-        "save_btn": "保存思考设置并热生效"
+        "save_btn": "保存思考设置并热生效",
+        "max_memory_turns_subdesc": "单轮思考约 2 KB；600 轮 ≈ 1.2 MB / 会话。",
+        "default_15_days_tag": "默认 15天",
+        "retention_days_subdesc": "活跃会话每次请求自动顺延，无请求才过期。",
+        "guide_preset_1g_title": "1GB 内存轻量服务器:",
+        "guide_preset_1g_desc": "推荐填写 <1>100 ~ 200 轮</1>。几百个并发会话仅消耗约 50MB 内存，极端抗爆。",
+        "guide_preset_team_title": "个人 ~ 10 人自用团队:",
+        "guide_preset_team_desc": "推荐填写 <1>600 ~ 1000 轮</1>。数千轮历史对话常驻物理内存 0ms 闪电直出。",
+        "guide_preset_enterprise_title": "100 人企业级并发 (2G-4G):",
+        "guide_preset_enterprise_desc": "推荐填写 <1>300 ~ 600 轮</1>。95%+ 请求命中 RAM，兼具极致性能与绝对稳健。",
+        "guide_preset_relay_title": "1K+ 用户公共中转站 (4G-8G):",
+        "guide_preset_relay_desc": "推荐填写 <1>150 ~ 300 轮</1>。内存优先倾斜给长连接池，长对话冷历史托付 SQLite。",
+        "guide_preset_cluster_title": "1W+ ~ 10W+ 海量并发集群:",
+        "guide_preset_cluster_desc": "推荐填写 <1>50 ~ 100 轮</1>。单机无压承载数万并发会话，WAL 高速索引并发无锁秒级响应。"
       },
       "thinking_settings": {
         "title": "思考设置 (Thinking Settings)"

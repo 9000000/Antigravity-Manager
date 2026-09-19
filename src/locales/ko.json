@@ -990,7 +990,7 @@
         "default_on_tag": "기본 활성화",
         "claude_thinking_note": "💡 Claude 모델 안내: Anthropic 공식 모델 목록은 `-thinking`이 붙은 모델(예: claude-3-7-sonnet-thinking)과 일반 모델만 구분합니다. 이 맞춤 예산은 thinking 모델의 추론 할당량을 제어하며, 일반 모델을 호출할 경우 상류에서 추론이 생성되지 않습니다.",
         "max_memory_turns_label": "세션당 메모리 Thinking 보존 최대 턴 수",
-        "default_600_tag": "기본값: 600턴",
+        "default_600_tag": "기본 600",
         "max_memory_turns_desc": "세션별 메모리(RAM)에 상주하는 이전 생각 블록 턴 수를 제어합니다. 턴당 예상 메모리 사용량은 약 1.5KB ~ 2.5KB입니다(600턴당 세션당 약 1.2MB).",
         "turns_unit": "턴",
         "window_guide_title": "슬라이딩 윈도우 제거 메커니즘 및 동시성 권장 사양 가이드",
@@ -1016,7 +1016,20 @@
         "claude_show_advanced": "고급 설정: 클라이언트 Effort 매핑 (low / medium / high)",
         "claude_effort_mapping_desc": "Cline, Roo 등의 상용 클라이언트가 reasoning_effort를 전달할 때 다음 예산으로 매핑됩니다:",
         "save_hint": "생각 예산 변경 사항은 저장 즉시 적용되며 실행 중인 프록시 서비스에 즉시 핫 리로드됩니다.",
-        "save_btn": "생각 설정 저장 및 핫 리로드"
+        "save_btn": "생각 설정 저장 및 핫 리로드",
+        "max_memory_turns_subdesc": "턴당 약 2KB, 600턴 ≈ 세션당 1.2MB.",
+        "default_15_days_tag": "기본 15일",
+        "retention_days_subdesc": "활성 세션은 요청마다 자동 연장되며, 유휴 상태일 때만 만료됩니다.",
+        "guide_preset_1g_title": "1GB 메모리 경량 서버:",
+        "guide_preset_1g_desc": "권장 설정: <1>100 ~ 200 턴</1>. 수백 개의 동시 세션에서도 약 50MB 메모리만 소비하여 OOM에 매우 강력합니다.",
+        "guide_preset_team_title": "개인 ~ 10인 팀:",
+        "guide_preset_team_desc": "권장 설정: <1>600 ~ 1000 턴</1>. 수천 턴의 대화 기록이 물리적 RAM에 상주하여 0ms로 즉시 응답합니다.",
+        "guide_preset_enterprise_title": "100인 기업 동시 접속 (2G-4G):",
+        "guide_preset_enterprise_desc": "권장 설정: <1>300 ~ 600 턴</1>. 95% 이상의 요청이 RAM에 적중하여 최고의 성능과 절대적 안정성을 보장합니다.",
+        "guide_preset_relay_title": "1K+ 사용자 공용 중계소 (4G-8G):",
+        "guide_preset_relay_desc": "권장 설정: <1>150 ~ 300 턴</1>. 연결 풀에 메모리를 우선 할당하고 긴 대화의 콜드 기록은 SQLite에 위임합니다.",
+        "guide_preset_cluster_title": "1만 ~ 10만+ 대규모 동시성 클러스터:",
+        "guide_preset_cluster_desc": "권장 설정: <1>50 ~ 100 턴</1>. 단일 머신으로 수만 개의 동시 세션을 원활히 처리하며, WAL 고속 인덱스로 락 없이 즉각 응답합니다."
       },
       "thinking_settings": {
         "title": "추론 설정 (Thinking Settings)"

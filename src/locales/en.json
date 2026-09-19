@@ -996,7 +996,7 @@
         "default_on_tag": "Default On",
         "claude_thinking_note": "💡 Claude Model Note: Anthropic official models only differentiate between `-thinking` (e.g. claude-3-7-sonnet-thinking) and standard models. This custom budget specifically manages quotas for thinking models; calling standard models will not trigger upstream reasoning.",
         "max_memory_turns_label": "Max Memory Thinking Turns per Session",
-        "default_600_tag": "Default: 600 turns",
+        "default_600_tag": "Default: 600",
         "max_memory_turns_desc": "Controls the maximum number of historical thinking turns kept in RAM per session. Estimated RAM usage per turn is ~1.5 KB - 2.5 KB (~1.2 MB / session for 600 turns).",
         "turns_unit": "turns",
         "window_guide_title": "FIFO Sliding Window Eviction & Concurrency Sizing Guide",
@@ -1022,7 +1022,20 @@
         "claude_show_advanced": "Advanced: Client Effort Tier Mapping (low / medium / high)",
         "claude_effort_mapping_desc": "When commercial agents (Cline, Roo, etc.) send reasoning_effort in parameters or headers, budgets are mapped as follows:",
         "save_hint": "Changes take effect immediately upon saving and are hot-reloaded into the running proxy service.",
-        "save_btn": "Save & Hot Reload Thinking Config"
+        "save_btn": "Save & Hot Reload Thinking Config",
+        "max_memory_turns_subdesc": "~2 KB per turn; 600 turns ≈ 1.2 MB / session.",
+        "default_15_days_tag": "Default: 15 days",
+        "retention_days_subdesc": "Active sessions auto-extend on each request; expires only when idle.",
+        "guide_preset_1g_title": "1GB RAM Lightweight Server:",
+        "guide_preset_1g_desc": "Recommended: <1>100 ~ 200 turns</1>. Hundreds of concurrent sessions consume only ~50MB RAM, extremely resilient against OOM.",
+        "guide_preset_team_title": "Personal & Small Teams (1-10 Users):",
+        "guide_preset_team_desc": "Recommended: <1>600 ~ 1000 turns</1>. Thousands of historical turns stay resident in RAM for 0ms lightning-fast responses.",
+        "guide_preset_enterprise_title": "100 Users Enterprise (2G-4G):",
+        "guide_preset_enterprise_desc": "Recommended: <1>300 ~ 600 turns</1>. 95%+ requests hit RAM, delivering peak performance with rock-solid stability.",
+        "guide_preset_relay_title": "1K+ Users Public Relay (4G-8G):",
+        "guide_preset_relay_desc": "Recommended: <1>150 ~ 300 turns</1>. Memory prioritized for connection pools; long-turn cold histories safely offloaded to SQLite.",
+        "guide_preset_cluster_title": "10K ~ 100K+ Massive Cluster:",
+        "guide_preset_cluster_desc": "Recommended: <1>50 ~ 100 turns</1>. Effortlessly sustains tens of thousands of concurrent sessions; lock-free WAL index ensures sub-second responses."
       },
       "thinking_settings": {
         "title": "Thinking Settings"

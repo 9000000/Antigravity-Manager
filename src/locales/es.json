@@ -990,7 +990,7 @@
         "default_on_tag": "Activado por defecto",
         "claude_thinking_note": "💡 Nota sobre modelos Claude: Anthropic solo distingue modelos con `-thinking` (ej. claude-3-7-sonnet-thinking) y estándar. Este presupuesto personalizado gestiona modelos con thinking; los modelos estándar no generan razonamiento.",
         "max_memory_turns_label": "Max Memory Thinking Turns per Session",
-        "default_600_tag": "Default: 600 turns",
+        "default_600_tag": "Predeterminado: 600",
         "max_memory_turns_desc": "Controls the maximum number of historical thinking turns kept in RAM per session. Estimated RAM usage per turn is ~1.5 KB - 2.5 KB (~1.2 MB / session for 600 turns).",
         "turns_unit": "turns",
         "window_guide_title": "FIFO Sliding Window Eviction & Concurrency Sizing Guide",
@@ -1016,7 +1016,20 @@
         "claude_show_advanced": "Advanced: Client Effort Tier Mapping (low / medium / high)",
         "claude_effort_mapping_desc": "When commercial agents (Cline, Roo, etc.) send reasoning_effort in parameters or headers, budgets are mapped as follows:",
         "save_hint": "Changes take effect immediately upon saving and are hot-reloaded into the running proxy service.",
-        "save_btn": "Save & Hot Reload Thinking Config"
+        "save_btn": "Save & Hot Reload Thinking Config",
+        "max_memory_turns_subdesc": "~2 KB por turno; 600 turnos ≈ 1.2 MB / sesión.",
+        "default_15_days_tag": "Predeterminado: 15 días",
+        "retention_days_subdesc": "Las sesiones activas se extienden con cada solicitud; expiran solo cuando están inactivas.",
+        "guide_preset_1g_title": "Servidor ligero de 1GB RAM:",
+        "guide_preset_1g_desc": "Recomendado: <1>100 ~ 200 turnos</1>. Cientos de sesiones concurrentes consumen solo ~50MB de RAM, alta resistencia a OOM.",
+        "guide_preset_team_title": "Uso personal o equipos pequeños (1-10 usuarios):",
+        "guide_preset_team_desc": "Recomendado: <1>600 ~ 1000 turnos</1>. Miles de turnos permanecen en RAM con respuesta instantánea de 0ms.",
+        "guide_preset_enterprise_title": "Concurrencia empresarial de 100 usuarios (2G-4G):",
+        "guide_preset_enterprise_desc": "Recomendado: <1>300 ~ 600 turnos</1>. Más del 95% de solicitudes aciertan en RAM, rendimiento superior y máxima estabilidad.",
+        "guide_preset_relay_title": "Estación de retransmisión pública para más de 1K usuarios (4G-8G):",
+        "guide_preset_relay_desc": "Recomendado: <1>150 ~ 300 turnos</1>. Memoria priorizada para pools de conexión; historiales fríos delegados a SQLite.",
+        "guide_preset_cluster_title": "Clúster masivo de 10K ~ 100K+ concurrentes:",
+        "guide_preset_cluster_desc": "Recomendado: <1>50 ~ 100 turnos</1>. Soporta decenas de miles de sesiones concurrentes; índice rápido WAL sin bloqueos."
       },
       "thinking_settings": {
         "title": "Configuración de razonamiento (Thinking Settings)"

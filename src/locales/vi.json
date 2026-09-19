@@ -974,7 +974,7 @@
         "default_on_tag": "Mặc định bật",
         "claude_thinking_note": "💡 Lưu ý về mô hình Claude: Danh sách mô hình Anthropic chỉ phân biệt giữa mô hình có đuôi `-thinking` (như claude-3-7-sonnet-thinking) và mô hình chuẩn. Ngân sách này chỉ áp dụng cho mô hình thinking; mô hình thông thường sẽ không tạo ra suy nghĩ.",
         "max_memory_turns_label": "Max Memory Thinking Turns per Session",
-        "default_600_tag": "Default: 600 turns",
+        "default_600_tag": "Mặc định: 600",
         "max_memory_turns_desc": "Controls the maximum number of historical thinking turns kept in RAM per session. Estimated RAM usage per turn is ~1.5 KB - 2.5 KB (~1.2 MB / session for 600 turns).",
         "turns_unit": "turns",
         "window_guide_title": "FIFO Sliding Window Eviction & Concurrency Sizing Guide",
@@ -1000,7 +1000,20 @@
         "claude_show_advanced": "Advanced: Client Effort Tier Mapping (low / medium / high)",
         "claude_effort_mapping_desc": "When commercial agents (Cline, Roo, etc.) send reasoning_effort in parameters or headers, budgets are mapped as follows:",
         "save_hint": "Changes take effect immediately upon saving and are hot-reloaded into the running proxy service.",
-        "save_btn": "Save & Hot Reload Thinking Config"
+        "save_btn": "Save & Hot Reload Thinking Config",
+        "max_memory_turns_subdesc": "~2 KB mỗi lượt; 600 lượt ≈ 1.2 MB / phiên.",
+        "default_15_days_tag": "Mặc định: 15 ngày",
+        "retention_days_subdesc": "Phiên hoạt động sẽ tự động gia hạn theo mỗi yêu cầu; chỉ hết hạn khi không hoạt động.",
+        "guide_preset_1g_title": "Máy chủ nhẹ RAM 1GB:",
+        "guide_preset_1g_desc": "Khuyến nghị: <1>100 ~ 200 lượt</1>. Hàng trăm phiên đồng thời chỉ tốn khoảng 50MB RAM, chống tràn bộ nhớ (OOM) cực tốt.",
+        "guide_preset_team_title": "Cá nhân & Nhóm nhỏ (1-10 người):",
+        "guide_preset_team_desc": "Khuyến nghị: <1>600 ~ 1000 lượt</1>. Hàng nghìn lượt hội thoại lưu trú trên RAM vật lý, phản hồi tức thì 0ms.",
+        "guide_preset_enterprise_title": "Doanh nghiệp đồng thời 100 người (2G-4G):",
+        "guide_preset_enterprise_desc": "Khuyến nghị: <1>300 ~ 600 lượt</1>. Hơn 95% yêu cầu trúng RAM, kết hợp hiệu năng đỉnh cao và độ ổn định tuyệt đối.",
+        "guide_preset_relay_title": "Trạm chuyển tiếp công cộng 1K+ người dùng (4G-8G):",
+        "guide_preset_relay_desc": "Khuyến nghị: <1>150 ~ 300 lượt</1>. Bộ nhớ ưu tiên cho nhóm kết nối; lịch sử dài hạn được lưu trữ trong SQLite.",
+        "guide_preset_cluster_title": "Cụm quy mô lớn 10K ~ 100K+ phiên đồng thời:",
+        "guide_preset_cluster_desc": "Khuyến nghị: <1>50 ~ 100 lượt</1>. Chịu tải hàng chục nghìn phiên đồng thời một cách nhẹ nhàng; chỉ mục WAL phản hồi nhanh không khóa."
       },
       "thinking_settings": {
         "title": "Cài đặt suy nghĩ (Thinking Settings)"

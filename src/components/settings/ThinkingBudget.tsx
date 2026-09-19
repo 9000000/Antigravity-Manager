@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { useTranslation } from "react-i18next";
+import { useTranslation, Trans } from "react-i18next";
 import { Save, Check, ChevronDown, Layers, HelpCircle, HardDrive } from "lucide-react";
 import {
     ThinkingBudgetConfig,
@@ -18,6 +18,58 @@ interface ThinkingBudgetProps {
     thinkingRetentionDays?: number;
     onThinkingRetentionDaysChange?: (days: number) => void;
 }
+
+interface ConcurrencyGuidePreset {
+    key: string;
+    icon: string;
+    titleKey: string;
+    titleDefault: string;
+    descKey: string;
+    descDefault: string;
+}
+
+const CONCURRENCY_GUIDE_PRESETS: ConcurrencyGuidePreset[] = [
+    {
+        key: "1g",
+        icon: "🖥️",
+        titleKey: "proxy.config.thinking_budget.guide_preset_1g_title",
+        titleDefault: "1GB 内存轻量服务器:",
+        descKey: "proxy.config.thinking_budget.guide_preset_1g_desc",
+        descDefault: "推荐填写 <1>100 ~ 200 轮</1>。几百个并发会话仅消耗约 50MB 内存，极端抗爆。",
+    },
+    {
+        key: "team",
+        icon: "👥",
+        titleKey: "proxy.config.thinking_budget.guide_preset_team_title",
+        titleDefault: "个人 ~ 10 人自用团队:",
+        descKey: "proxy.config.thinking_budget.guide_preset_team_desc",
+        descDefault: "推荐填写 <1>600 ~ 1000 轮</1>。数千轮历史对话常驻物理内存 0ms 闪电直出。",
+    },
+    {
+        key: "enterprise",
+        icon: "🏢",
+        titleKey: "proxy.config.thinking_budget.guide_preset_enterprise_title",
+        titleDefault: "100 人企业级并发 (2G-4G):",
+        descKey: "proxy.config.thinking_budget.guide_preset_enterprise_desc",
+        descDefault: "推荐填写 <1>300 ~ 600 轮</1>。95%+ 请求命中 RAM，兼具极致性能与绝对稳健。",
+    },
+    {
+        key: "relay",
+        icon: "🌐",
+        titleKey: "proxy.config.thinking_budget.guide_preset_relay_title",
+        titleDefault: "1K+ 用户公共中转站 (4G-8G):",
+        descKey: "proxy.config.thinking_budget.guide_preset_relay_desc",
+        descDefault: "推荐填写 <1>150 ~ 300 轮</1>。内存优先倾斜给长连接池，长对话冷历史托付 SQLite。",
+    },
+    {
+        key: "cluster",
+        icon: "🚀",
+        titleKey: "proxy.config.thinking_budget.guide_preset_cluster_title",
+        titleDefault: "1W+ ~ 10W+ 海量并发集群:",
+        descKey: "proxy.config.thinking_budget.guide_preset_cluster_desc",
+        descDefault: "推荐填写 <1>50 ~ 100 轮</1>。单机无压承载数万并发会话，WAL 高速索引并发无锁秒级响应。",
+    },
+];
 
 const DEFAULT_CONFIG: ThinkingBudgetConfig = {
     control_source: "gateway",
@@ -403,11 +455,15 @@ export default function ThinkingBudget({
                                             })}
                                         </span>
                                         <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 shrink-0">
-                                            默认 600
+                                            {t("proxy.config.thinking_budget.default_600_tag", {
+                                                defaultValue: "默认 600",
+                                            })}
                                         </span>
                                     </div>
                                     <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight">
-                                        单轮思考约 2 KB；600 轮 ≈ 1.2 MB / 会话。
+                                        {t("proxy.config.thinking_budget.max_memory_turns_subdesc", {
+                                            defaultValue: "单轮思考约 2 KB；600 轮 ≈ 1.2 MB / 会话。",
+                                        })}
                                     </p>
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
@@ -444,11 +500,15 @@ export default function ThinkingBudget({
                                             })}
                                         </span>
                                         <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 shrink-0">
-                                            默认 15天
+                                            {t("proxy.config.thinking_budget.default_15_days_tag", {
+                                                defaultValue: "默认 15天",
+                                            })}
                                         </span>
                                     </div>
                                     <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight">
-                                        活跃会话每次请求自动顺延，无请求才过期。
+                                        {t("proxy.config.thinking_budget.retention_days_subdesc", {
+                                            defaultValue: "活跃会话每次请求自动顺延，无请求才过期。",
+                                        })}
                                     </p>
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
@@ -491,46 +551,23 @@ export default function ThinkingBudget({
                             })}
                         </p>
                         <div className="pl-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-[11px] pt-1">
-                            <div className="p-2 rounded bg-blue-50/40 dark:bg-base-300/40 border border-blue-100/60 dark:border-base-300">
-                                <span className="font-bold text-gray-800 dark:text-gray-200 block">
-                                    🖥️ 1GB 内存轻量服务器:
-                                </span>
-                                <span className="text-gray-500 dark:text-gray-400">
-                                    推荐填写 <strong className="text-blue-600 dark:text-blue-400">100 ~ 200 轮</strong>。几百个并发会话仅消耗约 50MB 内存，极端抗爆。
-                                </span>
-                            </div>
-                            <div className="p-2 rounded bg-blue-50/40 dark:bg-base-300/40 border border-blue-100/60 dark:border-base-300">
-                                <span className="font-bold text-gray-800 dark:text-gray-200 block">
-                                    👥 个人 ~ 10 人自用团队:
-                                </span>
-                                <span className="text-gray-500 dark:text-gray-400">
-                                    推荐填写 <strong className="text-blue-600 dark:text-blue-400">600 ~ 1000 轮</strong>。数千轮历史对话常驻物理内存 0ms 闪电直出。
-                                </span>
-                            </div>
-                            <div className="p-2 rounded bg-blue-50/40 dark:bg-base-300/40 border border-blue-100/60 dark:border-base-300">
-                                <span className="font-bold text-gray-800 dark:text-gray-200 block">
-                                    🏢 100 人企业级并发 (2G-4G):
-                                </span>
-                                <span className="text-gray-500 dark:text-gray-400">
-                                    推荐填写 <strong className="text-blue-600 dark:text-blue-400">300 ~ 600 轮</strong>。95%+ 请求命中 RAM，兼具极致性能与绝对稳健。
-                                </span>
-                            </div>
-                            <div className="p-2 rounded bg-blue-50/40 dark:bg-base-300/40 border border-blue-100/60 dark:border-base-300">
-                                <span className="font-bold text-gray-800 dark:text-gray-200 block">
-                                    🌐 1K+ 用户公共中转站 (4G-8G):
-                                </span>
-                                <span className="text-gray-500 dark:text-gray-400">
-                                    推荐填写 <strong className="text-blue-600 dark:text-blue-400">150 ~ 300 轮</strong>。内存优先倾斜给长连接池，长对话冷历史托付 SQLite。
-                                </span>
-                            </div>
-                            <div className="p-2 rounded bg-blue-50/40 dark:bg-base-300/40 border border-blue-100/60 dark:border-base-300">
-                                <span className="font-bold text-gray-800 dark:text-gray-200 block">
-                                    🚀 1W+ ~ 10W+ 海量并发集群:
-                                </span>
-                                <span className="text-gray-500 dark:text-gray-400">
-                                    推荐填写 <strong className="text-blue-600 dark:text-blue-400">50 ~ 100 轮</strong>。单机无压承载数万并发会话，WAL 高速索引并发无锁秒级响应。
-                                </span>
-                            </div>
+                            {CONCURRENCY_GUIDE_PRESETS.map((preset) => (
+                                <div
+                                    key={preset.key}
+                                    className="p-2 rounded bg-blue-50/40 dark:bg-base-300/40 border border-blue-100/60 dark:border-base-300"
+                                >
+                                    <span className="font-bold text-gray-800 dark:text-gray-200 block">
+                                        {preset.icon} {t(preset.titleKey, { defaultValue: preset.titleDefault })}
+                                    </span>
+                                    <span className="text-gray-500 dark:text-gray-400">
+                                        <Trans
+                                            i18nKey={preset.descKey}
+                                            defaults={preset.descDefault}
+                                            components={{ 1: <strong className="text-blue-600 dark:text-blue-400" /> }}
+                                        />
+                                    </span>
+                                </div>
+                            ))}
                         </div>
                     </div>
                 </div>

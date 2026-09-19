@@ -923,7 +923,7 @@
         "default_on_tag": "ပုံမှန် ဖွင့်ထားသည်",
         "claude_thinking_note": "💡 Claude မော်ဒယ် ရှင်းလင်းချက် - Anthropic ၏ တရားဝင် မော်ဒယ်စာရင်းသည် `-thinking` ပါရှိသော မော်ဒယ်များနှင့် ရိုးရိုးမော်ဒယ်များကိုသာ ခွဲခြားထားသည်။ ဤဘတ်ဂျက်သည် thinking မော်ဒယ်များအတွက်သာ သီးသန့်ဖြစ်ပြီး ရိုးရိုးမော်ဒယ်များသည် စဉ်းစားတွေးခေါ်မှု မထုတ်လုပ်ပါ။",
         "max_memory_turns_label": "Max Memory Thinking Turns per Session",
-        "default_600_tag": "Default: 600 turns",
+        "default_600_tag": "မူရင်း: 600",
         "max_memory_turns_desc": "Controls the maximum number of historical thinking turns kept in RAM per session. Estimated RAM usage per turn is ~1.5 KB - 2.5 KB (~1.2 MB / session for 600 turns).",
         "turns_unit": "turns",
         "window_guide_title": "FIFO Sliding Window Eviction & Concurrency Sizing Guide",
@@ -949,7 +949,20 @@
         "claude_show_advanced": "Advanced: Client Effort Tier Mapping (low / medium / high)",
         "claude_effort_mapping_desc": "When commercial agents (Cline, Roo, etc.) send reasoning_effort in parameters or headers, budgets are mapped as follows:",
         "save_hint": "Changes take effect immediately upon saving and are hot-reloaded into the running proxy service.",
-        "save_btn": "Save & Hot Reload Thinking Config"
+        "save_btn": "Save & Hot Reload Thinking Config",
+        "max_memory_turns_subdesc": "တစ်လှည့်လျှင် ~2 KB၊ အလှည့် 600 ≈ 1.2 MB / session.",
+        "default_15_days_tag": "မူရင်း: ၁၅ ရက်",
+        "retention_days_subdesc": "တောင်းဆိုမှုတိုင်းတွင် အလိုအလျောက် သက်တမ်းတိုးပြီး အသုံးမပြုတော့မှသာ သက်တမ်းကုန်သည်။",
+        "guide_preset_1g_title": "1GB RAM အပေါ့စားဆာဗာ:",
+        "guide_preset_1g_desc": "အကြံပြုချက်: <1>100 ~ 200 လှည့်</1>။ တစ်ပြိုင်နက် session ရာပေါင်းများစွာသည် RAM 50MB ခန့်သာ ကုန်ကျပြီး OOM ကို အထူးခံနိုင်ရည်ရှိသည်။",
+        "guide_preset_team_title": "တစ်ကိုယ်ရည်နှင့် အဖွဲ့ငယ် (၁-၁၀ ယောက်):",
+        "guide_preset_team_desc": "အကြံပြုချက်: <1>600 ~ 1000 လှည့်</1>။ စကားပြောမှတ်တမ်း အလှည့်ထောင်ပေါင်းများစွာသည် RAM တွင် တည်ရှိနေပြီး 0ms ဖြင့် ချက်ချင်း တုံ့ပြန်သည်။",
+        "guide_preset_enterprise_title": "လူ ၁၀၀ လုပ်ငန်းအဆင့် တစ်ပြိုင်နက်သုံး (2G-4G):",
+        "guide_preset_enterprise_desc": "အကြံပြုချက်: <1>300 ~ 600 လှည့်</1>။ တောင်းဆိုမှု 95%+ သည် RAM သို့ တိုက်ရိုက်ရောက်ရှိပြီး အကောင်းဆုံး စွမ်းဆောင်ရည်နှင့် တည်ငြိမ်မှုကို ပေးသည်။",
+        "guide_preset_relay_title": "အသုံးပြုသူ ၁ ထောင်ကျော် အများသုံး Relay (4G-8G):",
+        "guide_preset_relay_desc": "အကြံပြုချက်: <1>150 ~ 300 လှည့်</1>။ ချိတ်ဆက်မှုများအတွက် Memory ကို ဦးစားပေးပြီး မှတ်တမ်းဟောင်းများကို SQLite သို့ လွှဲပြောင်းပေးသည်။",
+        "guide_preset_cluster_title": "၁ သောင်းမှ ၁ သိန်းကျော် အလွန်ကြီးမားသော Cluster:",
+        "guide_preset_cluster_desc": "အကြံပြုချက်: <1>50 ~ 100 လှည့်</1>။ session သောင်းပေါင်းများစွာကို အခက်အခဲမရှိ လက်ခံနိုင်ပြီး WAL အမြန်အညွှန်းက အချိန်မဆိုင်းဘဲ လျင်မြန်စွာ တုံ့ပြန်သည်။"
       },
       "thinking_settings": {
         "title": "စဉ်းစားတွေးခေါ်မှု ဆက်တင်များ (Thinking Settings)"
