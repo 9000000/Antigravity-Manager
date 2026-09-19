@@ -149,6 +149,11 @@ fn init_thinking_schema(conn: &Connection) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_thinking_rec_accessed ON thinking_records (last_accessed ASC)",
         [],
     );
+    // 7. 覆盖基于 signature 的精准穿透点查 (极简 Partial Index，WHERE signature IS NOT NULL)
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_thinking_rec_sig ON thinking_records (session_key, signature) WHERE signature IS NOT NULL",
+        [],
+    );
     conn.execute(
         "CREATE TABLE IF NOT EXISTS thinking_sessions (
             session_key TEXT PRIMARY KEY,
@@ -203,9 +208,7 @@ impl std::ops::DerefMut for ThinkingDbGuard {
 fn thinking_db() -> Result<ThinkingDbGuard, String> {
     let db_path = get_thinking_db_path()?;
     let slot = THINKING_DB.get_or_init(|| Mutex::new(None));
-    let mut guard = slot
-        .lock()
-        .map_err(|e| format!("thinking db lock: {e}"))?;
+    let mut guard = slot.lock().map_err(|e| format!("thinking db lock: {e}"))?;
     if guard.as_ref().map(|(p, _)| p) != Some(&db_path) {
         let conn = open_thinking_db_at(&db_path)?;
         *guard = Some((db_path, conn));
@@ -379,10 +382,7 @@ pub fn init_db() -> Result<(), String> {
         "ALTER TABLE request_logs ADD COLUMN response_headers TEXT",
         [],
     );
-    let _ = conn.execute(
-        "ALTER TABLE request_logs ADD COLUMN session_id TEXT",
-        [],
-    );
+    let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN session_id TEXT", []);
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_timestamp ON request_logs (timestamp DESC)",
@@ -573,39 +573,40 @@ pub fn save_thinking_record(
     let packed_thought = pack_thought(thought);
     let signature = persist_signature(signature);
 
-    // 智能防叠加与幂等查重：
-    // 1. 若含有工具调用，以 (session_key, primary_tool_id) 查重；
-    // 2. 若为纯文本，以 (session_key, fingerprint) 查重。
-    let existing_id: Option<(i64, usize, Option<String>)> = if let Some(p_id) = primary_tool_id {
-        let mut stmt = conn
-            .prepare_cached(
-                "SELECT id, length(thought), signature FROM thinking_records
-                 WHERE session_key = ?1 AND primary_tool_id = ?2
-                 ORDER BY id DESC LIMIT 1",
-            )
-            .map_err(|e| e.to_string())?;
-        stmt.query_row(params![session_key, p_id], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        })
-        .ok()
-    } else {
-        let mut stmt = conn
-            .prepare_cached(
-                "SELECT id, length(thought), signature FROM thinking_records
-                 WHERE session_key = ?1 AND fingerprint = ?2
-                 ORDER BY id DESC LIMIT 1",
-            )
-            .map_err(|e| e.to_string())?;
-        stmt.query_row(params![session_key, fingerprint], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        })
-        .ok()
+    // 智能防叠加与幂等查重：只允许合并/更新当前会话中的【最新一条】活跃轮次（流式碎片拼接或更长思考补齐）
+    // 绝不能回溯更新历史早期轮次！
+    let latest_row: Option<(i64, usize, Option<String>, String, Option<String>)> = conn
+        .query_row(
+            "SELECT id, length(thought), signature, fingerprint, primary_tool_id
+             FROM thinking_records
+             WHERE session_key = ?1
+             ORDER BY id DESC LIMIT 1",
+            params![session_key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .ok();
+
+    let existing_id: Option<(i64, usize, Option<String>)> = match latest_row {
+        Some((id, len, sig, ref last_fp, ref last_tool_id)) => {
+            let is_match = if let Some(p_id) = primary_tool_id {
+                last_tool_id.as_deref() == Some(p_id)
+            } else {
+                last_fp == fingerprint && last_tool_id.is_none()
+            };
+            if is_match {
+                Some((id, len, sig))
+            } else {
+                None
+            }
+        }
+        None => None,
     };
 
     if let Some((id, old_thought_len, old_sig)) = existing_id {
         // 已存在记录：检查是否需要更新（防止将已有实质思考覆盖为占位符，但允许补全更长思考或有效签名）
-        let incoming_has_meaningful_thought = !crate::proxy::thinking_store::is_placeholder_thought(thought)
-            && !thought.trim().is_empty();
+        let incoming_has_meaningful_thought =
+            !crate::proxy::thinking_store::is_placeholder_thought(thought)
+                && !thought.trim().is_empty();
         let old_is_dummy = old_thought_len <= 10; // "RAW1..." 或占位符非常短
 
         let should_update_thought = incoming_has_meaningful_thought || old_is_dummy;
@@ -783,6 +784,50 @@ pub fn load_thinking_by_tool_id(
         .map_err(|e| e.to_string())?;
 
     if let Some(row) = fallback_rows.next().map_err(|e| e.to_string())? {
+        let fp: String = row.get(0).map_err(|e| e.to_string())?;
+        let thought_raw: Vec<u8> = row.get(1).map_err(|e| e.to_string())?;
+        let signature: Option<String> = row.get(2).map_err(|e| e.to_string())?;
+        let tool_ids_str: String = row.get(3).map_err(|e| e.to_string())?;
+        let tool_names_str: String = row.get(4).map_err(|e| e.to_string())?;
+        let visible: String = row.get(5).map_err(|e| e.to_string())?;
+        let tool_ids: Vec<String> = serde_json::from_str(&tool_ids_str).unwrap_or_default();
+        let tool_names: Vec<String> = serde_json::from_str(&tool_names_str).unwrap_or_default();
+        Ok(Some(PersistedThinkingRecord {
+            fingerprint: fp,
+            thought: unpack_thought(&thought_raw),
+            signature: persist_signature(signature.as_deref()).map(str::to_string),
+            tool_ids,
+            tool_names,
+            visible,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+/// 根据 signature 精准穿透点查历史思考（利用 idx_thinking_rec_sig 索引）
+pub fn load_thinking_by_signature(
+    session_key: &str,
+    signature: &str,
+) -> Result<Option<PersistedThinkingRecord>, String> {
+    if session_key.is_empty() || signature.is_empty() {
+        return Ok(None);
+    }
+    let mut conn = thinking_db()?;
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT fingerprint, thought, signature, tool_ids, tool_names, visible
+             FROM thinking_records
+             WHERE session_key = ?1 AND signature = ?2
+             ORDER BY id DESC LIMIT 1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut rows = stmt
+        .query(params![session_key, signature])
+        .map_err(|e| e.to_string())?;
+
+    if let Some(row) = rows.next().map_err(|e| e.to_string())? {
         let fp: String = row.get(0).map_err(|e| e.to_string())?;
         let thought_raw: Vec<u8> = row.get(1).map_err(|e| e.to_string())?;
         let signature: Option<String> = row.get(2).map_err(|e| e.to_string())?;

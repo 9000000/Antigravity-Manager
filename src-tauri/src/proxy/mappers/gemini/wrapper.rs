@@ -486,12 +486,6 @@ pub fn wrap_request_v2(
                                 if effective_fc_sig.is_none() {
                                     effective_fc_sig = turn_signature.clone();
                                 }
-                                if effective_fc_sig.is_none() {
-                                    if let Some(s_id) = session_id {
-                                        effective_fc_sig = crate::proxy::SignatureCache::global()
-                                            .get_session_signature(s_id);
-                                    }
-                                }
                                 if effective_fc_sig.is_none()
                                     && (crate::proxy::thinking_store::model_forces_server_thinking(
                                         &final_model_name,

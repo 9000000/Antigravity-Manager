@@ -48,12 +48,33 @@ pub fn strip_markdown_and_action_prefixes(raw: &str) -> String {
 
     // 循环迭代剥离常见动作前缀（支持英文大小写不敏感，支持中英文全角半角标点）
     let prefixes = [
-        "run: ", "run ", "execute: ", "execute ", "check: ", "check ",
-        "command: ", "command ", "cmd: ", "cmd ",
-        "执行: ", "执行：", "执行 ", "运行: ", "运行：", "运行 ",
-        "命令: ", "命令：", "命令 ",
-        "powershell: ", "pwsh: ", "bash: ", "sh: ",
-        "$ ", "# ", "> ", "ps> ",
+        "run: ",
+        "run ",
+        "execute: ",
+        "execute ",
+        "check: ",
+        "check ",
+        "command: ",
+        "command ",
+        "cmd: ",
+        "cmd ",
+        "执行: ",
+        "执行：",
+        "执行 ",
+        "运行: ",
+        "运行：",
+        "运行 ",
+        "命令: ",
+        "命令：",
+        "命令 ",
+        "powershell: ",
+        "pwsh: ",
+        "bash: ",
+        "sh: ",
+        "$ ",
+        "# ",
+        "> ",
+        "ps> ",
     ];
 
     let mut changed = true;
@@ -82,22 +103,41 @@ pub fn is_likely_command(candidate: &str) -> bool {
     }
 
     // 1. 包含典型管道符或命令串联/重定向运算符
-    if trimmed.contains(" | ") || trimmed.contains(" && ") || trimmed.contains(" || ") || trimmed.contains(';') {
+    if trimmed.contains(" | ")
+        || trimmed.contains(" && ")
+        || trimmed.contains(" || ")
+        || trimmed.contains(';')
+    {
         return true;
     }
 
     // 2. 路径形式命令（相对路径、绝对路径或 Windows 盘符路径）
-    if trimmed.starts_with("./") || trimmed.starts_with(".\\") || trimmed.starts_with("../") || trimmed.starts_with("..\\") || trimmed.starts_with('/') {
+    if trimmed.starts_with("./")
+        || trimmed.starts_with(".\\")
+        || trimmed.starts_with("../")
+        || trimmed.starts_with("..\\")
+        || trimmed.starts_with('/')
+    {
         return true;
     }
-    if trimmed.len() >= 3 && trimmed.as_bytes()[1] == b':' && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/') {
+    if trimmed.len() >= 3
+        && trimmed.as_bytes()[1] == b':'
+        && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/')
+    {
         return true;
     }
 
     // 排除含有明显自然语言连词或英语叙述结构的短语（如 "Run git tag and git push", "git pull and build", "git tag to origin"）
     // 避免因为以 "git", "npm", "cargo" 等开头就将复合英文描述误判为单一合法命令
     let lower_trimmed = trimmed.to_ascii_lowercase();
-    for conjunction in &[" and ", " then ", " but ", " to origin", " to main", " to master"] {
+    for conjunction in &[
+        " and ",
+        " then ",
+        " but ",
+        " to origin",
+        " to main",
+        " to master",
+    ] {
         if lower_trimmed.contains(conjunction) {
             return false;
         }
@@ -109,22 +149,108 @@ pub fn is_likely_command(candidate: &str) -> bool {
     // 3. PowerShell 标准动宾 Cmdlet (如 Get-Process, Set-Item, New-Item, Test-Path, Invoke-RestMethod)
     if first_token.contains('-') {
         let parts: Vec<&str> = first_token.split('-').collect();
-        if parts.len() == 2 && parts[0].chars().all(|c| c.is_alphabetic()) && parts[1].chars().all(|c| c.is_alphanumeric()) {
+        if parts.len() == 2
+            && parts[0].chars().all(|c| c.is_alphabetic())
+            && parts[1].chars().all(|c| c.is_alphanumeric())
+        {
             return true;
         }
     }
 
     // 4. 常见 CLI 工具与内置 Shell 命令库
     const KNOWN_COMMANDS: &[&str] = &[
-        "git", "ls", "dir", "cd", "cat", "cargo", "npm", "npx", "pnpm", "yarn", "bun", "deno",
-        "node", "python", "python3", "py", "pip", "pip3", "go", "rustc", "make", "cmake", "dotnet",
-        "mvn", "gradle", "docker", "docker-compose", "podman", "kubectl", "helm", "find", "grep",
-        "rg", "sed", "awk", "curl", "wget", "tar", "zip", "unzip", "gzip", "ps", "kill", "killall",
-        "chmod", "chown", "mkdir", "rm", "rmdir", "cp", "mv", "touch", "echo", "which", "where",
-        "head", "tail", "more", "less", "clear", "cls", "powershell", "pwsh", "cmd", "wsl", "ssh",
-        "scp", "sudo", "apt", "yum", "brew", "env", "export", "type", "tasklist", "taskkill",
-        "ipconfig", "ifconfig", "ping", "netstat", "whoami", "attrib", "tree", "start",
-        "gci", "gc", "sc", "gps", "saps", "iex", "irm", "iwr"
+        "git",
+        "ls",
+        "dir",
+        "cd",
+        "cat",
+        "cargo",
+        "npm",
+        "npx",
+        "pnpm",
+        "yarn",
+        "bun",
+        "deno",
+        "node",
+        "python",
+        "python3",
+        "py",
+        "pip",
+        "pip3",
+        "go",
+        "rustc",
+        "make",
+        "cmake",
+        "dotnet",
+        "mvn",
+        "gradle",
+        "docker",
+        "docker-compose",
+        "podman",
+        "kubectl",
+        "helm",
+        "find",
+        "grep",
+        "rg",
+        "sed",
+        "awk",
+        "curl",
+        "wget",
+        "tar",
+        "zip",
+        "unzip",
+        "gzip",
+        "ps",
+        "kill",
+        "killall",
+        "chmod",
+        "chown",
+        "mkdir",
+        "rm",
+        "rmdir",
+        "cp",
+        "mv",
+        "touch",
+        "echo",
+        "which",
+        "where",
+        "head",
+        "tail",
+        "more",
+        "less",
+        "clear",
+        "cls",
+        "powershell",
+        "pwsh",
+        "cmd",
+        "wsl",
+        "ssh",
+        "scp",
+        "sudo",
+        "apt",
+        "yum",
+        "brew",
+        "env",
+        "export",
+        "type",
+        "tasklist",
+        "taskkill",
+        "ipconfig",
+        "ifconfig",
+        "ping",
+        "netstat",
+        "whoami",
+        "attrib",
+        "tree",
+        "start",
+        "gci",
+        "gc",
+        "sc",
+        "gps",
+        "saps",
+        "iex",
+        "irm",
+        "iwr",
     ];
 
     if KNOWN_COMMANDS.contains(&first_token_lower.as_str()) {
@@ -132,9 +258,13 @@ pub fn is_likely_command(candidate: &str) -> bool {
     }
 
     // 5. 常见可执行脚本后缀
-    if first_token_lower.ends_with(".exe") || first_token_lower.ends_with(".bat")
-        || first_token_lower.ends_with(".cmd") || first_token_lower.ends_with(".ps1")
-        || first_token_lower.ends_with(".sh") || first_token_lower.ends_with(".py") {
+    if first_token_lower.ends_with(".exe")
+        || first_token_lower.ends_with(".bat")
+        || first_token_lower.ends_with(".cmd")
+        || first_token_lower.ends_with(".ps1")
+        || first_token_lower.ends_with(".sh")
+        || first_token_lower.ends_with(".py")
+    {
         return true;
     }
 
@@ -283,9 +413,15 @@ pub fn normalize_and_sanitize_tool_args(tool_name: &str, args: &mut Value) {
                 };
 
                 let fallback_cmd = if tool_name.eq_ignore_ascii_case("cmd") {
-                    format!("echo Error: No executable command provided in tool call - {} & exit /b 1", safe_title)
+                    format!(
+                        "echo Error: No executable command provided in tool call - {} & exit /b 1",
+                        safe_title
+                    )
                 } else {
-                    format!("echo \"[Error: No command provided - {}]\" >&2; exit 1", safe_title)
+                    format!(
+                        "echo \"[Error: No command provided - {}]\" >&2; exit 1",
+                        safe_title
+                    )
                 };
                 obj.insert("command".to_string(), Value::String(fallback_cmd));
                 tracing::warn!(
@@ -959,7 +1095,8 @@ mod tests {
             normalize_and_sanitize_tool_args("bash", &mut args);
             assert_eq!(
                 args["command"], expected_cmd,
-                "Failed to extract command from '{}'", input_desc
+                "Failed to extract command from '{}'",
+                input_desc
             );
         }
     }

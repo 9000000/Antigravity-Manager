@@ -2040,7 +2040,10 @@ impl TokenManager {
                                         Some((found.account_id.clone(), std::time::Instant::now()));
                                 } else {
                                     if self
-                                        .is_rate_limited(&found.account_id, Some(&normalized_target))
+                                        .is_rate_limited(
+                                            &found.account_id,
+                                            Some(&normalized_target),
+                                        )
                                         .await
                                     {
                                         tracing::debug!(

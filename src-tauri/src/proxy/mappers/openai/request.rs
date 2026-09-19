@@ -1324,10 +1324,16 @@ pub fn transform_openai_request_with_session(
                     // 从而把真正的 command 字段漏掉。从源头剔除 description 字段，强迫模型只能把命令填入 command 字段。
                     if is_shell_tool {
                         if let Some(params_obj) = params.as_object_mut() {
-                            if let Some(props) = params_obj.get_mut("properties").and_then(|p| p.as_object_mut()) {
+                            if let Some(props) = params_obj
+                                .get_mut("properties")
+                                .and_then(|p| p.as_object_mut())
+                            {
                                 props.remove("description");
                             }
-                            if let Some(req_arr) = params_obj.get_mut("required").and_then(|r| r.as_array_mut()) {
+                            if let Some(req_arr) = params_obj
+                                .get_mut("required")
+                                .and_then(|r| r.as_array_mut())
+                            {
                                 req_arr.retain(|v| v.as_str() != Some("description"));
                             }
                         }
@@ -2904,7 +2910,6 @@ mod tests {
 
     #[test]
     fn test_shell_tool_strips_description_parameter_for_gemini() {
-        use crate::proxy::mappers::openai::models::{OpenAITool, OpenAIFunction};
         let req = OpenAIRequest {
             model: "gemini-2.5-pro".to_string(),
             messages: vec![OpenAIMessage {
@@ -2912,21 +2917,21 @@ mod tests {
                 content: Some(OpenAIContent::String("run command".to_string())),
                 ..Default::default()
             }],
-            tools: Some(vec![OpenAITool {
-                r#type: "function".to_string(),
-                function: OpenAIFunction {
-                    name: "run_command".to_string(),
-                    description: Some("Run a shell command".to_string()),
-                    parameters: Some(json!({
+            tools: Some(vec![json!({
+                "type": "function",
+                "function": {
+                    "name": "run_command",
+                    "description": "Run a shell command",
+                    "parameters": {
                         "type": "object",
                         "properties": {
                             "command": { "type": "string", "description": "CLI command" },
                             "description": { "type": "string", "description": "Optional human label" }
                         },
                         "required": ["command", "description"]
-                    })),
-                },
-            }]),
+                    }
+                }
+            })]),
             ..Default::default()
         };
 
@@ -2942,12 +2947,21 @@ mod tests {
 
         let tools = result["request"]["tools"].as_array().unwrap();
         let func_decls = tools[0]["functionDeclarations"].as_array().unwrap();
-        let run_cmd = func_decls.iter().find(|f| f["name"] == "run_command").unwrap();
+        let run_cmd = func_decls
+            .iter()
+            .find(|f| f["name"] == "run_command")
+            .unwrap();
         let props = run_cmd["parameters"]["properties"].as_object().unwrap();
         assert!(props.contains_key("command"));
-        assert!(!props.contains_key("description"), "description parameter must be stripped for Gemini");
+        assert!(
+            !props.contains_key("description"),
+            "description parameter must be stripped for Gemini"
+        );
         let req_arr = run_cmd["parameters"]["required"].as_array().unwrap();
         assert!(req_arr.iter().any(|v| v == "command"));
-        assert!(!req_arr.iter().any(|v| v == "description"), "description must not be required");
+        assert!(
+            !req_arr.iter().any(|v| v == "description"),
+            "description must not be required"
+        );
     }
 }

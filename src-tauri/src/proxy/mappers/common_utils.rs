@@ -1615,7 +1615,10 @@ pub fn ensure_gemini_payload_ends_with_user(body: &mut Value) -> bool {
                 });
 
                 if !has_substantive_part {
-                    tracing::warn!("[Defense] Last user turn has no substantive content, normalizing to '{}'", TRANSIT_DEFENSE_FALLBACK_TEXT);
+                    tracing::warn!(
+                        "[Defense] Last user turn has no substantive content, normalizing to '{}'",
+                        TRANSIT_DEFENSE_FALLBACK_TEXT
+                    );
                     *parts = vec![json!({ "text": TRANSIT_DEFENSE_FALLBACK_TEXT })];
                     modified = true;
                 }
@@ -1627,7 +1630,10 @@ pub fn ensure_gemini_payload_ends_with_user(body: &mut Value) -> bool {
     };
 
     if need_append_user {
-        tracing::warn!("[Defense] Gemini payload ended with model turn, appending user turn with '{}'", TRANSIT_DEFENSE_FALLBACK_TEXT);
+        tracing::warn!(
+            "[Defense] Gemini payload ended with model turn, appending user turn with '{}'",
+            TRANSIT_DEFENSE_FALLBACK_TEXT
+        );
         contents.push(json!({
             "role": "user",
             "parts": [{ "text": TRANSIT_DEFENSE_FALLBACK_TEXT }]
@@ -1651,7 +1657,10 @@ mod defense_tests {
         let contents = payload["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 1);
         assert_eq!(contents[0]["role"], "user");
-        assert_eq!(contents[0]["parts"][0]["text"], TRANSIT_DEFENSE_FALLBACK_TEXT);
+        assert_eq!(
+            contents[0]["parts"][0]["text"],
+            TRANSIT_DEFENSE_FALLBACK_TEXT
+        );
     }
 
     #[test]
@@ -1668,7 +1677,10 @@ mod defense_tests {
         let contents = payload["request"]["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 3);
         assert_eq!(contents[2]["role"], "user");
-        assert_eq!(contents[2]["parts"][0]["text"], TRANSIT_DEFENSE_FALLBACK_TEXT);
+        assert_eq!(
+            contents[2]["parts"][0]["text"],
+            TRANSIT_DEFENSE_FALLBACK_TEXT
+        );
     }
 
     #[test]
@@ -1681,7 +1693,10 @@ mod defense_tests {
         assert!(ensure_gemini_payload_ends_with_user(&mut payload));
         let contents = payload["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 1);
-        assert_eq!(contents[0]["parts"][0]["text"], TRANSIT_DEFENSE_FALLBACK_TEXT);
+        assert_eq!(
+            contents[0]["parts"][0]["text"],
+            TRANSIT_DEFENSE_FALLBACK_TEXT
+        );
     }
 
     #[test]
