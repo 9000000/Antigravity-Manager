@@ -143,6 +143,7 @@ fn is_apply_patch_tool_name(name: &str) -> bool {
     name == "apply_patch" || name == "apply_patch_v2"
 }
 
+#[allow(dead_code)]
 fn should_preserve_tool_output(tool_name: &str, output: &str) -> bool {
     is_apply_patch_tool_name(tool_name)
         || output.contains("apply_patch verification failed")
@@ -507,15 +508,12 @@ pub fn transform_openai_request_with_session(
         .take_while(|m| m.role == "system" || m.role == "developer")
         .count();
 
-    let total_messages = request.messages.len();
-    let recent_message_window = 24usize;
     let contents: Vec<Value> = request
         .messages
         .iter()
         .enumerate()
         .filter(|(idx, _)| *idx >= leading_system_count)
-        .map(|(msg_index, msg)| {
-            let is_latest = msg_index >= total_messages.saturating_sub(recent_message_window);
+        .map(|(_msg_index, msg)| {
             let role = match msg.role.as_str() {
                 "assistant" => "model",
                 "tool" | "function" => "user",
@@ -810,9 +808,6 @@ pub fn transform_openai_request_with_session(
                     if effective_tc_sig.is_none() {
                         effective_tc_sig = tool_specific_sig;
                     }
-                    if effective_tc_sig.is_none() {
-                        effective_tc_sig = thought_sig.clone();
-                    }
 
                     if let Some(ref sig) = effective_tc_sig {
                         func_call_part["thoughtSignature"] = json!(sig);
@@ -835,16 +830,7 @@ pub fn transform_openai_request_with_session(
                 let mut extra_parts = Vec::new();
 
                 let content_val = match &msg.content {
-                    Some(OpenAIContent::String(s)) => {
-                        if !is_latest
-                            && s.len() > 1000
-                            && !should_preserve_tool_output(final_name, s)
-                        {
-                            format!("[Tool output truncated to save context. Original length: {}]", s.len())
-                        } else {
-                            s.clone()
-                        }
-                    },
+                    Some(OpenAIContent::String(s)) => s.clone(),
                     Some(OpenAIContent::Array(blocks)) => {
                         let mut texts = Vec::new();
                         for block in blocks {
@@ -913,9 +899,6 @@ pub fn transform_openai_request_with_session(
                     let mut effective_fr_sig = None;
                     if let Some(ref call_id) = msg.tool_call_id {
                         effective_fr_sig = crate::proxy::SignatureCache::global().get_tool_signature(call_id);
-                    }
-                    if effective_fr_sig.is_none() {
-                        effective_fr_sig = thought_sig.clone();
                     }
                     if effective_fr_sig.is_none() {
                         effective_fr_sig = Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string());
