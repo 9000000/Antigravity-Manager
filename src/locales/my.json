@@ -962,7 +962,16 @@
         "guide_preset_relay_title": "အသုံးပြုသူ ၁ ထောင်ကျော် အများသုံး Relay (4G-8G):",
         "guide_preset_relay_desc": "အကြံပြုချက်: <1>150 ~ 300 လှည့်</1>။ ချိတ်ဆက်မှုများအတွက် Memory ကို ဦးစားပေးပြီး မှတ်တမ်းဟောင်းများကို SQLite သို့ လွှဲပြောင်းပေးသည်။",
         "guide_preset_cluster_title": "၁ သောင်းမှ ၁ သိန်းကျော် အလွန်ကြီးမားသော Cluster:",
-        "guide_preset_cluster_desc": "အကြံပြုချက်: <1>50 ~ 100 လှည့်</1>။ session သောင်းပေါင်းများစွာကို အခက်အခဲမရှိ လက်ခံနိုင်ပြီး WAL အမြန်အညွှန်းက အချိန်မဆိုင်းဘဲ လျင်မြန်စွာ တုံ့ပြန်သည်။"
+        "guide_preset_cluster_desc": "အကြံပြုချက်: <1>50 ~ 100 လှည့်</1>။ session သောင်းပေါင်းများစွာကို အခက်အခဲမရှိ လက်ခံနိုင်ပြီး WAL အမြန်အညွှန်းက အချိန်မဆိုင်းဘဲ လျင်မြန်စွာ တုံ့ပြန်သည်။",
+        "clear_btn": "Padam Blok Pemikiran",
+        "clear_btn_tooltip": "Padam semua cache blok pemikiran dan pangkalan data (log permintaan dikekalkan)",
+        "clear_tip": "Padam hanya jika berlaku keabnormalan cache, kemas kini versi, atau diminta oleh pembangun",
+        "clear_modal_title": "Sahkan Padam Storan Blok Pemikiran?",
+        "clear_modal_desc": "Operasi ini akan mengosongkan semua ingatan mastautin (RAM) dan sejarah rantaian pemikiran serta tandatangan alat dalam SQLite tempatan.\n\n⚠️ Nota: Ini hanya memadam data pemikiran dan TIDAK akan memadam sebarang log permintaan proksi.",
+        "clear_modal_warning": "Disyorkan hanya apabila berlaku anomali cache, selepas kemas kini versi, atau apabila diminta oleh pembangun. Permintaan baharu akan membina semula indeks awalan yang bersih.",
+        "clear_confirm_btn": "Sahkan Padam",
+        "clear_success": "Berjaya memadam storan pemikiran ({{count}} rekod dibersihkan)",
+        "clear_error": "Gagal memadam blok pemikiran: {{error}}"
       },
       "thinking_settings": {
         "title": "စဉ်းစားတွေးခေါ်မှု ဆက်တင်များ (Thinking Settings)"

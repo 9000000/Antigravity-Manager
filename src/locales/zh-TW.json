@@ -1015,7 +1015,16 @@
         "guide_preset_relay_title": "1K+ 使用者公共中轉站 (4G-8G):",
         "guide_preset_relay_desc": "推薦填寫 <1>150 ~ 300 輪</1>。記憶體優先傾斜給長連線池，長對話冷歷史託付 SQLite。",
         "guide_preset_cluster_title": "1W+ ~ 10W+ 海量並發叢集:",
-        "guide_preset_cluster_desc": "推薦填寫 <1>50 ~ 100 輪</1>。單機無壓承載數萬並發工作階段，WAL 高速索引並發無鎖秒級回應。"
+        "guide_preset_cluster_desc": "推薦填寫 <1>50 ~ 100 輪</1>。單機無壓承載數萬並發工作階段，WAL 高速索引並發無鎖秒級回應。",
+        "clear_btn": "清空思考區塊",
+        "clear_btn_tooltip": "清空所有思考區塊快取與資料庫（不影響請求日誌）",
+        "clear_tip": "僅當快取命中異常、版本更新或開發者要求時才刪除",
+        "clear_modal_title": "確認清空思考區塊儲存？",
+        "clear_modal_desc": "此操作將徹底清空記憶體常駐輪次 (RAM) 與本機 SQLite 資料庫中所有的歷史思維鏈和工具簽名記錄。\n\n⚠️ 注意：此操作僅清理思考區塊資料，絕不刪除任何反向代理請求日誌。",
+        "clear_modal_warning": "建議僅在出現快取命中異常、版本升級或開發者明確要求時執行。清空後新請求將重新建立乾淨的前綴索引。",
+        "clear_confirm_btn": "確認清空",
+        "clear_success": "已成功清空思考區塊儲存 (共清理 {{count}} 條歷史記錄)",
+        "clear_error": "清空思考區塊失敗: {{error}}"
       },
       "thinking_settings": {
         "title": "思考設定 (Thinking Settings)"

@@ -1015,7 +1015,16 @@
         "guide_preset_relay_title": "1K+ Kullanıcılı Genel Aktarım İstasyonu (4G-8G):",
         "guide_preset_relay_desc": "Önerilen: <1>150 ~ 300 tur</1>. Bellek bağlantı havuzlarına önceliklendirilir, uzun geçmişler SQLite'a devredilir.",
         "guide_preset_cluster_title": "10K ~ 100K+ Yoğun Eşzamanlı Küme:",
-        "guide_preset_cluster_desc": "Önerilen: <1>50 ~ 100 tur</1>. On binlerce eşzamanlı oturumu rahatça barındırır; WAL hızlı dizini kilitsiz anlık yanıt sağlar."
+        "guide_preset_cluster_desc": "Önerilen: <1>50 ~ 100 tur</1>. On binlerce eşzamanlı oturumu rahatça barındırır; WAL hızlı dizini kilitsiz anlık yanıt sağlar.",
+        "clear_btn": "Düşünce Bloklarını Temizle",
+        "clear_btn_tooltip": "Tüm düşünce bloğu önbelleklerini ve veritabanını temizle (istek günlükleri korunur)",
+        "clear_tip": "Yalnızca önbellek isabet anormalliklerinde, sürüm güncellemelerinde veya geliştiriciler istediğinde silin",
+        "clear_modal_title": "Düşünce Bloğu Deposu Temizlensin mi?",
+        "clear_modal_desc": "Bu işlem, bellekteki (RAM) ve yerel SQLite veritabanındaki tüm düşünce zincirlerini ve araç imzalarını tamamen temizler.\n\n⚠️ Not: Bu yalnızca düşünce verilerini temizler, proxy istek günlüklerini ASLA silmez.",
+        "clear_modal_warning": "Yalnızca önbellek anormalliklerinde, sürüm güncellemelerinden sonra veya geliştiriciler istediğinde önerilir. Yeni istekler temiz önek dizinlerini yeniden oluşturacaktır.",
+        "clear_confirm_btn": "Temizlemeyi Onayla",
+        "clear_success": "Düşünce deposu başarıyla temizlendi ({{count}} kayıt temizlendi)",
+        "clear_error": "Düşünce blokları temizlenemedi: {{error}}"
       },
       "thinking_settings": {
         "title": "Düşünme Ayarları (Thinking Settings)"

@@ -1029,7 +1029,16 @@
         "guide_preset_relay_title": "Estación de retransmisión pública para más de 1K usuarios (4G-8G):",
         "guide_preset_relay_desc": "Recomendado: <1>150 ~ 300 turnos</1>. Memoria priorizada para pools de conexión; historiales fríos delegados a SQLite.",
         "guide_preset_cluster_title": "Clúster masivo de 10K ~ 100K+ concurrentes:",
-        "guide_preset_cluster_desc": "Recomendado: <1>50 ~ 100 turnos</1>. Soporta decenas de miles de sesiones concurrentes; índice rápido WAL sin bloqueos."
+        "guide_preset_cluster_desc": "Recomendado: <1>50 ~ 100 turnos</1>. Soporta decenas de miles de sesiones concurrentes; índice rápido WAL sin bloqueos.",
+        "clear_btn": "Vaciar bloques de pensamiento",
+        "clear_btn_tooltip": "Vaciar todas las cachés y la BD de bloques de pensamiento (los registros se conservan)",
+        "clear_tip": "Eliminar solo en caso de anomalías de acierto de caché, actualizaciones o solicitud de desarrolladores",
+        "clear_modal_title": "¿Vaciar el almacenamiento de bloques de pensamiento?",
+        "clear_modal_desc": "Esta operación vaciará completamente todos los turnos residentes en memoria (RAM) y las cadenas de pensamiento y firmas de herramientas de la base de datos SQLite local.\n\n⚠️ Nota: Esto solo limpia los datos de pensamiento y NO eliminará ningún registro de solicitudes del proxy.",
+        "clear_modal_warning": "Se recomienda ejecutar solo cuando ocurran anomalías de acierto de caché, después de actualizaciones o cuando lo soliciten los desarrolladores. Las nuevas solicitudes reconstruirán índices de prefijo limpios.",
+        "clear_confirm_btn": "Confirmar vaciado",
+        "clear_success": "Almacenamiento de pensamiento vaciado con éxito ({{count}} registros eliminados)",
+        "clear_error": "Error al vaciar los bloques de pensamiento: {{error}}"
       },
       "thinking_settings": {
         "title": "Configuración de razonamiento (Thinking Settings)"

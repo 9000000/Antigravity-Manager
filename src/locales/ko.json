@@ -1029,7 +1029,16 @@
         "guide_preset_relay_title": "1K+ 사용자 공용 중계소 (4G-8G):",
         "guide_preset_relay_desc": "권장 설정: <1>150 ~ 300 턴</1>. 연결 풀에 메모리를 우선 할당하고 긴 대화의 콜드 기록은 SQLite에 위임합니다.",
         "guide_preset_cluster_title": "1만 ~ 10만+ 대규모 동시성 클러스터:",
-        "guide_preset_cluster_desc": "권장 설정: <1>50 ~ 100 턴</1>. 단일 머신으로 수만 개의 동시 세션을 원활히 처리하며, WAL 고속 인덱스로 락 없이 즉각 응답합니다."
+        "guide_preset_cluster_desc": "권장 설정: <1>50 ~ 100 턴</1>. 단일 머신으로 수만 개의 동시 세션을 원활히 처리하며, WAL 고속 인덱스로 락 없이 즉각 응답합니다.",
+        "clear_btn": "생각 블록 비우기",
+        "clear_btn_tooltip": "모든 생각 블록 캐시 및 데이터베이스 삭제 (요청 로그는 보존됨)",
+        "clear_tip": "캐시 적중 이상, 버전 업데이트 또는 개발자 요청 시에만 삭제하세요",
+        "clear_modal_title": "생각 블록 저장소를 비우시겠습니까?",
+        "clear_modal_desc": "이 작업은 상주 메모리(RAM)와 로컬 SQLite 데이터베이스의 모든 이전 생각 체인 및 도구 서명 기록을 완전히 비웁니다.\n\n⚠️ 주의: 이 작업은 생각 블록 데이터만 정리하며, 프록시 요청 로그는 절대 삭제하지 않습니다.",
+        "clear_modal_warning": "캐시 적중 이상 발생, 버전 업데이트 후 또는 개발자의 명시적 요청이 있을 때만 실행하는 것을 권장합니다. 비운 후 새 요청은 깨끗한 접두사 색인을 다시 생성합니다.",
+        "clear_confirm_btn": "비우기 확인",
+        "clear_success": "생각 블록 저장소를 성공적으로 비웠습니다 (총 {{count}}개 기록 정리)",
+        "clear_error": "생각 블록 비우기 실패: {{error}}"
       },
       "thinking_settings": {
         "title": "추론 설정 (Thinking Settings)"

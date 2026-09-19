@@ -1013,7 +1013,16 @@
         "guide_preset_relay_title": "Trạm chuyển tiếp công cộng 1K+ người dùng (4G-8G):",
         "guide_preset_relay_desc": "Khuyến nghị: <1>150 ~ 300 lượt</1>. Bộ nhớ ưu tiên cho nhóm kết nối; lịch sử dài hạn được lưu trữ trong SQLite.",
         "guide_preset_cluster_title": "Cụm quy mô lớn 10K ~ 100K+ phiên đồng thời:",
-        "guide_preset_cluster_desc": "Khuyến nghị: <1>50 ~ 100 lượt</1>. Chịu tải hàng chục nghìn phiên đồng thời một cách nhẹ nhàng; chỉ mục WAL phản hồi nhanh không khóa."
+        "guide_preset_cluster_desc": "Khuyến nghị: <1>50 ~ 100 lượt</1>. Chịu tải hàng chục nghìn phiên đồng thời một cách nhẹ nhàng; chỉ mục WAL phản hồi nhanh không khóa.",
+        "clear_btn": "Xóa khối suy nghĩ",
+        "clear_btn_tooltip": "Xóa tất cả bộ nhớ đệm và cơ sở dữ liệu khối suy nghĩ (nhật ký yêu cầu được giữ nguyên)",
+        "clear_tip": "Chỉ xóa khi có bất thường về bộ nhớ đệm, cập nhật phiên bản hoặc theo yêu cầu của nhà phát triển",
+        "clear_modal_title": "Xác nhận xóa kho lưu trữ khối suy nghĩ?",
+        "clear_modal_desc": "Thao tác này sẽ xóa sạch hoàn toàn các lượt lưu trú trong bộ nhớ (RAM) và chuỗi suy nghĩ cùng chữ ký công cụ trong cơ sở dữ liệu SQLite cục bộ.\n\n⚠️ Lưu ý: Thao tác này chỉ xóa dữ liệu suy nghĩ, KHÔNG xóa bất kỳ nhật ký yêu cầu proxy nào.",
+        "clear_modal_warning": "Chỉ nên thực hiện khi gặp bất thường về bộ nhớ đệm, sau khi cập nhật phiên bản hoặc khi nhà phát triển yêu cầu. Các yêu cầu mới sẽ xây dựng lại chỉ mục tiền tố sạch.",
+        "clear_confirm_btn": "Xác nhận xóa",
+        "clear_success": "Đã xóa thành công kho lưu trữ suy nghĩ (đã dọn dẹp {{count}} bản ghi)",
+        "clear_error": "Xóa khối suy nghĩ thất bại: {{error}}"
       },
       "thinking_settings": {
         "title": "Cài đặt suy nghĩ (Thinking Settings)"

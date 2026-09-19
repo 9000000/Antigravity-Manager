@@ -1042,7 +1042,16 @@
         "guide_preset_relay_title": "Estação de relay pública para mais de 1K usuários (4G-8G):",
         "guide_preset_relay_desc": "Recomendado: <1>150 ~ 300 turnos</1>. Memória priorizada para pools de conexões; histórico longo e frio delegado ao SQLite.",
         "guide_preset_cluster_title": "Cluster massivo de 10K ~ 100K+ concorrência:",
-        "guide_preset_cluster_desc": "Recomendado: <1>50 ~ 100 turnos</1>. Suporta dezenas de milhares de sessões sem sobrecarga; índice rápido WAL sem travamentos."
+        "guide_preset_cluster_desc": "Recomendado: <1>50 ~ 100 turnos</1>. Suporta dezenas de milhares de sessões sem sobrecarga; índice rápido WAL sem travamentos.",
+        "clear_btn": "Limpar blocos de pensamento",
+        "clear_btn_tooltip": "Limpar todo o cache e banco de dados de pensamentos (os logs são preservados)",
+        "clear_tip": "Excluir apenas em anomalias de acerto de cache, atualizações ou solicitação de desenvolvedores",
+        "clear_modal_title": "Limpar armazenamento de blocos de pensamento?",
+        "clear_modal_desc": "Esta operação limpará completamente todos os turnos na memória (RAM) e o histórico de cadeias de pensamento e assinaturas no SQLite local.\n\n⚠️ Nota: Isso limpa apenas os dados de pensamento e NÃO excluirá nenhum log de solicitação do proxy.",
+        "clear_modal_warning": "Recomendado apenas em anomalias de cache, atualizações de versão ou quando solicitado pelos desenvolvedores. Novas solicitações reconstruirão índices limpos.",
+        "clear_confirm_btn": "Confirmar limpeza",
+        "clear_success": "Armazenamento de pensamentos limpo com sucesso ({{count}} registros excluídos)",
+        "clear_error": "Falha ao limpar blocos de pensamento: {{error}}"
       },
       "thinking_settings": {
         "title": "Configurações de Raciocínio (Thinking Settings)"
