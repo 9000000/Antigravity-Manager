@@ -906,19 +906,21 @@ pub async fn handle_generate(
             false,
             allow_grace,
         );
-        let needs_quota_refresh = if config.request_type == "image_gen" && status_code == 429 {
-            token_manager
-                .mark_rate_limited_fast(
-                    &email,
-                    status_code,
-                    retry_after.as_deref(),
-                    &error_text,
-                    Some(&mapped_model),
-                )
-                .await
-        } else {
-            false
-        };
+        let needs_quota_refresh =
+            if status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500
+            {
+                token_manager
+                    .mark_rate_limited_fast(
+                        &email,
+                        status_code,
+                        retry_after.as_deref(),
+                        &error_text,
+                        Some(&mapped_model),
+                    )
+                    .await
+            } else {
+                false
+            };
         if !matches!(&strategy, RetryStrategy::GraceRetry(_)) {
             drop(image_permit.take());
         }
