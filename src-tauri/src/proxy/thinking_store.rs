@@ -513,8 +513,17 @@ impl ThinkingStore {
                         let rec_has_tools = !records[rec_idx].tool_ids.is_empty()
                             || !records[rec_idx].tool_names.is_empty();
                         if turn_has_tools == rec_has_tools {
-                            turn.matched_record_idx = Some(rec_idx);
-                            used[rec_idx] = true;
+                            let tool_names_match = if turn.tool_names.is_empty()
+                                || records[rec_idx].tool_names.is_empty()
+                            {
+                                true
+                            } else {
+                                turn.tool_names == records[rec_idx].tool_names
+                            };
+                            if tool_names_match {
+                                turn.matched_record_idx = Some(rec_idx);
+                                used[rec_idx] = true;
+                            }
                         }
                     }
                 }
@@ -533,7 +542,18 @@ impl ThinkingStore {
                 let Some(idxs) = by_tool.get(id.as_str()) else {
                     continue;
                 };
-                if let Some(&rec_idx) = idxs.iter().find(|&&i| !used[i]) {
+                if let Some(&rec_idx) = idxs.iter().find(|&&i| {
+                    if used[i] {
+                        return false;
+                    }
+                    // 严密防御工具名不匹配：防止 ID 碰撞导致把其他工具的思考与签名挂到当前工具上！
+                    if !turn.tool_names.is_empty() && !records[i].tool_names.is_empty() {
+                        if turn.tool_names != records[i].tool_names {
+                            return false;
+                        }
+                    }
+                    true
+                }) {
                     turn.matched_record_idx = Some(rec_idx);
                     used[rec_idx] = true;
                     break;
@@ -559,7 +579,15 @@ impl ThinkingStore {
                 }
                 let rec_has_tools =
                     !records[i].tool_ids.is_empty() || !records[i].tool_names.is_empty();
-                rec_has_tools == turn_has_tools
+                if rec_has_tools != turn_has_tools {
+                    return false;
+                }
+                if !turn.tool_names.is_empty() && !records[i].tool_names.is_empty() {
+                    if turn.tool_names != records[i].tool_names {
+                        return false;
+                    }
+                }
+                true
             }) {
                 turn.matched_record_idx = Some(rec_idx);
                 used[rec_idx] = true;
@@ -661,15 +689,23 @@ impl ThinkingStore {
                     if let Ok(Some(persisted)) =
                         crate::modules::proxy_db::load_thinking_by_tool_id(store_key, id)
                     {
-                        fetched_rec = Some(ThinkingRecord {
-                            fingerprint: persisted.fingerprint,
-                            thought: persisted.thought,
-                            signature: persisted.signature,
-                            tool_ids: persisted.tool_ids,
-                            tool_names: persisted.tool_names,
-                            visible: persisted.visible,
-                        });
-                        break;
+                        let tool_names_match =
+                            if turn.tool_names.is_empty() || persisted.tool_names.is_empty() {
+                                true
+                            } else {
+                                turn.tool_names == persisted.tool_names
+                            };
+                        if tool_names_match {
+                            fetched_rec = Some(ThinkingRecord {
+                                fingerprint: persisted.fingerprint,
+                                thought: persisted.thought,
+                                signature: persisted.signature,
+                                tool_ids: persisted.tool_ids,
+                                tool_names: persisted.tool_names,
+                                visible: persisted.visible,
+                            });
+                            break;
+                        }
                     }
                 }
             } else if fetched_rec.is_none() && !turn.visible.trim().is_empty() {
