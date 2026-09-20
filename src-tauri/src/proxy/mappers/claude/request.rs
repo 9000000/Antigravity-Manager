@@ -682,6 +682,11 @@ pub fn transform_claude_request_in_timed(
     // 深度清理 [undefined] 字符串 (Cherry Studio 等客户端常见注入)
     crate::proxy::mappers::common_utils::deep_clean_undefined(&mut inner_request, 0);
 
+    // [PIPELINE] 统一清洗提示词与风控伪 Header
+    crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
+        &mut inner_request,
+    );
+
     if config.inject_google_search && !has_web_search_tool {
         crate::proxy::mappers::common_utils::inject_google_search_tool(
             &mut inner_request,
