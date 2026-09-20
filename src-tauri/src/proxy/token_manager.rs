@@ -5648,21 +5648,25 @@ mod tests {
         // 1. 周配额为 0，5H 配额为 0，两者均耗尽
         // 周配额 reset_time 为 5天后，5H reset_time 为 2小时后
         let now = chrono::Utc::now();
+        let base_timestamp = now.timestamp();
         let reset_5h = (now + chrono::Duration::hours(2)).to_rfc3339();
         let reset_weekly = (now + chrono::Duration::days(5)).to_rfc3339();
 
         let account = serde_json::json!({
             "quota": {
+                "last_updated": base_timestamp,
                 "quota_groups": [
                     {
                         "display_name": "Claude & 3P Models",
                         "buckets": [
                             {
+                                "bucket_id": "3p-5h",
                                 "window": "5h",
                                 "remaining_fraction": 0.0,
                                 "reset_time": reset_5h
                             },
                             {
+                                "bucket_id": "3p-weekly",
                                 "window": "7d",
                                 "remaining_fraction": 0.0,
                                 "reset_time": reset_weekly
@@ -5696,16 +5700,19 @@ mod tests {
 
         let account_recovered_weekly = serde_json::json!({
             "quota": {
+                "last_updated": base_timestamp + 1,
                 "quota_groups": [
                     {
                         "display_name": "Claude & 3P Models",
                         "buckets": [
                             {
+                                "bucket_id": "3p-5h",
                                 "window": "5h",
                                 "remaining_fraction": 0.0,
                                 "reset_time": reset_5h
                             },
                             {
+                                "bucket_id": "3p-weekly",
                                 "window": "7d",
                                 "remaining_fraction": 1.0,
                                 "reset_time": reset_weekly
@@ -5728,16 +5735,19 @@ mod tests {
         // 3. 模拟 5H 也完全恢复 (全部配额为正)
         let account_fully_recovered = serde_json::json!({
             "quota": {
+                "last_updated": base_timestamp + 2,
                 "quota_groups": [
                     {
                         "display_name": "Claude & 3P Models",
                         "buckets": [
                             {
+                                "bucket_id": "3p-5h",
                                 "window": "5h",
                                 "remaining_fraction": 1.0,
                                 "reset_time": reset_5h
                             },
                             {
+                                "bucket_id": "3p-weekly",
                                 "window": "7d",
                                 "remaining_fraction": 1.0,
                                 "reset_time": reset_weekly

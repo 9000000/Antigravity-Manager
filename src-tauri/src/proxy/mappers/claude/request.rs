@@ -1352,9 +1352,13 @@ fn build_contents(
                         tool_id_to_name.insert(id.clone(), name.clone());
                         let final_sig = signature
                             .as_ref()
-                            .filter(|s| s.as_str() == SENTINEL_SIGNATURE || s.len() >= MIN_SIGNATURE_LENGTH)
+                            .filter(|s| {
+                                s.as_str() == SENTINEL_SIGNATURE || s.len() >= MIN_SIGNATURE_LENGTH
+                            })
                             .cloned()
-                            .or_else(|| crate::proxy::SignatureCache::global().get_tool_signature(id))
+                            .or_else(|| {
+                                crate::proxy::SignatureCache::global().get_tool_signature(id)
+                            })
                             .or_else(|| last_thought_signature.as_ref().cloned())
                             .or_else(|| turn_signature.clone());
 
@@ -1371,7 +1375,8 @@ fn build_contents(
                             }
                         } else {
                             // Gemini 原生模型：首个工具调用挂载真实签名 (若有)，后续并行工具调用统一打上 32 字节哨兵占位
-                            let has_preceding_fc = parts.iter().any(|p| p.get("functionCall").is_some());
+                            let has_preceding_fc =
+                                parts.iter().any(|p| p.get("functionCall").is_some());
                             if !has_preceding_fc {
                                 if let Some(sig) = final_sig {
                                     part["thoughtSignature"] = json!(sig);

@@ -123,7 +123,10 @@ impl PromptSanitizer {
         // 物理剔除清洗后产生的纯空文本 Part
         // 注意：思考块以及非文本部件（如 inlineData、functionCall 等）必须完好保留
         parts.retain(|part| {
-            let is_thought = part.get("thought").and_then(Value::as_bool).unwrap_or(false)
+            let is_thought = part
+                .get("thought")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
                 || part.get("thoughtSignature").is_some()
                 || part.get("thought_signature").is_some();
             if is_thought {
@@ -414,7 +417,10 @@ mod tests {
 
         // 验证：systemInstruction 因为 parts 为空被完全注销，不存在 {"text": ""} 畸变
         assert!(payload["request"].get("systemInstruction").is_none());
-        assert_eq!(payload["request"]["contents"][0]["parts"][0]["text"], "Hello world");
+        assert_eq!(
+            payload["request"]["contents"][0]["parts"][0]["text"],
+            "Hello world"
+        );
     }
 
     #[test]

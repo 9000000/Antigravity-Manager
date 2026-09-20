@@ -87,6 +87,11 @@ jobs:
           cd src-tauri
           cargo check
 
+      - name: Run unit tests
+        run: |
+          cd src-tauri
+          cargo test --locked --lib
+
   # Tauri 构建测试（不打包）
   build-tauri:
     name: Build Tauri App

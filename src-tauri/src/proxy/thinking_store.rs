@@ -797,11 +797,12 @@ impl ThinkingStore {
                 // 1. 首位思考块保持纯净思考文本，不重复挂载签名，消除双倍膨胀
                 // 2. 首个 functionCall 承载真实大签名 (若有) 或哨兵
                 // 3. 后续并行 functionCall 统一打上 32 字节哨兵占位，满足 Google 对每个 functionCall 的 AST 校验
-                let sig_val = if let Some(sig) = rec.signature.as_ref().filter(|s| is_real_signature(s)) {
-                    sig.clone()
-                } else {
-                    SENTINEL_SIGNATURE.to_string()
-                };
+                let sig_val =
+                    if let Some(sig) = rec.signature.as_ref().filter(|s| is_real_signature(s)) {
+                        sig.clone()
+                    } else {
+                        SENTINEL_SIGNATURE.to_string()
+                    };
 
                 let mut first_fc_assigned = false;
                 for part in parts.iter_mut() {
@@ -1381,7 +1382,9 @@ pub fn finalize_gemini_contents_thinking_with_model(
                                 .map(|s| s != SENTINEL_SIGNATURE && s.len() >= 50)
                                 .unwrap_or(false);
                             if has_valid_sig {
-                                if let Some(sig) = tp.get("thoughtSignature").and_then(|s| s.as_str()) {
+                                if let Some(sig) =
+                                    tp.get("thoughtSignature").and_then(|s| s.as_str())
+                                {
                                     tp["thoughtSignature"] =
                                         json!(ensure_google_claude_thought_signature(sig));
                                 }
