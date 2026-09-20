@@ -198,23 +198,26 @@ function extractConcisePayload(
         return tools;
     };
 
-    // 简化工具调用 (保留 name, id, arguments / args)
+    // 简化工具调用 (统一规范为: id, type: 'function', function: { name, arguments })
     const simplifyToolCalls = (toolCalls: any): any => {
         if (!Array.isArray(toolCalls)) return undefined;
         return toolCalls.map((tc: any) => {
             if (!tc || typeof tc !== 'object') return tc;
             const res: any = {};
             if (tc.id) res.id = tc.id;
-            if (tc.type) res.type = tc.type;
+            res.type = tc.type || 'function';
             if (tc.function && typeof tc.function === 'object') {
                 res.function = {
                     name: tc.function.name,
                     arguments: tc.function.arguments !== undefined ? tc.function.arguments : {}
                 };
             } else {
-                if (tc.name) res.name = tc.name;
-                if (tc.input !== undefined) res.input = tc.input;
-                if (tc.args !== undefined) res.args = tc.args;
+                const name = tc.name || tc.function?.name || 'unknown';
+                const args = tc.arguments !== undefined ? tc.arguments : (tc.args !== undefined ? tc.args : (tc.input !== undefined ? tc.input : {}));
+                res.function = {
+                    name,
+                    arguments: args
+                };
             }
             return res;
         });
@@ -528,48 +531,135 @@ function extractConcisePayload(
     if (obj.thinking_signature !== undefined) concise.thinking_signature = obj.thinking_signature;
     if (obj.thought_signature !== undefined) concise.thought_signature = obj.thought_signature;
     if (obj.signature !== undefined) concise.signature = obj.signature;
+    if (obj.thoughtSignature !== undefined) concise.thoughtSignature = obj.thoughtSignature;
+    if (obj._timing !== undefined) concise._timing = obj._timing;
 
-    // 响应：Choices / Candidates / 聚合响应
-    if (obj.choices && Array.isArray(obj.choices)) {
-        concise.choices = obj.choices.map((c: any) => {
-            const choiceRes: any = { index: c.index };
-            if (c.finish_reason) choiceRes.finish_reason = c.finish_reason;
-            if (c.message) {
-                choiceRes.message = {
-                    role: c.message.role,
-                    ...(c.message.reasoning_content !== undefined ? { reasoning_content: c.message.reasoning_content } : {}),
-                    ...(c.message.thinking !== undefined ? { thinking: c.message.thinking } : {}),
-                    ...(c.message.thinking_signature !== undefined ? { thinking_signature: c.message.thinking_signature } : {}),
-                    ...(c.message.thought_signature !== undefined ? { thought_signature: c.message.thought_signature } : {}),
-                    ...(c.message.signature !== undefined ? { signature: c.message.signature } : {}),
-                    ...(c.message.content !== undefined ? { content: c.message.content } : {}),
-                    ...(c.message.tool_calls ? { tool_calls: simplifyToolCalls(c.message.tool_calls) } : {})
-                };
-            } else if (c.delta) {
-                choiceRes.delta = {
-                    role: c.delta.role,
-                    ...(c.delta.reasoning_content !== undefined ? { reasoning_content: c.delta.reasoning_content } : {}),
-                    ...(c.delta.thinking !== undefined ? { thinking: c.delta.thinking } : {}),
-                    ...(c.delta.thinking_signature !== undefined ? { thinking_signature: c.delta.thinking_signature } : {}),
-                    ...(c.delta.thought_signature !== undefined ? { thought_signature: c.delta.thought_signature } : {}),
-                    ...(c.delta.signature !== undefined ? { signature: c.delta.signature } : {}),
-                    ...(c.delta.content !== undefined ? { content: c.delta.content } : {}),
-                    ...(c.delta.tool_calls ? { tool_calls: simplifyToolCalls(c.delta.tool_calls) } : {})
-                };
+    // 🌟 响应报文规范化提取：若为 response，优先将 choices / candidates / content 数组扁平化提升为顶层统一结构
+    if (kind === 'response') {
+        if (obj.choices && Array.isArray(obj.choices) && obj.choices.length > 0) {
+            const first = obj.choices[0];
+            const msg = first?.message || first?.delta;
+            if (msg) {
+                if (concise.thinking === undefined) {
+                    const th = msg.reasoning_content || msg.thinking;
+                    if (th) concise.thinking = th;
+                }
+                if (concise.thinking_signature === undefined) {
+                    const sig = msg.thoughtSignature || msg.thought_signature || msg.signature;
+                    if (sig) concise.thinking_signature = sig;
+                }
+                if (concise.content === undefined && msg.content !== undefined) {
+                    concise.content = typeof msg.content === 'string' ? msg.content : simplifyContent(msg.content);
+                }
+                if (concise.tool_calls === undefined && msg.tool_calls) {
+                    concise.tool_calls = simplifyToolCalls(msg.tool_calls);
+                }
             }
-            return choiceRes;
-        });
+        } else if (obj.candidates && Array.isArray(obj.candidates) && obj.candidates.length > 0) {
+            const parts = obj.candidates[0]?.content?.parts;
+            if (Array.isArray(parts)) {
+                let thText = '';
+                let normalText = '';
+                let sigText = '';
+                const extractedTools: any[] = [];
+                for (const p of parts) {
+                    if (p.text) {
+                        if (p.thought) thText += p.text;
+                        else normalText += p.text;
+                    }
+                    const s = p.thoughtSignature || p.thought_signature || p.signature || p.functionCall?.thoughtSignature || p.functionCall?.thought_signature;
+                    if (s && !sigText) sigText = s;
+                    if (p.functionCall) {
+                        extractedTools.push({
+                            id: p.functionCall.id || '',
+                            type: 'function',
+                            function: {
+                                name: p.functionCall.name || 'unknown',
+                                arguments: p.functionCall.args !== undefined ? (typeof p.functionCall.args === 'string' ? p.functionCall.args : JSON.stringify(p.functionCall.args)) : '{}'
+                            }
+                        });
+                    }
+                }
+                if (concise.thinking === undefined && thText) concise.thinking = thText;
+                if (concise.thinking_signature === undefined && sigText) concise.thinking_signature = sigText;
+                if (concise.content === undefined && normalText) concise.content = normalText;
+                if (concise.tool_calls === undefined && extractedTools.length > 0) concise.tool_calls = simplifyToolCalls(extractedTools);
+            }
+        } else if (Array.isArray(obj.content) && !obj.messages && !obj.choices) {
+            let thText = '';
+            let sigText = '';
+            let normalText = '';
+            const extractedTools: any[] = [];
+            for (const item of obj.content) {
+                if (item && typeof item === 'object') {
+                    if (item.type === 'thinking') {
+                        if (item.thinking) thText += item.thinking;
+                        const s = item.signature || item.thought_signature || item.thoughtSignature;
+                        if (s && !sigText) sigText = s;
+                    } else if (item.type === 'text' && item.text) {
+                        normalText += item.text;
+                    } else if (item.type === 'tool_use') {
+                        extractedTools.push({
+                            id: item.id || '',
+                            type: 'function',
+                            function: {
+                                name: item.name || 'unknown',
+                                arguments: item.input !== undefined ? (typeof item.input === 'string' ? item.input : JSON.stringify(item.input)) : '{}'
+                            }
+                        });
+                    }
+                }
+            }
+            if (concise.thinking === undefined && thText) concise.thinking = thText;
+            if (concise.thinking_signature === undefined && sigText) concise.thinking_signature = sigText;
+            if (concise.content === undefined && normalText) concise.content = normalText;
+            if (concise.tool_calls === undefined && extractedTools.length > 0) concise.tool_calls = simplifyToolCalls(extractedTools);
+        }
     }
 
-    if (obj.candidates && Array.isArray(obj.candidates)) {
-        concise.candidates = obj.candidates.map((cand: any) => {
-            const candRes: any = {};
-            if (cand.finishReason) candRes.finishReason = cand.finishReason;
-            if (cand.content) {
-                candRes.content = simplifyGeminiContents([cand.content])?.[0] || cand.content;
-            }
-            return candRes;
-        });
+    // 响应：Choices / Candidates / 聚合响应 (若为 request 或未扁平化提取的 response，保留 choices/candidates)
+    if (kind !== 'response' || (!concise.content && !concise.tool_calls && !concise.thinking)) {
+        if (obj.choices && Array.isArray(obj.choices)) {
+            concise.choices = obj.choices.map((c: any) => {
+                const choiceRes: any = { index: c.index };
+                if (c.finish_reason) choiceRes.finish_reason = c.finish_reason;
+                if (c.message) {
+                    choiceRes.message = {
+                        role: c.message.role,
+                        ...(c.message.reasoning_content !== undefined ? { reasoning_content: c.message.reasoning_content } : {}),
+                        ...(c.message.thinking !== undefined ? { thinking: c.message.thinking } : {}),
+                        ...(c.message.thinking_signature !== undefined ? { thinking_signature: c.message.thinking_signature } : {}),
+                        ...(c.message.thought_signature !== undefined ? { thought_signature: c.message.thought_signature } : {}),
+                        ...(c.message.signature !== undefined ? { signature: c.message.signature } : {}),
+                        ...(c.message.content !== undefined ? { content: c.message.content } : {}),
+                        ...(c.message.tool_calls ? { tool_calls: simplifyToolCalls(c.message.tool_calls) } : {})
+                    };
+                } else if (c.delta) {
+                    choiceRes.delta = {
+                        role: c.delta.role,
+                        ...(c.delta.reasoning_content !== undefined ? { reasoning_content: c.delta.reasoning_content } : {}),
+                        ...(c.delta.thinking !== undefined ? { thinking: c.delta.thinking } : {}),
+                        ...(c.delta.thinking_signature !== undefined ? { thinking_signature: c.delta.thinking_signature } : {}),
+                        ...(c.delta.thought_signature !== undefined ? { thought_signature: c.delta.thought_signature } : {}),
+                        ...(c.delta.signature !== undefined ? { signature: c.delta.signature } : {}),
+                        ...(c.delta.content !== undefined ? { content: c.delta.content } : {}),
+                        ...(c.delta.tool_calls ? { tool_calls: simplifyToolCalls(c.delta.tool_calls) } : {})
+                    };
+                }
+                return choiceRes;
+            });
+        }
+
+        if (obj.candidates && Array.isArray(obj.candidates)) {
+            concise.candidates = obj.candidates.map((cand: any) => {
+                const candRes: any = {};
+                if (cand.finishReason) candRes.finishReason = cand.finishReason;
+                if (cand.content) {
+                    candRes.content = simplifyGeminiContents([cand.content])?.[0] || cand.content;
+                }
+                return candRes;
+            });
+        }
     }
 
     if (obj.input !== undefined) {

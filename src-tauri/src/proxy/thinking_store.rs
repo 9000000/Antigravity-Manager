@@ -1334,7 +1334,7 @@ pub fn finalize_gemini_contents_thinking(contents: &mut [Value], is_thinking_ena
                         }
                     }
                 } else {
-                    // 纯文本轮次（无 tool_call）：任何没有 tool_call 的签名，都是用哨兵占位！
+                    // 纯文本轮次（无 tool_call）：若无真实签名则补充哨兵占位，已有的真实加密签名严禁覆盖破坏
                     if thinking_parts.is_empty() {
                         thinking_parts.push(json!({
                             "text": "...",
@@ -1343,7 +1343,14 @@ pub fn finalize_gemini_contents_thinking(contents: &mut [Value], is_thinking_ena
                         }));
                     } else {
                         for tp in thinking_parts.iter_mut() {
-                            tp["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                            let has_real = tp
+                                .get("thoughtSignature")
+                                .and_then(|s| s.as_str())
+                                .map(is_real_signature)
+                                .unwrap_or(false);
+                            if !has_real {
+                                tp["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                            }
                         }
                     }
                 }

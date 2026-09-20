@@ -484,13 +484,12 @@ pub async fn fetch_quota_with_cache(
 
                                 let chosen_bucket = match (bucket_5h, bucket_weekly) {
                                     (Some(h), Some(w)) => {
-                                        // 若周配额耗尽 (<= 0.001)，模型直接受限于周配额，重置时间使用周重置
+                                        // 若周配额耗尽 (<= 0.001)，模型直接受限于周配额为 0%，重置时间使用周重置
                                         if w.remaining_fraction <= 0.001 {
                                             Some(w)
-                                        } else if h.remaining_fraction <= w.remaining_fraction {
-                                            Some(h)
                                         } else {
-                                            Some(w)
+                                            // 周配额未耗尽时，必须始终使用 5h 桶以准确展示 5 小时滚动窗口配额与重置时间
+                                            Some(h)
                                         }
                                     }
                                     (Some(h), None) => Some(h),

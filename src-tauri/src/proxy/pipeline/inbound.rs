@@ -47,14 +47,9 @@ impl InboundThinkingPipeline {
                             let text = part.get("text").and_then(|v| v.as_str()).unwrap_or("");
                             let is_placeholder =
                                 crate::proxy::thinking_store::is_placeholder_thought(text);
-                            // 保留真实原始思考文本的尾部换行与空白，绝不进行破坏性 trim，保证与上一轮流式输出字节级严格一致
-                            let final_thought_text = if is_placeholder || text.trim().is_empty() {
-                                "..."
-                            } else {
-                                text
-                            };
 
                             // 校验客户端签名有效性与模型兼容性
+                            let is_claude = target_model.to_lowercase().contains("claude");
                             let mut effective_sig = None;
                             if let Some(sig) = part
                                 .get("thoughtSignature")
@@ -63,7 +58,10 @@ impl InboundThinkingPipeline {
                                 .and_then(|s| s.as_str())
                             {
                                 if sig == crate::proxy::thinking_store::SENTINEL_SIGNATURE {
-                                    effective_sig = Some(sig.to_string());
+                                    // Claude 模型绝不接受 Gemini 哨兵签名，避免触发 400 Invalid signature
+                                    if !is_claude {
+                                        effective_sig = Some(sig.to_string());
+                                    }
                                 } else if trusts_signature && sig.len() >= 50 {
                                     let cached_family = crate::proxy::SignatureCache::global()
                                         .get_signature_family(sig);
@@ -72,7 +70,8 @@ impl InboundThinkingPipeline {
                                             crate::proxy::mappers::common_utils::is_model_compatible(
                                                 &family,
                                                 target_model,
-                                            )
+                                            ) || (is_claude
+                                                && family.to_lowercase().contains("claude"))
                                         }
                                         None => true,
                                     };
@@ -81,6 +80,15 @@ impl InboundThinkingPipeline {
                                     }
                                 }
                             }
+
+                            // 保留真实原始思考文本的尾部换行与空白，绝不进行破坏性 trim，保证与上一轮流式输出字节级严格一致
+                            let final_thought_text = if (is_placeholder || text.trim().is_empty())
+                                && effective_sig.is_none()
+                            {
+                                "..."
+                            } else {
+                                text
+                            };
 
                             let mut thought_obj = json!({
                                 "text": final_thought_text,
