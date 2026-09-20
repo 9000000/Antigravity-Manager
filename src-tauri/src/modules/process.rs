@@ -453,6 +453,47 @@ fn get_antigravity_pids(target_ide: Option<&str>) -> Vec<u32> {
     pids
 }
 
+/// Extra cleanup: Kill orphan language_server processes located inside the Antigravity installation
+pub fn sweep_orphan_language_servers() {
+    let mut system = System::new();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+
+    for (pid, process) in system.processes() {
+        let name = process.name().to_string_lossy().to_lowercase();
+        let exe_path = process
+            .exe()
+            .and_then(|p| p.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        if (name.contains("language_server") || exe_path.contains("language_server"))
+            && exe_path.contains("antigravity")
+            && !exe_path.contains("antigravity ide")
+            && !exe_path.contains("antigravity-ide")
+        {
+            let pid_u32 = pid.as_u32();
+            crate::modules::logger::log_info(&format!(
+                "Sweeping orphan language_server process (PID: {}, Path: {})",
+                pid_u32, exe_path
+            ));
+            #[cfg(target_os = "windows")]
+            {
+                let _ = Command::new("taskkill")
+                    .args(["/F", "/PID", &pid_u32.to_string()])
+                    .creation_flags(0x08000000)
+                    .output();
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = Command::new("kill")
+                    .args(["-9", &pid_u32.to_string()])
+                    .output();
+            }
+        }
+    }
+}
+
 /// Close Antigravity processes
 pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<(), String> {
     crate::modules::logger::log_info(&format!("Closing Antigravity ({:?})...", target_ide));
@@ -472,8 +513,13 @@ pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<
                     .creation_flags(0x08000000) // CREATE_NO_WINDOW
                     .output();
             }
-            // Give some time for system to clean up PIDs
-            thread::sleep(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(300));
+        }
+
+        // Extra cleanup: If closing Antigravity (classic/client), also sweep any orphan language_server processes
+        // that belong to the antigravity installation to prevent port/mutex locks blocking restarts.
+        if target_ide != Some("ide") {
+            sweep_orphan_language_servers();
         }
     }
 
@@ -891,6 +937,10 @@ pub fn start_antigravity_with_fallback_path(
             {
                 let mut cmd = Command::new(&path_str);
 
+                if let Some(parent) = path.parent() {
+                    cmd.current_dir(parent);
+                }
+
                 // Add startup arguments
                 if let Some(ref args) = args {
                     for arg in args {
@@ -900,9 +950,6 @@ pub fn start_antigravity_with_fallback_path(
 
                 #[cfg(target_os = "linux")]
                 clean_appimage_env(&mut cmd);
-
-                #[cfg(target_os = "windows")]
-                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
                 cmd.spawn().map_err(|e| format!("Startup failed: {}", e))?;
             }
@@ -958,6 +1005,11 @@ pub fn start_antigravity_with_fallback_path(
             #[cfg(not(target_os = "macos"))]
             {
                 let mut cmd = Command::new(pref_path);
+
+                if let Some(parent) = pref_path.parent() {
+                    cmd.current_dir(parent);
+                }
+
                 if let Some(ref args) = args {
                     for arg in args {
                         cmd.arg(arg);
@@ -965,8 +1017,6 @@ pub fn start_antigravity_with_fallback_path(
                 }
                 #[cfg(target_os = "linux")]
                 clean_appimage_env(&mut cmd);
-                #[cfg(target_os = "windows")]
-                cmd.creation_flags(0x08000000);
 
                 cmd.spawn().map_err(|e| {
                     format!(
@@ -1019,6 +1069,10 @@ pub fn start_antigravity_with_fallback_path(
         if let Some(detected_path) = get_antigravity_executable_path(target_ide) {
             let mut cmd = Command::new(&detected_path);
 
+            if let Some(parent) = detected_path.parent() {
+                cmd.current_dir(parent);
+            }
+
             // Add startup arguments
             if let Some(ref args) = args {
                 for arg in args {
@@ -1028,9 +1082,6 @@ pub fn start_antigravity_with_fallback_path(
 
             #[cfg(target_os = "linux")]
             clean_appimage_env(&mut cmd);
-
-            #[cfg(target_os = "windows")]
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
             cmd.spawn().map_err(|e| {
                 format!("Startup failed (detected path {:?}): {}", detected_path, e)
