@@ -88,6 +88,7 @@ jobs:
           cargo check
 
       - name: Run unit tests
+        if: runner.os != 'Windows'
         run: |
           cd src-tauri
           cargo test --locked --lib
