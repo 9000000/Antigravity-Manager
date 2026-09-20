@@ -1125,7 +1125,9 @@ impl AxumServer {
 }
 
 /// 绑定单个地址（IPv4 或指定 IPv6 专用）
-fn bind_single_socket(socket_addr: std::net::SocketAddr) -> Result<tokio::net::TcpListener, String> {
+fn bind_single_socket(
+    socket_addr: std::net::SocketAddr,
+) -> Result<tokio::net::TcpListener, String> {
     let domain = if socket_addr.is_ipv6() {
         socket2::Domain::IPV6
     } else {
@@ -1218,10 +1220,8 @@ fn bind_tcp_listener(host: &str, port: u16) -> Result<tokio::net::TcpListener, S
             }
         }
         // 优雅降级到 IPv4 0.0.0.0
-        let v4_addr = std::net::SocketAddr::new(
-            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
-            port,
-        );
+        let v4_addr =
+            std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), port);
         return bind_single_socket(v4_addr);
     }
 
@@ -4506,11 +4506,11 @@ mod image_scheduler_tests {
     #[tokio::test]
     async fn test_bind_tcp_listener_wildcard_dual_stack() {
         let port = 18100;
-        let listener =
-            super::bind_tcp_listener("0.0.0.0", port).expect("wildcard dual-stack bind should succeed");
+        let listener = super::bind_tcp_listener("0.0.0.0", port)
+            .expect("wildcard dual-stack bind should succeed");
         drop(listener);
-        let listener_v6 =
-            super::bind_tcp_listener("::", port).expect("wildcard v6 dual-stack bind should succeed");
+        let listener_v6 = super::bind_tcp_listener("::", port)
+            .expect("wildcard v6 dual-stack bind should succeed");
         drop(listener_v6);
     }
 }

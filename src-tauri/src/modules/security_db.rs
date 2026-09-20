@@ -510,8 +510,16 @@ pub fn get_blacklist_entry_for_ip(ip: &str) -> Result<Option<IpBlacklistEntry>, 
                 return Ok(Some(entry));
             }
         } else if let (Ok(client_addr), Ok(entry_addr)) = (
-            ip.trim().trim_matches('[').trim_matches(']').parse::<std::net::IpAddr>(),
-            entry.ip_pattern.trim().trim_matches('[').trim_matches(']').parse::<std::net::IpAddr>(),
+            ip.trim()
+                .trim_matches('[')
+                .trim_matches(']')
+                .parse::<std::net::IpAddr>(),
+            entry
+                .ip_pattern
+                .trim()
+                .trim_matches('[')
+                .trim_matches(']')
+                .parse::<std::net::IpAddr>(),
         ) {
             if client_addr == entry_addr {
                 let _ = conn.execute(
@@ -698,8 +706,16 @@ pub fn is_ip_in_whitelist(ip: &str) -> Result<bool, String> {
                 return Ok(true);
             }
         } else if let (Ok(client_addr), Ok(entry_addr)) = (
-            ip.trim().trim_matches('[').trim_matches(']').parse::<std::net::IpAddr>(),
-            entry.ip_pattern.trim().trim_matches('[').trim_matches(']').parse::<std::net::IpAddr>(),
+            ip.trim()
+                .trim_matches('[')
+                .trim_matches(']')
+                .parse::<std::net::IpAddr>(),
+            entry
+                .ip_pattern
+                .trim()
+                .trim_matches('[')
+                .trim_matches(']')
+                .parse::<std::net::IpAddr>(),
         ) {
             if client_addr == entry_addr {
                 return Ok(true);
