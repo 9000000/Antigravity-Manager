@@ -3,6 +3,18 @@
 > Complete version history for Antigravity Tools. Return to project home at [README_EN.md](README_EN.md).
 
 *   **Version History**:
+    *   **v4.7.8 (2026-09-20)**:
+        -   **[Quota Display & Merging Logic Fix] Fix 5H Quota Erroneously Displaying Weekly Quota and Reset Time (PR #3479, Fixes #3477)**:
+            -   **Faithful Bucket Display**: Corrected multi-dimensional quota bucket blending so that 5H quota accurately reflects the rolling 5-hour window and hourly countdown unless weekly quota is completely depleted.
+            -   **Clear Depletion Circuit Breaker**: Only when the weekly quota reaches total exhaustion (`remaining_fraction <= 0.001`) does it lock to 0% and inherit the weekly reset countdown, avoiding 429 loops while eliminating normal 5H quota pollution.
+            -   **Unified View Behavior**: Aligned AccountCard grid view with table view using `getModelEffectiveQuota`.
+        -   **[Claude Protocol & Thinking Signature Fix] Fix Multi-Turn Tool Calling Thinking Block Invalid Signature Errors (PR #3479, Fixes #3478)**:
+            -   **Universal Claude Compatibility**: Generalized `common_utils::is_model_compatible` to support Claude 4/5 series and arbitrary variants, preventing valid signatures from being stripped.
+            -   **Trust Client Valid Signatures**: Directly accepts and transparently forwards valid client signatures while automatically indexing them into `ThinkingStore`.
+            -   **Forbid Fake Sentinel Injection**: Explicitly forbids injecting Gemini-specific `skip_thought_signature_validator` into Claude models to prevent Anthropic 400 validation errors.
+            -   **Byte-level Thinking Block Preservation**: Disallows `.trim()` on thoughts with valid signatures and skips thinking blocks in `PromptSanitizer` to maintain cryptographic hash integrity.
+        -   **[Monitor Logging & Telemetry Optimization] Compact Authoritative Response Payload Logging (PR #3479)**:
+            -   **Payload Normalization**: Unified monitor logs with informative compact payloads across all protocols and collected streaming events with authoritative signatures.
     *   **v4.7.7 (2026-09-20)**:
         -   **[Cache Optimization & Pipeline Refactor] Reconstruct Message Building for Dramatically Improved Cache Hit Retention (PR #3476)**:
             -   **Absolute Top-level System Instruction Freezing**: Only leading continuous `system` messages populate `systemInstruction`; dynamically injected mid-conversation `system` messages are rewritten on the fly into `<system-reminder>` wrapped within adjacent `user` turns, completely preventing KV Cache collapse and sustaining 80% ~ 90%+ hit rates in multi-turn interactions.
