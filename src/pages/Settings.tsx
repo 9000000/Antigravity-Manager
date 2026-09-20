@@ -402,11 +402,11 @@ function Settings() {
             } catch (err) {
                 console.error('Failed to trigger update event:', err);
                 if (updateInfo?.downloadUrl) {
-                    window.open(updateInfo.downloadUrl, '_blank');
+                    window.open(updateInfo.downloadUrl, '_blank', 'noopener,noreferrer');
                 }
             }
         } else if (updateInfo?.downloadUrl) {
-            window.open(updateInfo.downloadUrl, '_blank');
+            window.open(updateInfo.downloadUrl, '_blank', 'noopener,noreferrer');
         }
     };
 
