@@ -38,8 +38,8 @@ pub(crate) fn has_explicit_quota_exhausted(body: &str) -> bool {
     body.to_ascii_uppercase().contains("QUOTA_EXHAUSTED")
 }
 
-pub(crate) fn is_active_persisted_long_image_limit(
-    model_key: &str,
+pub(crate) fn is_active_persisted_long_limit(
+    _model_key: &str,
     status: &crate::models::account::LiveLimitStatus,
     now: i64,
 ) -> bool {
@@ -47,11 +47,19 @@ pub(crate) fn is_active_persisted_long_image_limit(
         && status.reason == "QuotaExhausted"
         && status.until > now
         && status.until.saturating_sub(status.detected_at) > MAX_LOCKOUT_SECONDS as i64
-        && normalize_image_model_id(model_key).is_some()
         && status.message.as_deref().is_some_and(|message| {
             has_explicit_quota_exhausted(message)
                 && crate::proxy::upstream::retry::parse_retry_delay(message, None).is_some()
         })
+}
+
+pub(crate) fn is_active_persisted_long_image_limit(
+    model_key: &str,
+    status: &crate::models::account::LiveLimitStatus,
+    now: i64,
+) -> bool {
+    normalize_image_model_id(model_key).is_some()
+        && is_active_persisted_long_limit(model_key, status, now)
 }
 
 /// 限流信息
@@ -251,16 +259,15 @@ impl RateLimitTracker {
         self.set_lockout_until_with_cap(account_id, reset_time, reason, model, true);
     }
 
-    pub fn restore_persisted_long_image_limit(
+    pub fn restore_persisted_long_limit(
         &self,
         account_id: &str,
         reset_time: SystemTime,
         detected_at: SystemTime,
         model: &str,
     ) -> bool {
-        let Some(normalized_model) = normalize_image_model_id(model) else {
-            return false;
-        };
+        let normalized_model = crate::proxy::common::model_mapping::normalize_to_standard_id(model)
+            .unwrap_or_else(|| model.to_string());
         let now = SystemTime::now();
         let Ok(original_duration) = reset_time.duration_since(detected_at) else {
             return false;
@@ -282,6 +289,19 @@ impl RateLimitTracker {
         let key = self.get_limit_key(account_id, Some(&normalized_model));
         self.limits.insert(key, info);
         true
+    }
+
+    pub fn restore_persisted_long_image_limit(
+        &self,
+        account_id: &str,
+        reset_time: SystemTime,
+        detected_at: SystemTime,
+        model: &str,
+    ) -> bool {
+        if normalize_image_model_id(model).is_none() {
+            return false;
+        }
+        self.restore_persisted_long_limit(account_id, reset_time, detected_at, model)
     }
 
     pub fn set_lockout_until_iso_with_cap(
@@ -745,6 +765,36 @@ impl RateLimitTracker {
         cleared
     }
 
+    /// 安全释放因配额耗尽产生的持续锁定：
+    /// - 仅清除 reason 为 QuotaExhausted 的记录，严禁误触 429 速率限制 (RateLimitExceeded)、服务器错误等独立限流；
+    /// - 针对直接或标准 ID 均做精确比对；
+    pub fn reconcile_quota_recovery(&self, account_id: &str, model: &str) -> bool {
+        let normalized = crate::proxy::common::model_mapping::normalize_to_standard_id(model)
+            .unwrap_or_else(|| model.to_string());
+
+        let keys = if normalized != model {
+            vec![
+                self.get_limit_key(account_id, Some(&normalized)),
+                self.get_limit_key(account_id, Some(model)),
+            ]
+        } else {
+            vec![self.get_limit_key(account_id, Some(model))]
+        };
+
+        let mut cleared = false;
+        for key in keys {
+            if let Some(entry) = self.limits.get(&key) {
+                if entry.reason == RateLimitReason::QuotaExhausted {
+                    drop(entry);
+                    if self.limits.remove(&key).is_some() {
+                        cleared = true;
+                    }
+                }
+            }
+        }
+        cleared
+    }
+
     /// 检查账号是否仍在限流中
     /// 检查账号是否仍在限流中 (支持模型级)
     pub fn is_rate_limited(&self, account_id: &str, model: Option<&str>) -> bool {
@@ -1115,5 +1165,58 @@ mod tests {
         );
         let wait_uncapped = tracker.get_remaining_wait("acc_uncap", None);
         assert!(wait_uncapped > 300 && wait_uncapped <= 5 * 3600);
+    }
+
+    #[test]
+    fn test_reconcile_quota_recovery_clears_quota_exhausted_but_keeps_rate_limit_exceeded() {
+        let tracker = RateLimitTracker::new();
+        let target_time = SystemTime::now() + Duration::from_secs(3600);
+
+        // 1. 设置一个 QuotaExhausted 锁定
+        tracker.set_lockout_until_with_cap(
+            "acc_test",
+            target_time,
+            RateLimitReason::QuotaExhausted,
+            Some("claude-sonnet-4-6".to_string()),
+            false,
+        );
+        assert!(tracker.is_rate_limited("acc_test", Some("claude-sonnet-4-6")));
+
+        // 恢复配额：应该成功解除
+        assert!(tracker.reconcile_quota_recovery("acc_test", "claude-sonnet-4-6"));
+        assert!(!tracker.is_rate_limited("acc_test", Some("claude-sonnet-4-6")));
+
+        // 2. 设置一个 RateLimitExceeded (429 速率限制)
+        tracker.set_lockout_until_with_cap(
+            "acc_test",
+            target_time,
+            RateLimitReason::RateLimitExceeded,
+            Some("claude-sonnet-4-6".to_string()),
+            false,
+        );
+        assert!(tracker.is_rate_limited("acc_test", Some("claude-sonnet-4-6")));
+
+        // 配额恢复：严禁清除独立 429 速率限制！
+        assert!(!tracker.reconcile_quota_recovery("acc_test", "claude-sonnet-4-6"));
+        assert!(tracker.is_rate_limited("acc_test", Some("claude-sonnet-4-6")));
+    }
+
+    #[test]
+    fn test_restore_persisted_long_limit_supports_text_models() {
+        let tracker = RateLimitTracker::new();
+        let now = SystemTime::now();
+        let detected_at = now - Duration::from_secs(60);
+        let reset_time = now + Duration::from_secs(86400); // 24小时显式长锁定
+
+        // 文本模型应该成功恢复长锁定
+        assert!(tracker.restore_persisted_long_limit(
+            "acc_text",
+            reset_time,
+            detected_at,
+            "gemini-2.5-pro",
+        ));
+        assert!(tracker.is_rate_limited("acc_text", Some("gemini-2.5-pro")));
+        // 归一化标准 ID 也能探测到该锁定
+        assert!(tracker.is_rate_limited("acc_text", Some("gemini-3-pro-high")));
     }
 }

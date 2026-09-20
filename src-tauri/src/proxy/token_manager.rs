@@ -689,7 +689,7 @@ impl TokenManager {
                 ) else {
                     continue;
                 };
-                if !crate::proxy::rate_limit::is_active_persisted_long_image_limit(
+                if !crate::proxy::rate_limit::is_active_persisted_long_limit(
                     model_key, &status, now,
                 ) {
                     continue;
@@ -700,7 +700,7 @@ impl TokenManager {
                 ) else {
                     continue;
                 };
-                self.rate_limit_tracker.restore_persisted_long_image_limit(
+                self.rate_limit_tracker.restore_persisted_long_limit(
                     &account_id,
                     std::time::SystemTime::UNIX_EPOCH
                         + std::time::Duration::from_secs(until_seconds),
@@ -3805,19 +3805,36 @@ impl TokenManager {
                         }
                     }
 
-                    // [规则 1: 持续锁定]
+                    // [规则 1: 持续锁定与截止时间裁决]
                     // - 周配额耗尽属于绝对硬约束，无需依赖可选开关；
-                    // - 5小时窗口耗尽结合 lock_on_zero 开关
-                    let lock_reset_time = if let Some(ref w_reset) = weekly_exhausted {
-                        Some(w_reset.as_str())
-                    } else if lock_on_zero {
-                        five_hour_exhausted.as_deref()
-                    } else {
-                        None
+                    // - 5小时窗口耗尽结合 lock_on_zero 开关；
+                    // - 若两者同时耗尽且 lock_on_zero 开启，严格对齐最晚截止时间 (later outstanding deadline)
+                    let lock_reset_time = match (&weekly_exhausted, &five_hour_exhausted) {
+                        (Some(w_reset), Some(f_reset)) if lock_on_zero => {
+                            let w_ts = chrono::DateTime::parse_from_rfc3339(w_reset)
+                                .map(|dt| dt.timestamp())
+                                .unwrap_or(0);
+                            let f_ts = chrono::DateTime::parse_from_rfc3339(f_reset)
+                                .map(|dt| dt.timestamp())
+                                .unwrap_or(0);
+                            if f_ts > w_ts {
+                                Some(f_reset.as_str())
+                            } else {
+                                Some(w_reset.as_str())
+                            }
+                        }
+                        (Some(w_reset), _) => Some(w_reset.as_str()),
+                        (None, Some(f_reset)) if lock_on_zero => Some(f_reset.as_str()),
+                        _ => None,
                     };
 
                     if let Some(reset_time) = lock_reset_time {
                         for tm in &target_models {
+                            // 若周配额已提前恢复但 5 小时仍需锁定，先解除旧的周配额锁定以允许降级至较短的 5 小时截止时间
+                            if weekly_exhausted.is_none() {
+                                self.rate_limit_tracker
+                                    .reconcile_quota_recovery(account_id, tm);
+                            }
                             self.rate_limit_tracker.set_lockout_until_iso_with_cap(
                                 account_id,
                                 reset_time,
@@ -3837,11 +3854,41 @@ impl TokenManager {
                         && has_positive_quota
                     {
                         // [规则 2: 提前重置自动恢复 (Early Provider Reset Reconciliation)]
-                        // 若刷新配额确认该模型组配额已为正值且不再耗尽，立即解除此前的模型级持续锁定
+                        // 若刷新配额确认该模型组配额已为正值且不再耗尽，安全释放此前的持续锁定
+                        // 严格保护独立的 429 速率限制与独立的显式图像模型锁定
                         let mut any_cleared = false;
                         for tm in &target_models {
-                            if self.rate_limit_tracker.clear_model(account_id, tm) {
-                                any_cleared = true;
+                            let has_explicit_image_limit =
+                                if crate::proxy::rate_limit::normalize_image_model_id(tm).is_some()
+                                {
+                                    account
+                                    .get("live_limited_models")
+                                    .and_then(|v| v.as_object())
+                                    .and_then(|m| m.get(tm))
+                                    .and_then(|status_val| {
+                                        serde_json::from_value::<crate::models::account::LiveLimitStatus>(
+                                            status_val.clone(),
+                                        )
+                                        .ok()
+                                    })
+                                    .map(|status| {
+                                        let now = chrono::Utc::now().timestamp();
+                                        crate::proxy::rate_limit::is_active_persisted_long_image_limit(
+                                            tm, &status, now,
+                                        )
+                                    })
+                                    .unwrap_or(false)
+                                } else {
+                                    false
+                                };
+
+                            if !has_explicit_image_limit {
+                                if self
+                                    .rate_limit_tracker
+                                    .reconcile_quota_recovery(account_id, tm)
+                                {
+                                    any_cleared = true;
+                                }
                             }
                         }
                         if any_cleared {
@@ -5457,5 +5504,118 @@ mod tests {
             ],
             "Sonnet should sort by quota first, then by tier as tiebreaker"
         );
+    }
+
+    #[test]
+    fn test_sync_zero_quota_circuit_breaker_later_deadline_and_recovery() {
+        let manager = TokenManager::new(PathBuf::from("/tmp/test"));
+
+        // 1. 周配额为 0，5H 配额为 0，两者均耗尽
+        // 周配额 reset_time 为 5天后，5H reset_time 为 2小时后
+        let now = chrono::Utc::now();
+        let reset_5h = (now + chrono::Duration::hours(2)).to_rfc3339();
+        let reset_weekly = (now + chrono::Duration::days(5)).to_rfc3339();
+
+        let account = serde_json::json!({
+            "quota": {
+                "quota_groups": [
+                    {
+                        "display_name": "Claude & 3P Models",
+                        "buckets": [
+                            {
+                                "window": "5h",
+                                "remaining_fraction": 0.0,
+                                "reset_time": reset_5h
+                            },
+                            {
+                                "window": "7d",
+                                "remaining_fraction": 0.0,
+                                "reset_time": reset_weekly
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        // 即使 lock_on_zero 为 false，周配额耗尽依然无条件锁定至周截止时间
+        manager.sync_zero_quota_circuit_breaker("acc1", &account);
+        assert!(manager
+            .rate_limit_tracker
+            .is_rate_limited("acc1", Some("claude-sonnet-4-6")));
+        let wait = manager
+            .rate_limit_tracker
+            .get_remaining_wait("acc1", Some("claude-sonnet-4-6"));
+        assert!(
+            wait > 4 * 86400,
+            "Should be locked for > 4 days due to weekly constraint"
+        );
+
+        // 2. 模拟 provider 提前重置：周配额恢复为 100%，5H 配额仍为 0
+        // 若开启 lock_on_zero，应自动对齐到较短的 5H 截止时间 (2小时)
+        {
+            let mut cfg = manager.circuit_breaker_config.blocking_write();
+            cfg.enabled = true;
+            cfg.lock_on_zero_quota = true;
+        }
+
+        let account_recovered_weekly = serde_json::json!({
+            "quota": {
+                "quota_groups": [
+                    {
+                        "display_name": "Claude & 3P Models",
+                        "buckets": [
+                            {
+                                "window": "5h",
+                                "remaining_fraction": 0.0,
+                                "reset_time": reset_5h
+                            },
+                            {
+                                "window": "7d",
+                                "remaining_fraction": 1.0,
+                                "reset_time": reset_weekly
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        manager.sync_zero_quota_circuit_breaker("acc1", &account_recovered_weekly);
+        let wait_5h = manager
+            .rate_limit_tracker
+            .get_remaining_wait("acc1", Some("claude-sonnet-4-6"));
+        assert!(
+            wait_5h <= 2 * 3600 && wait_5h > 0,
+            "Should reconcile to 5h deadline (<= 2h)"
+        );
+
+        // 3. 模拟 5H 也完全恢复 (全部配额为正)
+        let account_fully_recovered = serde_json::json!({
+            "quota": {
+                "quota_groups": [
+                    {
+                        "display_name": "Claude & 3P Models",
+                        "buckets": [
+                            {
+                                "window": "5h",
+                                "remaining_fraction": 1.0,
+                                "reset_time": reset_5h
+                            },
+                            {
+                                "window": "7d",
+                                "remaining_fraction": 1.0,
+                                "reset_time": reset_weekly
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        manager.sync_zero_quota_circuit_breaker("acc1", &account_fully_recovered);
+        assert!(!manager
+            .rate_limit_tracker
+            .is_rate_limited("acc1", Some("claude-sonnet-4-6")));
     }
 }
