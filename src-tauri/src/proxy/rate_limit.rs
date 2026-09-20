@@ -79,8 +79,16 @@ pub struct RateLimitInfo {
 const FAILURE_COUNT_EXPIRY_SECONDS: u64 = 3600;
 
 /// 限流跟踪器
+struct QuotaBucketLimit {
+    observed_at: i64,
+    reset_time: Option<SystemTime>,
+    weekly: bool,
+}
+
 pub struct RateLimitTracker {
     limits: DashMap<String, RateLimitInfo>,
+    // Independent official quota windows must survive transient-limit resets.
+    quota_limits: DashMap<(String, String), QuotaBucketLimit>,
     /// 连续失败计数（用于智能指数退避），带时间戳用于自动过期
     failure_counts: DashMap<String, (u32, SystemTime)>,
 }
@@ -89,6 +97,7 @@ impl RateLimitTracker {
     pub fn new() -> Self {
         Self {
             limits: DashMap::new(),
+            quota_limits: DashMap::new(),
             failure_counts: DashMap::new(),
         }
     }
@@ -107,33 +116,62 @@ impl RateLimitTracker {
     /// 支持检查账号级和模型级锁
     pub fn get_remaining_wait(&self, account_id: &str, model: Option<&str>) -> u64 {
         let now = SystemTime::now();
+        let model_key = self.get_limit_key(account_id, model);
+        [account_id, model_key.as_str()]
+            .into_iter()
+            .filter_map(|key| self.limits.get(key))
+            .filter_map(|info| info.reset_time.duration_since(now).ok())
+            .map(|duration| duration.as_secs().max(1))
+            .max()
+            .unwrap_or(0)
+            .max(self.get_quota_wait(account_id, model, false))
+    }
 
-        // 1. 检查全局账号锁
-        if let Some(info) = self.limits.get(account_id) {
-            if info.reset_time > now {
-                return info
-                    .reset_time
-                    .duration_since(now)
-                    .unwrap_or(Duration::from_secs(0))
-                    .as_secs();
-            }
-        }
+    pub fn get_quota_wait(&self, account_id: &str, model: Option<&str>, weekly_only: bool) -> u64 {
+        let key = self.get_limit_key(account_id, model);
+        let now = SystemTime::now();
+        self.quota_limits
+            .iter()
+            .filter(|entry| {
+                (entry.key().0 == key || entry.key().0 == account_id)
+                    && (!weekly_only || entry.weekly)
+            })
+            .filter_map(|entry| entry.reset_time?.duration_since(now).ok())
+            .map(|duration| duration.as_secs().max(1))
+            .max()
+            .unwrap_or(0)
+    }
 
-        // 2. 如果指定了模型，检查模型级锁
-        if let Some(m) = model {
-            let key = self.get_limit_key(account_id, Some(m));
-            if let Some(info) = self.limits.get(&key) {
-                if info.reset_time > now {
-                    return info
-                        .reset_time
-                        .duration_since(now)
-                        .unwrap_or(Duration::from_secs(0))
-                        .as_secs();
+    pub fn sync_quota_bucket(
+        &self,
+        account_id: &str,
+        model: &str,
+        bucket_id: &str,
+        observed_at: i64,
+        exhausted_until: Option<SystemTime>,
+        weekly: bool,
+    ) {
+        let key = (
+            self.get_limit_key(account_id, Some(model)),
+            bucket_id.to_string(),
+        );
+        // Keep recovered observations too: reloading an older snapshot must not relock/unlock.
+        self.quota_limits
+            .entry(key)
+            .and_modify(|current| {
+                if observed_at > current.observed_at {
+                    *current = QuotaBucketLimit {
+                        observed_at,
+                        reset_time: exhausted_until,
+                        weekly,
+                    };
                 }
-            }
-        }
-
-        0
+            })
+            .or_insert(QuotaBucketLimit {
+                observed_at,
+                reset_time: exhausted_until,
+                weekly,
+            });
     }
 
     /// 标记账号请求成功，重置连续失败计数
