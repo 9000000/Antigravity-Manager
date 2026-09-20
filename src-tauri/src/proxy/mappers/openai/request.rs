@@ -254,7 +254,7 @@ pub fn transform_openai_request(
     )
 }
 
-/// 通用 Codex 身份声明归一化正则：
+/// 通用 Codex 身份声明归一化正则 (Thanks to @cuteyuchen for PR #3489)：
 /// 自动匹配并剥离 "You are Codex, <任意角色定语> based on <任意竞品模型>." 中的敏感模型特征
 static RE_CODEX_IDENTITY: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
     regex::Regex::new(r"(?i)(You are Codex,\s+[^.]+?)\s+based on\s+[^.]+(\.?)").unwrap()
