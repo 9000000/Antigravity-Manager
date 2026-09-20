@@ -1471,11 +1471,8 @@ pub fn is_model_compatible(cached: &str, target: &str) -> bool {
         return true;
     }
 
-    // Grouped family match (Claude models are more permissive)
-    if c.contains("claude-3-5") && t.contains("claude-3-5") {
-        return true;
-    }
-    if c.contains("claude-3-7") && t.contains("claude-3-7") {
+    // Claude 全系列通用兼容：凡是同属 Claude 家族模型，直接判定签名兼容（面向未来任何 Claude 5/新模型及变体）
+    if c.contains("claude") && t.contains("claude") {
         return true;
     }
 

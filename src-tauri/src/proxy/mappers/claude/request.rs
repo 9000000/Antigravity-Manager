@@ -1173,10 +1173,10 @@ fn build_contents(
                         // Normalize placeholder thoughts (e.g. Claude Code "·", ".", "···") to "..."
                         let is_placeholder =
                             crate::proxy::thinking_store::is_placeholder_thought(thinking);
-                        let final_thought_text = if is_placeholder {
+                        let final_thought_text = if is_placeholder && signature.is_none() {
                             "..."
                         } else {
-                            thinking.trim()
+                            thinking.as_str()
                         };
 
                         // [HOTFIX] Gemini Protocol Enforcement: Thinking block MUST be the first block.
@@ -1206,7 +1206,9 @@ fn build_contents(
                         }
 
                         let is_google_cloud = mapped_model.starts_with("projects/");
+                        let is_claude_model = mapped_model.to_lowercase().contains("claude");
                         let can_use_sentinel = !is_google_cloud
+                            && !is_claude_model
                             && (is_thinking_enabled
                                 || model_keeps_thinking_without_signature(mapped_model));
 
@@ -1222,7 +1224,11 @@ fn build_contents(
                                     Some(family) => {
                                         let compatible =
                                             !is_retry && is_model_compatible(&family, mapped_model);
-                                        if compatible {
+                                        if compatible
+                                            || (!is_retry
+                                                && is_claude_model
+                                                && family.to_lowercase().contains("claude"))
+                                        {
                                             effective_sig = Some(sig.clone());
                                         } else {
                                             tracing::warn!(
@@ -1361,7 +1367,9 @@ fn build_contents(
                             });
                         // [FIX #752] Validate signature before using
                         let is_google_cloud = mapped_model.starts_with("projects/");
+                        let is_claude_model = mapped_model.to_lowercase().contains("claude");
                         let needs_sentinel = !is_google_cloud
+                            && !is_claude_model
                             && (is_thinking_enabled
                                 || model_keeps_thinking_without_signature(&mapped_model));
 
@@ -1371,7 +1379,7 @@ fn build_contents(
                             if is_retry && signature.is_none() {
                                 tracing::warn!("[Tool-Signature] Skipping signature backfill for tool_use: {} during retry.", id);
                             } else if sig == SENTINEL_SIGNATURE {
-                                if !is_google_cloud {
+                                if !is_google_cloud && !is_claude_model {
                                     part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
                                     signature_assigned = true;
                                 }
@@ -1387,7 +1395,10 @@ fn build_contents(
 
                                 let should_use_sig = match cached_family {
                                     Some(family) => {
-                                        if is_model_compatible(&family, mapped_model) {
+                                        if is_model_compatible(&family, mapped_model)
+                                            || (is_claude_model
+                                                && family.to_lowercase().contains("claude"))
+                                        {
                                             true
                                         } else {
                                             tracing::warn!(
