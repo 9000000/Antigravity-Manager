@@ -502,13 +502,26 @@ pub fn wrap_request_v2(
                                     );
                                 }
 
-                                if let Some(sig) = effective_fc_sig {
-                                    obj.insert("thoughtSignature".to_string(), json!(sig));
+                                // 单轮单真签名原则：
+                                // 首个工具调用挂载真实签名 (若有)，后续并行工具调用统一打上 32 字节哨兵占位 (满足 Google AST 校验且绝不复制 500KB)
+                                let has_preceding_fc = new_parts.iter().any(|p| p.get("functionCall").is_some());
+                                if !has_preceding_fc {
+                                    if let Some(sig) = effective_fc_sig {
+                                        obj.insert("thoughtSignature".to_string(), json!(sig));
+                                    } else {
+                                        obj.insert("thoughtSignature".to_string(), json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE));
+                                    }
+                                } else {
+                                    obj.insert("thoughtSignature".to_string(), json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE));
                                 }
                                 obj.remove("thought_signature");
                             }
 
                             // 2. 处理 functionResponse (User 回复工具结果)
+                            if obj.contains_key("functionResponse") {
+                                obj.remove("thoughtSignature");
+                                obj.remove("thought_signature");
+                            }
                             if let Some(fr) = obj.get_mut("functionResponse") {
                                 if fr.get("id").is_none() && is_target_claude {
                                     let name = fr

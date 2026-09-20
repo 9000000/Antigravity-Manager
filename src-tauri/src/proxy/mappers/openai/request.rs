@@ -832,10 +832,16 @@ pub fn transform_openai_request_with_session(
                         effective_tc_sig = tool_specific_sig;
                     }
 
-                    if let Some(ref sig) = effective_tc_sig {
-                        func_call_part["thoughtSignature"] = json!(sig);
-                    } else if is_thinking_model || is_gemini_flash_thinking || actual_include_thinking {
-                        tracing::debug!("[OpenAI-Signature] Adding GEMINI_SKIP_SIGNATURE for tool_use: {}", tc.id);
+                    // 单轮单真签名原则：
+                    // 首个工具调用挂载真实签名 (若有)，后续并行工具调用统一打上 32 字节哨兵占位 (满足 Google AST 校验且绝不复制 500KB)
+                    let has_preceding_fc = parts.iter().any(|p| p.get("functionCall").is_some());
+                    if !has_preceding_fc {
+                        if let Some(ref sig) = effective_tc_sig {
+                            func_call_part["thoughtSignature"] = json!(sig);
+                        } else if is_thinking_model || is_gemini_flash_thinking || actual_include_thinking {
+                            func_call_part["thoughtSignature"] = json!("skip_thought_signature_validator");
+                        }
+                    } else {
                         func_call_part["thoughtSignature"] = json!("skip_thought_signature_validator");
                     }
 
@@ -918,17 +924,10 @@ pub fn transform_openai_request_with_session(
                        "id": msg.tool_call_id.clone().unwrap_or_default()
                     }
                 });
-                if actual_include_thinking {
-                    let mut effective_fr_sig = None;
-                    if let Some(ref call_id) = msg.tool_call_id {
-                        effective_fr_sig = crate::proxy::SignatureCache::global().get_tool_signature(call_id);
-                    }
-                    if effective_fr_sig.is_none() {
-                        effective_fr_sig = Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string());
-                    }
-                    if let Some(sig) = effective_fr_sig {
-                        fr_part["thoughtSignature"] = json!(sig);
-                    }
+                // 危险测试分支法则：tool 响应 (functionResponse) 绝不携带签名
+                if let Some(obj) = fr_part.as_object_mut() {
+                    obj.remove("thoughtSignature");
+                    obj.remove("thought_signature");
                 }
                 parts.push(fr_part);
 

@@ -153,27 +153,6 @@ impl InboundThinkingPipeline {
 
                                 other_parts.push(part);
                             } else {
-                                if is_claude {
-                                    if let Some(sig) =
-                                        part.get("thoughtSignature").and_then(|s| s.as_str())
-                                    {
-                                        if sig == crate::proxy::thinking_store::SENTINEL_SIGNATURE {
-                                            if let Some(obj) = part.as_object_mut() {
-                                                obj.remove("thoughtSignature");
-                                            }
-                                        } else {
-                                            let wrapped = crate::proxy::thinking_store::ensure_google_claude_thought_signature(sig);
-                                            if wrapped != sig {
-                                                if let Some(obj) = part.as_object_mut() {
-                                                    obj.insert(
-                                                        "thoughtSignature".to_string(),
-                                                        json!(wrapped),
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
                                 other_parts.push(part);
                             }
                         }
