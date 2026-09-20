@@ -254,6 +254,12 @@ pub fn transform_openai_request(
     )
 }
 
+/// 通用 Codex 身份声明归一化正则：
+/// 自动匹配并剥离 "You are Codex, <任意角色定语> based on <任意竞品模型>." 中的敏感模型特征
+static RE_CODEX_IDENTITY: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+    regex::Regex::new(r"(?i)(You are Codex,\s+[^.]+?)\s+based on\s+[^.]+(\.?)").unwrap()
+});
+
 pub fn transform_openai_request_with_session(
     request: &OpenAIRequest,
     project_id: &str,
@@ -407,15 +413,12 @@ pub fn transform_openai_request_with_session(
     system_instructions = system_instructions
         .into_iter()
         .map(|s| {
-            let s = s
-                .replace(
-                    "You are Codex, an agent based on GPT-5.",
-                    "You are Codex, an agent.",
-                )
-                .replace(
-                    "You are Codex, a coding agent based on GPT-5.",
-                    "You are Codex, a coding agent.",
-                );
+            // 通用自适应归一化：剥离基于 GPT-5 / GPT-6 等竞品模型的声明指纹，防止触发上游 WAF 伪限流
+            let s = if s.contains("Codex") && s.contains("based on") {
+                RE_CODEX_IDENTITY.replace_all(&s, "$1$2").into_owned()
+            } else {
+                s
+            };
             let raw_key = crate::proxy::cache_manager::CacheManager::compute_si_key(&s);
             if let Some(cached) = cm.lookup_si(&raw_key) {
                 si_layer_stats.0 += 1;
@@ -1695,6 +1698,10 @@ mod tests {
                 "You are Codex, a coding agent based on GPT-5.",
                 "You are Codex, a coding agent.",
             ),
+            (
+                "You are Codex, an advanced coding agent based on GPT-6.",
+                "You are Codex, an advanced coding agent.",
+            ),
         ] {
             let req: OpenAIRequest = serde_json::from_value(json!({
                 "model": "gemini-3.7-flash-high",
@@ -1708,8 +1715,7 @@ mod tests {
                 ]
             }))
             .unwrap();
-            let (body, _, _, _) =
-                transform_openai_request(&req, "test-project", &req.model, None);
+            let (body, _, _, _) = transform_openai_request(&req, "test-project", &req.model, None);
             let system = body["request"]["systemInstruction"].to_string();
             assert!(!system.contains(old));
             assert!(system.contains(&format!("Top-level: {normalized}")));
