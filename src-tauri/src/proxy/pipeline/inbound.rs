@@ -189,6 +189,84 @@ impl InboundThinkingPipeline {
         );
     }
 
+    /// 统一进站思考配置与参数治理（流水线节点）：
+    /// 保证四大协议（OpenAI, Claude, Gemini, Codex）的协议无关性。
+    /// 1. 自动识别目标模型（包括 Tiered 自适应模型与具名模型）
+    /// 2. 忽略客户端数字 budget 防污染，精准捕获客户端无后缀思考参数 (low/medium/high)
+    /// 3. 在网关控制模式下，思考参数仅对 Tiered 模型开放操控权，分别映射至网关思考板块的 flash_low, flash_medium, flash_high
+    /// 4. 组装并规范化 generationConfig 中的 thinkingConfig 与 maxOutputTokens
+    pub fn configure_inbound_thinking(
+        target_model: &str,
+        generation_config: &mut Value,
+        client_effort: Option<&str>,
+        client_budget: Option<u64>,
+        token: Option<&crate::proxy::token_manager::ProxyToken>,
+    ) -> Option<i64> {
+        let is_under_v3 = crate::proxy::model_specs::is_gemini_under_v3(target_model);
+        if is_under_v3 {
+            // Gemini < 3 非思考模型严禁注入 thinkingConfig
+            if let Some(obj) = generation_config.as_object_mut() {
+                obj.remove("thinkingConfig");
+                obj.remove("thinking_config");
+            }
+            return None;
+        }
+
+        let tb_config = crate::proxy::config::get_thinking_budget_config();
+        let resolved_budget = crate::proxy::model_specs::resolve_custom_budget(
+            target_model,
+            client_effort,
+            client_budget,
+            &tb_config,
+            token,
+        );
+
+        let is_tiered = crate::proxy::model_specs::is_tiered_flash_model(target_model)
+            || target_model.to_lowercase().contains("tiered");
+
+        let mut tc = json!({
+            "includeThoughts": true
+        });
+
+        if let Some(budget) = resolved_budget {
+            tc["thinkingBudget"] = json!(budget);
+
+            // 确保 maxOutputTokens 大于 thinkingBudget 避免 400
+            let min_overhead = 8192;
+            let current_max = generation_config
+                .get("maxOutputTokens")
+                .and_then(Value::as_i64)
+                .unwrap_or(65536);
+            if current_max <= budget {
+                generation_config["maxOutputTokens"] = json!(budget + min_overhead);
+            }
+        } else if is_tiered {
+            // Tiered 模型未指定具体数字 budget 时，纯自适应模式：不注入 thinkingBudget
+            tc = json!({
+                "includeThoughts": true
+            });
+        }
+
+        generation_config["thinkingConfig"] = tc;
+
+        // 终审上限保护
+        let target_lower = target_model.to_lowercase();
+        let safe_limit = if target_lower.contains("claude") {
+            64000
+        } else if target_lower.contains("pro") {
+            65535
+        } else {
+            65536
+        };
+        if let Some(val) = generation_config["maxOutputTokens"].as_i64() {
+            if val > safe_limit {
+                generation_config["maxOutputTokens"] = json!(safe_limit);
+            }
+        }
+
+        resolved_budget
+    }
+
     /// 剥离遗留思考块的前缀标记 (**Thinking**)
     fn strip_thinking_prefix(text: &str) -> String {
         let trimmed = text.trim_start();

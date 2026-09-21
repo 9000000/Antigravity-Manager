@@ -1091,7 +1091,7 @@ pub fn transform_openai_request_with_session(
                 "includeThoughts": false
             });
         } else {
-            // [CONFIGURABLE] 思考预算：全协议统一权威解析（归一化流水线后处理）
+            // [CONFIGURABLE] 思考预算：全协议统一由 InboundThinkingPipeline 流水线节点权威解析与治理
             let client_effort = request
                 .reasoning_effort
                 .as_deref()
@@ -1103,24 +1103,19 @@ pub fn transform_openai_request_with_session(
                 .as_ref()
                 .and_then(|t| t.budget_tokens.map(|b| b as u64));
 
-            let tb_config = crate::proxy::config::get_thinking_budget_config();
-            let resolved_budget = model_specs::resolve_custom_budget(
+            let resolved_budget = crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
                 mapped_model,
+                &mut gen_config,
                 client_effort,
                 client_budget,
-                &tb_config,
                 token,
             );
 
+            let tb_config = crate::proxy::config::get_thinking_budget_config();
             let is_client_control =
                 tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client;
-            let mut tc = json!({
-                "includeThoughts": true
-            });
 
             if let Some(final_budget) = resolved_budget {
-                tc["thinkingBudget"] = json!(final_budget);
-
                 // [CRITICAL] 思维模型的 maxOutputTokens 必须大于 thinkingBudget
                 // [FIX #1675] 针对图像模型使用更保守的 max_tokens 增量，避免触发 128k 限制
                 let overhead = if config.request_type == "image_gen" {
@@ -1166,12 +1161,10 @@ pub fn transform_openai_request_with_session(
                             } else {
                                 norm_level
                             };
-                        tc["thinkingLevel"] = json!(final_level);
+                        gen_config["thinkingConfig"]["thinkingLevel"] = json!(final_level);
                     }
                 }
             }
-
-            gen_config["thinkingConfig"] = tc;
             tracing::debug!(
                 "[OpenAI-Request] Configured thinkingConfig for model {}: {:?} (source={:?})",
                 mapped_model,

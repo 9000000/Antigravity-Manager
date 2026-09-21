@@ -1240,7 +1240,9 @@
       "gemini3_only_warning": "⚠️ 仅支持 Gemini 3 系列",
       "default_suffix": "（默认）",
       "select_target_model": "选择目标模型",
-      "original_placeholder": "原始名 (如 gpt-4 或 gpt-4*)"
+      "original_placeholder": "原始名 (如 gemini-3.x-flash，x必须大于8)",
+      "wildcard_rule_notice": "通配符规则（x 必须大于 8，如 3.9、3.10 自动转为 3.x-flash-tiered）",
+      "wildcard_only_gemini_3x": "仅允许内置通配符 gemini-3.x-flash（x 必须大于 8），其他请填写具体模型 ID"
     },
     "examples": {
       "title": "使用示例"

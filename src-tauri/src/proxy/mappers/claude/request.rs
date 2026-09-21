@@ -1945,35 +1945,13 @@ fn build_generation_config(
             .or_else(|| claude_req.thinking.as_ref().and_then(|t| t.effort.as_ref()))
             .or_else(|| tb_config.effort.as_ref());
 
-        let budget_opt = crate::proxy::model_specs::resolve_custom_budget(
-            mapped_model,
-            effort.map(|s| s.as_str()),
-            claude_req
-                .thinking
-                .as_ref()
-                .and_then(|t| t.budget_tokens.map(|b| b as u64)),
-            &tb_config,
-            token,
-        );
+        let client_effort = effort.map(|s| s.as_str());
+        let client_budget = claude_req
+            .thinking
+            .as_ref()
+            .and_then(|t| t.budget_tokens.map(|b| b as u64));
 
-        if tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client {
-            if let Some(budget) = budget_opt {
-                thinking_config["thinkingBudget"] = json!(budget);
-            }
-            if let Some(eff_str) = effort.map(|s| s.as_str()) {
-                if let Some(norm_level) =
-                    crate::proxy::model_specs::normalize_client_thinking_level(eff_str)
-                {
-                    let target_level =
-                        if mapped_model.to_lowercase().contains("pro") && norm_level == "MEDIUM" {
-                            "HIGH"
-                        } else {
-                            norm_level
-                        };
-                    thinking_config["thinkingLevel"] = json!(target_level);
-                }
-            }
-        } else if should_use_adaptive {
+        if should_use_adaptive {
             let mapped_level = match effort.map(|e| e.to_lowercase()).as_deref() {
                 Some("low") => "LOW",
                 Some("medium") => "MEDIUM",
@@ -1985,11 +1963,33 @@ fn build_generation_config(
                 mapped_level
             );
             thinking_config["thinkingLevel"] = json!(mapped_level);
-        } else if let Some(budget) = budget_opt {
-            thinking_config["thinkingBudget"] = json!(budget);
+            config["thinkingConfig"] = thinking_config;
+        } else {
+            // 协议无关：思考预算与 thinkingConfig 统一由进站流水线节点治理
+            let _budget_opt = crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
+                mapped_model,
+                &mut config,
+                client_effort,
+                client_budget,
+                token,
+            );
+            if tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client {
+                if let Some(eff_str) = client_effort {
+                    if let Some(norm_level) =
+                        crate::proxy::model_specs::normalize_client_thinking_level(eff_str)
+                    {
+                        let target_level =
+                            if mapped_model.to_lowercase().contains("pro") && norm_level == "MEDIUM"
+                            {
+                                "HIGH"
+                            } else {
+                                norm_level
+                            };
+                        config["thinkingConfig"]["thinkingLevel"] = json!(target_level);
+                    }
+                }
+            }
         }
-
-        config["thinkingConfig"] = thinking_config;
     }
 
     // 其他参数
