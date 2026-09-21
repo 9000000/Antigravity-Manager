@@ -181,7 +181,8 @@ fn compact_browser_snapshot(text: &str, max_chars: usize) -> Option<String> {
     let head_len = head_len.min(10_000).max(500);
     let tail_len = budget.saturating_sub(head_len).min(3_000);
 
-    let head = crate::proxy::mappers::common_utils::safe_truncate_str(text, head_len.min(text.len()));
+    let head =
+        crate::proxy::mappers::common_utils::safe_truncate_str(text, head_len.min(text.len()));
     let tail = if tail_len > 0 && text.len() > head.len() {
         let mut start = text.len().saturating_sub(tail_len);
         while start < text.len() && !text.is_char_boundary(start) {
@@ -192,7 +193,10 @@ fn compact_browser_snapshot(text: &str, max_chars: usize) -> Option<String> {
         ""
     };
 
-    let omitted = text.len().saturating_sub(head.len()).saturating_sub(tail.len());
+    let omitted = text
+        .len()
+        .saturating_sub(head.len())
+        .saturating_sub(tail.len());
 
     let summarized = if tail.is_empty() {
         format!(

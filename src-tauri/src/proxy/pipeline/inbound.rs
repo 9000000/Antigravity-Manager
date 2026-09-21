@@ -77,7 +77,9 @@ impl InboundThinkingPipeline {
                                             if target_model.to_lowercase().contains("gemini") {
                                                 crate::proxy::thinking_store::is_likely_gemini_signature(sig)
                                             } else if is_claude {
-                                                crate::proxy::thinking_store::is_claude_signature(sig)
+                                                crate::proxy::thinking_store::is_claude_signature(
+                                                    sig,
+                                                )
                                             } else {
                                                 true
                                             }
@@ -134,16 +136,18 @@ impl InboundThinkingPipeline {
                             }
                         } else {
                             if target_model.to_lowercase().contains("gemini") {
-                                if let Some(fc_sig) = part
-                                    .get("thoughtSignature")
-                                    .and_then(|s| s.as_str())
+                                if let Some(fc_sig) =
+                                    part.get("thoughtSignature").and_then(|s| s.as_str())
                                 {
-                                    if !crate::proxy::thinking_store::is_likely_gemini_signature(fc_sig) {
+                                    if !crate::proxy::thinking_store::is_likely_gemini_signature(
+                                        fc_sig,
+                                    ) {
                                         tracing::warn!(
                                             "[InboundPipeline] Replacing foreign functionCall thoughtSignature (len: {}) with sentinel for Gemini",
                                             fc_sig.len()
                                         );
-                                        part["thoughtSignature"] = json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
+                                        part["thoughtSignature"] =
+                                            json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
                                     }
                                 }
                             } else if is_claude {
@@ -575,7 +579,8 @@ mod tests {
     #[test]
     fn test_inbound_pipeline_intercepts_foreign_gemini_signature_for_claude() {
         // 模拟 Gemini 原生签名
-        let foreign_gemini_sig = "Ep4KCpsKAWkUfRMa5ZYMDdlPjxrQTLzVZ6MZeopI88888888888888888888888888888888";
+        let foreign_gemini_sig =
+            "Ep4KCpsKAWkUfRMa5ZYMDdlPjxrQTLzVZ6MZeopI88888888888888888888888888888888";
 
         let mut contents = vec![
             json!({
@@ -598,7 +603,7 @@ mod tests {
             json!({
                 "role": "user",
                 "parts": [{ "text": "continue" }]
-            })
+            }),
         ];
 
         InboundThinkingPipeline::process_contents(
@@ -613,14 +618,16 @@ mod tests {
         let model_parts = contents[1]["parts"].as_array().expect("parts array");
         // 关键验证：发往 Claude 时，由于历史异构签名不是合法 Claude 签名，
         // 思考块绝不能带着 Gemini 签名发给 Claude，而是安全降级为普通正文文本！
-        let has_thought_block = model_parts.iter().any(|p| p.get("thought").and_then(|v| v.as_bool()) == Some(true));
+        let has_thought_block = model_parts
+            .iter()
+            .any(|p| p.get("thought").and_then(|v| v.as_bool()) == Some(true));
         assert!(
             !has_thought_block,
             "Claude turn must NOT contain unvalidated thinking block with foreign Gemini signature"
         );
-        let has_gemini_sig = model_parts.iter().any(|p| {
-            p.get("thoughtSignature").is_some() || p.get("thought_signature").is_some()
-        });
+        let has_gemini_sig = model_parts
+            .iter()
+            .any(|p| p.get("thoughtSignature").is_some() || p.get("thought_signature").is_some());
         assert!(
             !has_gemini_sig,
             "Foreign Gemini signature must be completely eliminated from Claude turn"

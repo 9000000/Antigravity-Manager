@@ -941,7 +941,10 @@ pub fn delete_thinking_records_for_session(session_key: &str) -> Result<usize, S
 }
 
 /// 精准净化思考记录表中的非法异构签名（保留思考文本与其它健康签名）
-pub fn purge_foreign_signatures_for_session_with_model(session_key: &str, target_model: &str) -> Result<usize, String> {
+pub fn purge_foreign_signatures_for_session_with_model(
+    session_key: &str,
+    target_model: &str,
+) -> Result<usize, String> {
     let is_gemini = target_model.to_lowercase().contains("gemini");
     let is_claude = target_model.to_lowercase().contains("claude");
     if (!is_gemini && !is_claude) || session_key.is_empty() {

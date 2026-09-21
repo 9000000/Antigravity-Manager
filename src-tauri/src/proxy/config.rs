@@ -1048,10 +1048,22 @@ pub struct UpstreamProxyConfig {
 
 pub fn default_custom_mapping() -> std::collections::HashMap<String, String> {
     let mut m = std::collections::HashMap::new();
-    m.insert("gemini-3.6-flash".to_string(), "gemini-3.6-flash-tiered".to_string());
-    m.insert("gemini-3.7-flash".to_string(), "gemini-3.7-flash-tiered".to_string());
-    m.insert("gemini-3.8-flash".to_string(), "gemini-3.8-flash-tiered".to_string());
-    m.insert("gemini-3.x-flash".to_string(), "3.x-flash-tiered".to_string());
+    m.insert(
+        "gemini-3.6-flash".to_string(),
+        "gemini-3.6-flash-tiered".to_string(),
+    );
+    m.insert(
+        "gemini-3.7-flash".to_string(),
+        "gemini-3.7-flash-tiered".to_string(),
+    );
+    m.insert(
+        "gemini-3.8-flash".to_string(),
+        "gemini-3.8-flash-tiered".to_string(),
+    );
+    m.insert(
+        "gemini-3.x-flash".to_string(),
+        "3.x-flash-tiered".to_string(),
+    );
     m
 }
 

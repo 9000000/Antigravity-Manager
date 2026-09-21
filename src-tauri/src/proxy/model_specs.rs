@@ -549,9 +549,8 @@ pub fn resolve_custom_budget(
                 || lower.ends_with("-high")
                 || lower.contains("-max")
                 || lower.contains("agent");
-            let is_low = lower.contains("-low")
-                || lower.ends_with("-low")
-                || lower.contains("-extra-low");
+            let is_low =
+                lower.contains("-low") || lower.ends_with("-low") || lower.contains("-extra-low");
 
             if is_high {
                 if tb_config.flash_high > 0 {
@@ -782,10 +781,16 @@ mod tests {
 
         // 已有显式后缀或变体标记的不命中
         assert!(!is_bare_gemini_v36_or_above_flash("gemini-3.7-flash-high"));
-        assert!(!is_bare_gemini_v36_or_above_flash("gemini-3.7-flash-medium"));
+        assert!(!is_bare_gemini_v36_or_above_flash(
+            "gemini-3.7-flash-medium"
+        ));
         assert!(!is_bare_gemini_v36_or_above_flash("gemini-3.7-flash-low"));
-        assert!(!is_bare_gemini_v36_or_above_flash("gemini-3.7-flash-tiered"));
-        assert!(!is_bare_gemini_v36_or_above_flash("gemini-3.8-flash-tiered"));
+        assert!(!is_bare_gemini_v36_or_above_flash(
+            "gemini-3.7-flash-tiered"
+        ));
+        assert!(!is_bare_gemini_v36_or_above_flash(
+            "gemini-3.8-flash-tiered"
+        ));
         assert!(!is_bare_gemini_v36_or_above_flash("gemini-3.7-pro"));
     }
 
@@ -812,11 +817,23 @@ mod tests {
 
         // 3. 客户端传入思考参数 low / medium / high：分别映射到网关设置的 flash_low, flash_medium, flash_high
         assert_eq!(
-            resolve_custom_budget("gemini-3.7-flash-tiered", Some("low"), Some(5000), &tb, None),
+            resolve_custom_budget(
+                "gemini-3.7-flash-tiered",
+                Some("low"),
+                Some(5000),
+                &tb,
+                None
+            ),
             Some(1024)
         );
         assert_eq!(
-            resolve_custom_budget("gemini-3.7-flash-tiered", Some("extra-low"), None, &tb, None),
+            resolve_custom_budget(
+                "gemini-3.7-flash-tiered",
+                Some("extra-low"),
+                None,
+                &tb,
+                None
+            ),
             Some(1024)
         );
         assert_eq!(
@@ -828,7 +845,13 @@ mod tests {
             Some(16384)
         );
         assert_eq!(
-            resolve_custom_budget("gemini-3.7-flash-tiered", Some("max"), Some(2048), &tb, None),
+            resolve_custom_budget(
+                "gemini-3.7-flash-tiered",
+                Some("max"),
+                Some(2048),
+                &tb,
+                None
+            ),
             Some(16384)
         );
 
@@ -877,7 +900,10 @@ mod tests {
         assert_eq!(resolve_gemini_3x_flash_tiered("gemini-3.5-flash"), None);
 
         // 已经带有后缀或非 flash 模型不命中
-        assert_eq!(resolve_gemini_3x_flash_tiered("gemini-3.9-flash-high"), None);
+        assert_eq!(
+            resolve_gemini_3x_flash_tiered("gemini-3.9-flash-high"),
+            None
+        );
         assert_eq!(resolve_gemini_3x_flash_tiered("gemini-3.9-pro"), None);
     }
 }

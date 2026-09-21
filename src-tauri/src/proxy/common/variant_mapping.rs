@@ -226,7 +226,8 @@ pub fn resolve_with_tier(
         is_v3 && (lower.contains("flash") || lower.contains("pro") || lower.contains("agent"));
     if is_gemini_3_family {
         // [NEW] 如果是 >= 3.6 的无后缀 Flash 衍生模型，统一预设路由为 tiered 真实模型 ID，彻底杜绝上游 429
-        let resolved_id = if crate::proxy::model_specs::is_bare_gemini_v36_or_above_flash(canonical) {
+        let resolved_id = if crate::proxy::model_specs::is_bare_gemini_v36_or_above_flash(canonical)
+        {
             format!("{}-tiered", canonical)
         } else {
             canonical.to_string()

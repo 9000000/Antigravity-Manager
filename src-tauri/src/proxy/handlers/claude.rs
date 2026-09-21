@@ -936,12 +936,7 @@ pub async fn handle_messages(
                     mapped_model.as_str(),
                     &safe_message,
                 );
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    headers,
-                    Json(dual_err),
-                )
-                    .into_response();
+                return (StatusCode::SERVICE_UNAVAILABLE, headers, Json(dual_err)).into_response();
             }
         };
 

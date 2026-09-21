@@ -2008,25 +2008,26 @@ fn build_generation_config(
             config["thinkingConfig"] = thinking_config;
         } else {
             // 协议无关：思考预算与 thinkingConfig 统一由进站流水线节点治理
-            let _budget_opt = crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
-                mapped_model,
-                &mut config,
-                client_effort,
-                client_budget,
-                token,
-            );
+            let _budget_opt =
+                crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
+                    mapped_model,
+                    &mut config,
+                    client_effort,
+                    client_budget,
+                    token,
+                );
             if tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client {
                 if let Some(eff_str) = client_effort {
                     if let Some(norm_level) =
                         crate::proxy::model_specs::normalize_client_thinking_level(eff_str)
                     {
-                        let target_level =
-                            if mapped_model.to_lowercase().contains("pro") && norm_level == "MEDIUM"
-                            {
-                                "HIGH"
-                            } else {
-                                norm_level
-                            };
+                        let target_level = if mapped_model.to_lowercase().contains("pro")
+                            && norm_level == "MEDIUM"
+                        {
+                            "HIGH"
+                        } else {
+                            norm_level
+                        };
                         config["thinkingConfig"]["thinkingLevel"] = json!(target_level);
                     }
                 }
@@ -3585,9 +3586,15 @@ mod tests {
             quality: None,
         };
 
-        let result =
-            transform_claude_request_in(&req, "test-proj", false, None, "test-session-foreign", None)
-                .expect("Transform should succeed");
+        let result = transform_claude_request_in(
+            &req,
+            "test-proj",
+            false,
+            None,
+            "test-session-foreign",
+            None,
+        )
+        .expect("Transform should succeed");
 
         let contents = result["request"]["contents"]
             .as_array()
@@ -3599,8 +3606,7 @@ mod tests {
             "Thinking block must be clean without signature"
         );
         assert_eq!(
-            assistant_parts[1]["thoughtSignature"],
-            "skip_thought_signature_validator",
+            assistant_parts[1]["thoughtSignature"], "skip_thought_signature_validator",
             "Gemini functionCall must use sentinel signature instead of foreign Claude signature"
         );
     }

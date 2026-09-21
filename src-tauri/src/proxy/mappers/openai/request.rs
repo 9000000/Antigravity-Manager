@@ -1103,13 +1103,14 @@ pub fn transform_openai_request_with_session(
                 .as_ref()
                 .and_then(|t| t.budget_tokens.map(|b| b as u64));
 
-            let resolved_budget = crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
-                mapped_model,
-                &mut gen_config,
-                client_effort,
-                client_budget,
-                token,
-            );
+            let resolved_budget =
+                crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
+                    mapped_model,
+                    &mut gen_config,
+                    client_effort,
+                    client_budget,
+                    token,
+                );
 
             let tb_config = crate::proxy::config::get_thinking_budget_config();
             let is_client_control =

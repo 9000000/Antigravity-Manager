@@ -603,22 +603,26 @@ pub fn build_dual_track_error(
 
     let is_not_found = is_model_not_found_error(status_code, error_text);
 
-    let (readable_prefix, diagnosis, suggestion, err_type, err_code, parsed_upstream) = if is_internal_limited {
-        (
-            "【网关调度受限】".to_string(),
-            format!("网关本地账号池当前暂无可用账号或全部可用账号处于限流冷却中。调度详情: {}", error_text),
-            "请等待冷却结束（参考等待秒数），或在网关中添加更多正常账号。".to_string(),
-            "rate_limit_error",
-            "all_accounts_limited",
-            serde_json::json!({
-                "raw": error_text,
-                "detail": "gateway_local_accounts_throttled"
-            }),
-        )
-    } else if is_not_found {
-        let parsed: serde_json::Value = serde_json::from_str(error_text)
-            .unwrap_or_else(|_| serde_json::json!({ "raw": error_text }));
-        (
+    let (readable_prefix, diagnosis, suggestion, err_type, err_code, parsed_upstream) =
+        if is_internal_limited {
+            (
+                "【网关调度受限】".to_string(),
+                format!(
+                    "网关本地账号池当前暂无可用账号或全部可用账号处于限流冷却中。调度详情: {}",
+                    error_text
+                ),
+                "请等待冷却结束（参考等待秒数），或在网关中添加更多正常账号。".to_string(),
+                "rate_limit_error",
+                "all_accounts_limited",
+                serde_json::json!({
+                    "raw": error_text,
+                    "detail": "gateway_local_accounts_throttled"
+                }),
+            )
+        } else if is_not_found {
+            let parsed: serde_json::Value = serde_json::from_str(error_text)
+                .unwrap_or_else(|_| serde_json::json!({ "raw": error_text }));
+            (
             format!("【模型不存在】[{}]", model),
             format!("模型 [{}] 在上游端点不存在，或当前绑定的账号暂未开通该模型的访问权限。", model),
             format!("请核对模型名称，或在网关配置中的「自定义模型映射」将其重定向至可用模型（如 gemini-2.5-flash）。"),
@@ -626,35 +630,33 @@ pub fn build_dual_track_error(
             "model_not_found",
             parsed,
         )
-    } else if status_code == 429 || status_code == 529 {
-        let parsed: serde_json::Value = serde_json::from_str(error_text)
-            .unwrap_or_else(|_| serde_json::json!({ "raw": error_text }));
-        (
-            format!("【上游限流 HTTP {}】", status_code),
-            format!("模型 [{}] 触发上游配额耗尽或频率限制。", model),
-            "请稍候自动恢复，或添加更多账号以分散并发请求。".to_string(),
-            "rate_limit_error",
-            "rate_limit_exceeded",
-            parsed,
-        )
-    } else {
-        let parsed: serde_json::Value = serde_json::from_str(error_text)
-            .unwrap_or_else(|_| serde_json::json!({ "raw": error_text }));
-        (
-            format!("【上游错误 HTTP {}】", status_code),
-            format!("调用上游模型 [{}] 发生错误 (HTTP {})。", model, status_code),
-            "请参考 upstream_error 中的详细字段排查原因。".to_string(),
-            "api_error",
-            "upstream_error",
-            parsed,
-        )
-    };
+        } else if status_code == 429 || status_code == 529 {
+            let parsed: serde_json::Value = serde_json::from_str(error_text)
+                .unwrap_or_else(|_| serde_json::json!({ "raw": error_text }));
+            (
+                format!("【上游限流 HTTP {}】", status_code),
+                format!("模型 [{}] 触发上游配额耗尽或频率限制。", model),
+                "请稍候自动恢复，或添加更多账号以分散并发请求。".to_string(),
+                "rate_limit_error",
+                "rate_limit_exceeded",
+                parsed,
+            )
+        } else {
+            let parsed: serde_json::Value = serde_json::from_str(error_text)
+                .unwrap_or_else(|_| serde_json::json!({ "raw": error_text }));
+            (
+                format!("【上游错误 HTTP {}】", status_code),
+                format!("调用上游模型 [{}] 发生错误 (HTTP {})。", model, status_code),
+                "请参考 upstream_error 中的详细字段排查原因。".to_string(),
+                "api_error",
+                "upstream_error",
+                parsed,
+            )
+        };
 
     let readable_message = format!(
         "{} 网关诊断: {} 建议: {}",
-        readable_prefix,
-        diagnosis,
-        suggestion
+        readable_prefix, diagnosis, suggestion
     );
 
     if protocol == "claude" {

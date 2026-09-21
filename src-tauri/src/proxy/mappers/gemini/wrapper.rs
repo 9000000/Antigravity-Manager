@@ -681,13 +681,14 @@ pub fn wrap_request_v2(
         let tb_config = crate::proxy::config::get_thinking_budget_config();
         let budget_opt = if has_thinking_config || force_server_thinking {
             let mut gc_val = serde_json::Value::Object(std::mem::take(gen_config));
-            let resolved = crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
-                final_model_name,
-                &mut gc_val,
-                client_level.as_deref(),
-                client_budget.filter(|b| *b > 0).map(|b| b as u64),
-                token,
-            );
+            let resolved =
+                crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
+                    final_model_name,
+                    &mut gc_val,
+                    client_level.as_deref(),
+                    client_budget.filter(|b| *b > 0).map(|b| b as u64),
+                    token,
+                );
             if let serde_json::Value::Object(map) = gc_val {
                 *gen_config = map;
             }

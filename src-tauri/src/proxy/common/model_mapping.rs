@@ -291,7 +291,9 @@ pub fn resolve_model_route(
     // 1.5 [NEW] 检查是否命中自定义映射中的通配符规则 `gemini-3.x-flash`（要求 x > 8）
     // 统一转为 3.x-flash-tiered 模型
     if custom_mapping.contains_key("gemini-3.x-flash") {
-        if let Some(target) = crate::proxy::model_specs::resolve_gemini_3x_flash_tiered(original_model) {
+        if let Some(target) =
+            crate::proxy::model_specs::resolve_gemini_3x_flash_tiered(original_model)
+        {
             crate::modules::logger::log_info(&format!(
                 "[Router] 命中内置通配符规则 gemini-3.x-flash (x > 8): {} -> {}",
                 original_model, target
@@ -655,7 +657,10 @@ mod tests {
         );
 
         // 3. 用户如果自定义精确覆盖 gemini-3.9-flash，用户自定义优先
-        custom.insert("gemini-3.9-flash".to_string(), "gemini-3.9-flash-high".to_string());
+        custom.insert(
+            "gemini-3.9-flash".to_string(),
+            "gemini-3.9-flash-high".to_string(),
+        );
         assert_eq!(
             resolve_model_route("gemini-3.9-flash", &custom),
             "gemini-3.9-flash-high"

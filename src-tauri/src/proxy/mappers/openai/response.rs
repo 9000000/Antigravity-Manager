@@ -1159,7 +1159,9 @@ mod tests {
         // "end byte index 57 is not a char boundary; it is inside '区' (bytes 55..58 of string)"
         normalize_and_sanitize_tool_args("shell", &mut args);
 
-        let desc = args["description"].as_str().expect("description should exist");
+        let desc = args["description"]
+            .as_str()
+            .expect("description should exist");
         assert!(desc.starts_with("Run: "));
         assert!(desc.ends_with("..."));
 

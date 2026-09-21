@@ -2158,11 +2158,7 @@ pub async fn handle_chat_completions(
                             mapped_model.as_str(),
                             &e,
                         );
-                        return Ok((
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            headers,
-                            Json(dual_err),
-                        )
+                        return Ok((StatusCode::SERVICE_UNAVAILABLE, headers, Json(dual_err))
                             .into_response());
                     }
                 }
@@ -2801,7 +2797,9 @@ pub async fn handle_chat_completions(
                     if last_msg.role == "user" {
                         let repair_prompt = "\n\n[System Recovery] Your previous output contained an invalid signature. Please regenerate the response without the corrupted signature block.";
                         if let Some(content) = &mut last_msg.content {
-                            use crate::proxy::mappers::openai::{OpenAIContent, OpenAIContentBlock};
+                            use crate::proxy::mappers::openai::{
+                                OpenAIContent, OpenAIContentBlock,
+                            };
                             match content {
                                 OpenAIContent::String(s) => {
                                     s.push_str(repair_prompt);
@@ -3000,12 +2998,7 @@ pub async fn handle_chat_completions(
         &last_error,
     );
 
-    Ok((
-        final_status,
-        headers,
-        Json(dual_err),
-    )
-        .into_response())
+    Ok((final_status, headers, Json(dual_err)).into_response())
 }
 
 // --- Codex GUIDANCE PROMPTS ---
@@ -4904,7 +4897,9 @@ pub async fn handle_completions(
                 .status(StatusCode::from_u16(status_code).unwrap_or(StatusCode::NOT_FOUND))
                 .header("X-Account-Email", email.as_str())
                 .header("X-Mapped-Model", mapped_model.as_str())
-                .body(Body::from(serde_json::to_string(&dual_err).unwrap_or_default()))
+                .body(Body::from(
+                    serde_json::to_string(&dual_err).unwrap_or_default(),
+                ))
                 .unwrap()
                 .into_response();
         }
@@ -5896,11 +5891,12 @@ pub async fn handle_images_edits(
                                 )
                             });
                             // 统一流水线限流裁决：500/503等服务异常绝不打入限流
-                            let classification = crate::proxy::pipeline::UpstreamClassification::classify(
-                                status_code,
-                                &err_text,
-                                retry_after.as_deref(),
-                            );
+                            let classification =
+                                crate::proxy::pipeline::UpstreamClassification::classify(
+                                    status_code,
+                                    &err_text,
+                                    retry_after.as_deref(),
+                                );
                             let should_mark_limited = classification.should_lock_account();
                             let needs_quota_refresh = if should_mark_limited {
                                 tracing::warn!(

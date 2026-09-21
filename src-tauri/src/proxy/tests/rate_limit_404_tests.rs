@@ -18,7 +18,10 @@ fn test_404_and_5xx_never_lock_account() {
         Some("nonexistent".to_string()),
         &backoff_steps,
     );
-    assert!(info_404.is_none(), "404 must return None (no account lockout)");
+    assert!(
+        info_404.is_none(),
+        "404 must return None (no account lockout)"
+    );
     assert!(!tracker.is_rate_limited("acc_test", Some("nonexistent")));
     assert!(!tracker.is_rate_limited("acc_test", None));
 
