@@ -1283,7 +1283,7 @@ print(response.choices[0].message.content)`;
                                                     <div className="flex items-center gap-1.5 min-w-0">
                                                         <span className="font-mono text-[10px] font-bold text-blue-600 dark:text-blue-400 truncate max-w-[140px]" title={key}>{key}</span>
                                                         {key.toLowerCase() === 'gemini-3.x-flash' && (
-                                                            <span className="badge badge-warning badge-outline text-[8px] py-0 px-1 font-sans h-4 shrink-0 scale-90 origin-left cursor-help" title={t('proxy.router.wildcard_rule_notice') || "x 必须大于 8，自动转为 3.x-flash-tiered"}>
+                                                            <span className="badge badge-warning badge-outline text-[11px] font-bold font-mono py-0.5 px-1.5 h-5 shrink-0 ml-0.5 cursor-help shadow-xs" title={t('proxy.router.wildcard_rule_notice') || "x 必须大于 8，自动转为 3.x-flash-tiered"}>
                                                                 x &gt; 8
                                                             </span>
                                                         )}
