@@ -3,6 +3,11 @@
 > 完整版本历史记录。返回项目主页请查看 [README.md](README.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v4.7.11 (2026-09-21)**:
+        -   **[账号管理与配额安全健壮性修复] 彻底解决打开账号管理 TypeError: Cannot read properties of null (reading 'filter') 崩溃 (Fixes #3491)**:
+            -   **空桶安全兜底与解构保护**: 全面排查并修复 `AccountCard`、`AccountTable`、`quotaDisplay`、`Dashboard` 以及 `AccountDetailsDialog` 中对 `group.buckets` 与 `group.display_name` 的直接访问，增加安全可选链与空数组保底降级（`group.buckets || []`），杜绝因历史旧数据或不完整配额响应导致的前端白屏崩溃。
+            -   **前端类型定义契约对齐**: 将 `QuotaGroup` 中的 `buckets` 明确标注为可选字段（`buckets?: QuotaBucket[]`），强化编译期静态空安全检查。
+            -   **后端 Rust 反序列化平滑兼容**: 为 Rust `QuotaGroup.buckets` 添加 `#[serde(default)]`，历史数据或旧配置中缺失 `buckets` 字段时自动初始化为空集合，提供双向平滑兼容。
     *   **v4.7.10 (2026-09-21)**:
         -   **[OpenCode 支持多 APIKEY.FUN 独立 Profile 管理与并发原子落盘] (PR #3490, Thanks to @Avlaak)**:
             -   **独立 Profile 隔离**: 支持为每个 APIKEY.FUN Key 创建、更新与停用专属的 OpenCode provider profile，彻底解决多 Key 激活时相互覆盖问题，同时平滑兼容历史单 profile。

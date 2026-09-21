@@ -3,6 +3,11 @@
 > Complete version history for Antigravity Tools. Return to project home at [README_EN.md](README_EN.md).
 
 *   **Version History**:
+    *   **v4.7.11 (2026-09-21)**:
+        -   **[Account Management & Quota Null-Safety Hardening] Fix TypeError: Cannot read properties of null (reading 'filter') Crash on Accounts Page (Fixes #3491)**:
+            -   **Defensive Quota Bucket Access**: Resolved crashes caused by direct `.filter()` / `.map()` / `.some()` invocations on `group.buckets` across `AccountCard`, `AccountTable`, `quotaDisplay`, `Dashboard`, and `AccountDetailsDialog` by adding optional chaining and fallback empty arrays (`group.buckets || []`), preventing unexpected application errors when inspecting legacy or incomplete quota snapshots.
+            -   **Frontend Contract Alignment**: Updated `QuotaGroup` interface in `types/account.ts` to reflect optional bucket arrays (`buckets?: QuotaBucket[]`), enforcing compile-time safety.
+            -   **Backend Deserialization Compatibility**: Added `#[serde(default)]` to `QuotaGroup.buckets` in Rust, ensuring accounts stored without buckets automatically deserialize into empty vectors without failure.
     *   **v4.7.10 (2026-09-21)**:
         -   **[OpenCode Support Multiple APIKEY.FUN Key Profiles & Atomic Disk Persistence] (PR #3490, Thanks to @Avlaak)**:
             -   **Individual Profile Isolation**: Supports creating, updating, and deactivating dedicated OpenCode provider profiles for each APIKEY.FUN key, eliminating overwrites during multi-key usage while retaining legacy profile compatibility.
