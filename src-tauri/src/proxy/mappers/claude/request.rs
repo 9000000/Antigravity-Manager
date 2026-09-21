@@ -1068,14 +1068,20 @@ fn build_contents(
                     ContentBlock::Thinking {
                         signature: Some(s), ..
                     } => {
-                        if s == SENTINEL_SIGNATURE || s.len() >= MIN_SIGNATURE_LENGTH {
+                        if (s == SENTINEL_SIGNATURE || s.len() >= MIN_SIGNATURE_LENGTH)
+                            && (!mapped_model.to_lowercase().contains("gemini")
+                                || crate::proxy::thinking_store::is_likely_gemini_signature(s))
+                        {
                             turn_signature = Some(s.clone());
                             break;
                         }
                     }
                     ContentBlock::ToolUse { id, signature, .. } => {
                         if let Some(s) = signature {
-                            if s == SENTINEL_SIGNATURE || s.len() >= MIN_SIGNATURE_LENGTH {
+                            if (s == SENTINEL_SIGNATURE || s.len() >= MIN_SIGNATURE_LENGTH)
+                                && (!mapped_model.to_lowercase().contains("gemini")
+                                    || crate::proxy::thinking_store::is_likely_gemini_signature(s))
+                            {
                                 turn_signature = Some(s.clone());
                                 break;
                             }
@@ -1083,8 +1089,12 @@ fn build_contents(
                         if let Some(s) =
                             crate::proxy::SignatureCache::global().get_tool_signature(id)
                         {
-                            turn_signature = Some(s);
-                            break;
+                            if !mapped_model.to_lowercase().contains("gemini")
+                                || crate::proxy::thinking_store::is_likely_gemini_signature(&s)
+                            {
+                                turn_signature = Some(s);
+                                break;
+                            }
                         }
                     }
                     _ => {}
@@ -1097,7 +1107,11 @@ fn build_contents(
             if let Some(s) = crate::proxy::SignatureCache::global()
                 .get_session_signature_at(session_id, msg_index)
             {
-                turn_signature = Some(s);
+                if !mapped_model.to_lowercase().contains("gemini")
+                    || crate::proxy::thinking_store::is_likely_gemini_signature(&s)
+                {
+                    turn_signature = Some(s);
+                }
             }
         }
     }
@@ -1245,7 +1259,18 @@ fn build_contents(
                                     }
                                     None => {
                                         if !is_retry {
-                                            effective_sig = Some(sig.clone());
+                                            if mapped_model.to_lowercase().contains("gemini") {
+                                                if crate::proxy::thinking_store::is_likely_gemini_signature(sig) {
+                                                    effective_sig = Some(sig.clone());
+                                                } else {
+                                                    tracing::warn!(
+                                                        "[Thinking-Signature] Dropping unknown/foreign signature for Gemini target (len: {}), fallback to sentinel",
+                                                        sig.len()
+                                                    );
+                                                }
+                                            } else {
+                                                effective_sig = Some(sig.clone());
+                                            }
                                         }
                                     }
                                 }
@@ -1353,14 +1378,31 @@ fn build_contents(
                         let final_sig = signature
                             .as_ref()
                             .filter(|s| {
-                                s.as_str() == SENTINEL_SIGNATURE || s.len() >= MIN_SIGNATURE_LENGTH
+                                (s.as_str() == SENTINEL_SIGNATURE || s.len() >= MIN_SIGNATURE_LENGTH)
+                                    && (!mapped_model.to_lowercase().contains("gemini")
+                                        || crate::proxy::thinking_store::is_likely_gemini_signature(s))
                             })
                             .cloned()
                             .or_else(|| {
-                                crate::proxy::SignatureCache::global().get_tool_signature(id)
+                                crate::proxy::SignatureCache::global()
+                                    .get_tool_signature(id)
+                                    .filter(|s| {
+                                        !mapped_model.to_lowercase().contains("gemini")
+                                            || crate::proxy::thinking_store::is_likely_gemini_signature(s)
+                                    })
                             })
-                            .or_else(|| last_thought_signature.as_ref().cloned())
-                            .or_else(|| turn_signature.clone());
+                            .or_else(|| {
+                                last_thought_signature.as_ref().filter(|s| {
+                                    !mapped_model.to_lowercase().contains("gemini")
+                                        || crate::proxy::thinking_store::is_likely_gemini_signature(s)
+                                }).cloned()
+                            })
+                            .or_else(|| {
+                                turn_signature.as_ref().filter(|s| {
+                                    !mapped_model.to_lowercase().contains("gemini")
+                                        || crate::proxy::thinking_store::is_likely_gemini_signature(s)
+                                }).cloned()
+                            });
 
                         if let Some(ref s) = final_sig {
                             *last_thought_signature = Some(s.clone());
@@ -3470,6 +3512,97 @@ mod tests {
         assert!(
             assistant_parts[1].get("thoughtSignature").is_none(),
             "Claude model functionCall must NOT carry thoughtSignature!"
+        );
+    }
+
+    #[test]
+    fn test_foreign_claude_signature_fallback_to_sentinel_for_gemini() {
+        use crate::proxy::mappers::claude::thinking_utils::filter_invalid_thinking_blocks_with_family;
+        let foreign_claude_sig = "3mgp11XmVXq9InniGA4VAKd7c97NqFw+dWZt79Uz/w9znho88gSM76jv2bZmir7wI86Ixpha7eWdGuznAot4PNbe3+V9bgMTIEyUarn4MLAiiFVb830ZlM+H5ukQwXdD2Zv8nUSmmZTYinpLPGha8TORZAfpU1FJEvwyECel5+W7kc9kpTWrd8DqRNBTOz5EDtvoatiZgKv5SqInhGXK74SJ+PRIC6fNXvYG082HR6TsVxvVYaerz8A40rloIVTxRNK43h3Ecs1boxY4PZqBT8Yhl2qn/iZ+4Xt7FNkI0DAuS9iK0HYKMC4yw0OqKx/LeU+WFZlyc6hGm1BkzLY6yG97MH7kmJ0OPlBWgWFaTeL/uXuGJX6QkKObXN+phoq+kkF2vdFt/mdJMbdgfmSCVQ9037hGBhOHm0zN50KLkp1SxuAY1oWc+lDcI4ufWoyn";
+
+        let mut messages = vec![
+            Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Run tool".to_string()),
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: MessageContent::Array(vec![
+                    ContentBlock::Thinking {
+                        thinking: "Thinking from foreign Claude model".to_string(),
+                        signature: Some(foreign_claude_sig.to_string()),
+                        cache_control: None,
+                    },
+                    ContentBlock::ToolUse {
+                        id: "call_999999".to_string(),
+                        name: "web_fetch".to_string(),
+                        input: serde_json::json!({"url": "https://example.com"}),
+                        signature: None,
+                        cache_control: None,
+                    },
+                ]),
+            },
+            Message {
+                role: "user".to_string(),
+                content: MessageContent::Array(vec![ContentBlock::ToolResult {
+                    tool_use_id: "call_999999".to_string(),
+                    content: serde_json::json!("ok"),
+                    is_error: None,
+                }]),
+            },
+        ];
+
+        // 1. 验证 filter_invalid_thinking_blocks_with_family 会将非 Gemini 格式的异构签名从思考块中剔除
+        filter_invalid_thinking_blocks_with_family(&mut messages, Some("gemini"));
+        if let MessageContent::Array(blocks) = &messages[1].content {
+            if let ContentBlock::Thinking { signature, .. } = &blocks[0] {
+                assert!(
+                    signature.is_none(),
+                    "Foreign Claude signature must be stripped for Gemini target!"
+                );
+            }
+        }
+
+        // 2. 验证 transform_claude_request_in 在目标为 Gemini 时，思考块与工具调用的签名均安全降级为哨兵
+        let req = ClaudeRequest {
+            model: "gemini-3.7-flash-high".to_string(),
+            messages,
+            thinking: Some(ThinkingConfig {
+                type_: "enabled".to_string(),
+                budget_tokens: Some(8192),
+                effort: None,
+            }),
+            system: None,
+            tools: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            metadata: None,
+            output_config: None,
+            size: None,
+            quality: None,
+        };
+
+        let result =
+            transform_claude_request_in(&req, "test-proj", false, None, "test-session-foreign", None)
+                .expect("Transform should succeed");
+
+        let contents = result["request"]["contents"]
+            .as_array()
+            .expect("Contents array");
+        let assistant_parts = contents[1]["parts"].as_array().expect("Assistant parts");
+        assert_eq!(assistant_parts[0]["thought"], true);
+        assert_eq!(
+            assistant_parts[0]["thoughtSignature"],
+            "skip_thought_signature_validator",
+            "Thinking block must use sentinel signature instead of foreign Claude signature"
+        );
+        assert_eq!(
+            assistant_parts[1]["thoughtSignature"],
+            "skip_thought_signature_validator",
+            "Gemini functionCall must use sentinel signature instead of foreign Claude signature"
         );
     }
 
