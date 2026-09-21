@@ -882,6 +882,45 @@ impl ThinkingStore {
         }
     }
 
+    /// 精准定向净化指定会话中的异构污染签名（保留思考文本与健康签名）
+    pub fn purge_corrupted_signatures(&self, store_key: &str, target_model: &str) -> usize {
+        let is_gemini = target_model.to_lowercase().contains("gemini");
+        if !is_gemini || store_key.is_empty() {
+            return 0;
+        }
+
+        let mut purged_count = 0;
+
+        // 1. 精准净化内存缓存 (RAM)
+        if let Some(mut entry) = self.sessions.get_mut(store_key) {
+            let mut new_turns = Vec::with_capacity(entry.turns.len());
+            for rec in &entry.turns {
+                if let Some(ref sig) = rec.signature {
+                    if !is_likely_gemini_signature(sig) {
+                        purged_count += 1;
+                        let mut cleaned = (**rec).clone();
+                        cleaned.signature = None;
+                        new_turns.push(Arc::new(cleaned));
+                        continue;
+                    }
+                }
+                new_turns.push(rec.clone());
+            }
+            entry.turns = new_turns;
+        }
+
+        // 2. 精准净化持久化数据库 (SQLite)
+        let _ = crate::modules::proxy_db::purge_foreign_signatures_for_session(store_key);
+
+        if purged_count > 0 {
+            tracing::warn!(
+                "[ThinkingStore] Surgically purged {} foreign signature(s) for session {}",
+                purged_count, store_key
+            );
+        }
+        purged_count
+    }
+
     /// Drop thinking records that no longer appear in the (possibly compressed) history.
     /// Always keeps the newest 2 turns so the latest unused response thinking is not lost.
     pub fn prune_orphaned_records(&self, store_key: &str, contents: &[Value]) {
@@ -1374,12 +1413,17 @@ pub fn finalize_gemini_contents_thinking_with_model(
             }
 
             if is_thinking_enabled {
+                let is_claude_turn = target_model
+                    .map(|m| m.to_lowercase().contains("claude"))
+                    .unwrap_or(false);
+
                 // Prefer a real tool signature from this turn when aligning placeholder thoughts.
                 let turn_real_sig: Option<String> = other_parts.iter().find_map(|p| {
                     if p.get("functionCall").is_some() {
                         p.get("thoughtSignature")
                             .and_then(|s| s.as_str())
                             .filter(|s| is_real_signature(s))
+                            .filter(|s| is_claude_turn || is_likely_gemini_signature(s))
                             .map(|s| s.to_string())
                     } else {
                         None
@@ -1387,9 +1431,6 @@ pub fn finalize_gemini_contents_thinking_with_model(
                 });
 
                 let has_function_call = other_parts.iter().any(|p| p.get("functionCall").is_some());
-                let is_claude_turn = target_model
-                    .map(|m| m.to_lowercase().contains("claude"))
-                    .unwrap_or(false);
 
                 if is_claude_turn {
                     // Claude 模型：Anthropic 引擎强制要求签名必须且只能在思考块上！
@@ -1469,9 +1510,17 @@ pub fn finalize_gemini_contents_thinking_with_model(
                             if !first_fc_seen {
                                 first_fc_seen = true;
                                 if let Some(ref real_sig) = turn_real_sig {
-                                    part["thoughtSignature"] = json!(real_sig);
+                                    if is_likely_gemini_signature(real_sig) {
+                                        part["thoughtSignature"] = json!(real_sig);
+                                    } else {
+                                        part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                                    }
                                 } else if part.get("thoughtSignature").is_none() {
                                     part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                                } else if let Some(existing) = part.get("thoughtSignature").and_then(|s| s.as_str()) {
+                                    if !is_likely_gemini_signature(existing) {
+                                        part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                                    }
                                 }
                             } else {
                                 part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);

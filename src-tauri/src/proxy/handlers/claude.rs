@@ -1811,8 +1811,10 @@ pub async fn handle_messages(
                 }
             }
 
-            // 同步清理 ThinkingStore 与 SignatureCache 中当前 session 的记录，防止重试阶段再次把坏签名还原回 contents
-            crate::proxy::thinking_store::ThinkingStore::global().end_session(&session_id_str);
+            // 精准定向净化 ThinkingStore 中当前 session 的异构污染签名，保留思考文本与健康历史签名，
+            // 彻底防止重试阶段再次把坏签名还原回 contents
+            crate::proxy::thinking_store::ThinkingStore::global()
+                .purge_corrupted_signatures(&session_id_str, &mapped_model);
             crate::proxy::SignatureCache::global().delete_session_signature(&client_session_id);
 
             // [FIX Prompt-Cache] 严禁在重试路径中注入合成消息 (close_tool_loop_for_thinking)！

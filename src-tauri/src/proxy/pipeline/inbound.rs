@@ -73,7 +73,13 @@ impl InboundThinkingPipeline {
                                             ) || (is_claude
                                                 && family.to_lowercase().contains("claude"))
                                         }
-                                        None => true,
+                                        None => {
+                                            if target_model.to_lowercase().contains("gemini") {
+                                                crate::proxy::thinking_store::is_likely_gemini_signature(sig)
+                                            } else {
+                                                true
+                                            }
+                                        }
                                     };
                                     if compatible {
                                         let final_sig = if is_claude {
@@ -82,6 +88,12 @@ impl InboundThinkingPipeline {
                                             sig.to_string()
                                         };
                                         effective_sig = Some(final_sig);
+                                    } else if target_model.to_lowercase().contains("gemini") {
+                                        tracing::warn!(
+                                            "[InboundPipeline] Dropping incompatible external signature (len: {}) for Gemini model {}, fallback to sentinel",
+                                            sig.len(), target_model
+                                        );
+                                        effective_sig = Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string());
                                     }
                                 }
                             }
@@ -113,6 +125,20 @@ impl InboundThinkingPipeline {
                                 }
                             }
                         } else {
+                            if target_model.to_lowercase().contains("gemini") {
+                                if let Some(fc_sig) = part
+                                    .get("thoughtSignature")
+                                    .and_then(|s| s.as_str())
+                                {
+                                    if !crate::proxy::thinking_store::is_likely_gemini_signature(fc_sig) {
+                                        tracing::warn!(
+                                            "[InboundPipeline] Replacing foreign functionCall thoughtSignature (len: {}) with sentinel for Gemini",
+                                            fc_sig.len()
+                                        );
+                                        part["thoughtSignature"] = json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
+                                    }
+                                }
+                            }
                             // 非思考部件：可能是普通正文/过程进度说明（commentary），也可能是 functionCall 等
                             let is_plain_text = part.get("text").is_some()
                                 && part.get("functionCall").is_none()
@@ -486,5 +512,51 @@ mod tests {
         // Gemini 原生签名绝不被二次编码，必须原样保留
         assert_eq!(parts[0]["thoughtSignature"], gemini_sig);
         assert_eq!(parts[1]["text"], "Gemini answer");
+    }
+
+    #[test]
+    fn test_inbound_pipeline_intercepts_foreign_claude_signature_for_gemini() {
+        let foreign_claude_sig = "3mgp11XmVXq9InniGA4VAKd7c97NqFw+dWZt79Uz/w9znho88gSM76jv2bZmir7wI86Ixpha7eWdGuznAot4PNbe3+V9bgMTIEyUarn4MLAiiFVb830ZlM+H5ukQwXdD2Zv8nUSmmZTYinpLPGha8TORZAfpU1FJEvwyECel5+W7kc9kpTWrd8DqRNBTOz5EDtvoatiZgKv5SqInhGXK74SJ+PRIC6fNXvYG082HR6TsVxvVYaerz8A40rloIVTxRNK43h3Ecs1boxY4PZqBT8Yhl2qn/iZ+4Xt7FNkI0DAuS9iK0HYKMC4yw0OqKx/LeU+WFZlyc6hGm1BkzLY6yG97MH7kmJ0OPlBWgWFaTeL/uXuGJX6QkKObXN+phoq+kkF2vdFt/mdJMbdgfmSCVQ9037hGBhOHm0zN50KLkp1SxuAY1oWc+lDcI4ufWoyn";
+
+        let mut contents = vec![json!({
+            "role": "model",
+            "parts": [
+                {
+                    "text": "Cross-model thinking from Claude",
+                    "thought": true,
+                    "thoughtSignature": foreign_claude_sig
+                },
+                {
+                    "thoughtSignature": foreign_claude_sig,
+                    "functionCall": {
+                        "name": "bash",
+                        "args": { "command": "ls" }
+                    }
+                }
+            ]
+        })];
+
+        InboundThinkingPipeline::process_contents(
+            &mut contents,
+            ProxyProtocol::AnthropicClaude,
+            "gemini-3.7-flash-high",
+            true,
+            None,
+            false,
+        );
+
+        let parts = contents[0]["parts"].as_array().expect("parts array");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["thought"], true);
+        assert_eq!(
+            parts[0]["thoughtSignature"],
+            crate::proxy::thinking_store::SENTINEL_SIGNATURE,
+            "Thinking block must fall back to sentinel signature in InboundThinkingPipeline"
+        );
+        assert_eq!(
+            parts[1]["thoughtSignature"],
+            crate::proxy::thinking_store::SENTINEL_SIGNATURE,
+            "FunctionCall must fall back to sentinel signature in InboundThinkingPipeline"
+        );
     }
 }
