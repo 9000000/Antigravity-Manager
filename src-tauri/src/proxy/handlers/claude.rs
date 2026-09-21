@@ -930,16 +930,16 @@ pub async fn handle_messages(
                     None,
                     &safe_message,
                 );
+                let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+                    "claude",
+                    StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+                    mapped_model.as_str(),
+                    &safe_message,
+                );
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     headers,
-                    Json(json!({
-                        "type": "error",
-                        "error": {
-                            "type": "overloaded_error",
-                            "message": format!("No available accounts: {}", safe_message)
-                        }
-                    })),
+                    Json(dual_err),
                 )
                     .into_response();
             }
@@ -1694,14 +1694,36 @@ pub async fn handle_messages(
             .await;
         }
 
-        // 3. 标记限流状态(用于 UI 显示) - 使用异步版本以支持实时配额刷新
-        // 🆕 传入实际使用的模型,实现模型级别限流,避免不同模型配额互相影响
-        if status_code == 429
-            || status_code == 529
-            || status_code == 503
-            || status_code == 500
-            || status_code == 404
-        {
+        // 3. 统一流水线决策判定（协议无关的唯一真理）
+        let classification = crate::proxy::pipeline::UpstreamClassification::classify(
+            status_code,
+            &error_text,
+            retry_after.as_deref(),
+        );
+
+        if classification.is_model_not_found() {
+            tracing::warn!(
+                "[{}] Pipeline: Target model [{}] not found on upstream (HTTP {}). Terminating retry loop without account lockout.",
+                trace_id, request_with_mapped.model, status_code
+            );
+            let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+                "claude",
+                status_code,
+                &request_with_mapped.model,
+                &error_text,
+            );
+            return (
+                StatusCode::from_u16(status_code).unwrap_or(StatusCode::NOT_FOUND),
+                [
+                    ("X-Account-Email", email.as_str()),
+                    ("X-Mapped-Model", request_with_mapped.model.as_str()),
+                ],
+                Json(dual_err),
+            )
+                .into_response();
+        }
+
+        if classification.should_lock_account() {
             token_manager
                 .mark_rate_limited_async_baseline(
                     &email,
@@ -1712,16 +1734,14 @@ pub async fn handle_messages(
                 )
                 .await;
 
-            if status_code == 429 || status_code == 529 || status_code == 503 {
-                token_manager
-                    .unbind_session_and_clear_last_used(session_id)
-                    .await;
-                if let Some(sid) = session_id {
-                    debug!(
-                        "[{}] Unbound session {} from account {} due to status {}",
-                        trace_id, sid, email, status_code
-                    );
-                }
+            token_manager
+                .unbind_session_and_clear_last_used(session_id)
+                .await;
+            if let Some(sid) = session_id {
+                debug!(
+                    "[{}] Unbound session {} from account {} due to status {}",
+                    trace_id, sid, email, status_code
+                );
             }
         }
 
@@ -1960,10 +1980,16 @@ pub async fn handle_messages(
                 ).into_response();
             }
 
-            // 不可重试的错误，直接返回
+            // 不可重试的错误，直接返回双轨制友好报文
             error!(
                 "[{}] Non-retryable error {}: {}",
                 trace_id, status_code, error_text
+            );
+            let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+                "claude",
+                status_code,
+                &request_with_mapped.model,
+                &error_text,
             );
             return (
                 status,
@@ -1971,7 +1997,7 @@ pub async fn handle_messages(
                     ("X-Account-Email", email.as_str()),
                     ("X-Mapped-Model", request_with_mapped.model.as_str()),
                 ],
-                error_text,
+                Json(dual_err),
             )
                 .into_response();
         }
@@ -1984,8 +2010,8 @@ pub async fn handle_messages(
             "X-Account-Email",
             header::HeaderValue::from_str(&email).unwrap(),
         );
-        if let Some(model) = last_mapped_model {
-            if let Ok(v) = header::HeaderValue::from_str(&model) {
+        if let Some(ref model) = last_mapped_model {
+            if let Ok(v) = header::HeaderValue::from_str(model) {
                 headers.insert("X-Mapped-Model", v);
             }
         }
@@ -2013,19 +2039,20 @@ pub async fn handle_messages(
             }
         }
 
-        (response_status, headers, Json(json!({
-            "type": "error",
-            "error": {
-                "id": "err_retry_exhausted",
-                "type": error_type,
-                "message": format!("All {} attempts failed. Last status: {}. Error: {}", max_attempts, last_status, last_error)
-            }
-        }))).into_response()
+        let model_str = last_mapped_model.as_deref().unwrap_or("unknown");
+        let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+            "claude",
+            response_status.as_u16(),
+            model_str,
+            &last_error,
+        );
+
+        (response_status, headers, Json(dual_err)).into_response()
     } else {
         // Fallback if no email (e.g. mapping error before token)
         let mut headers = HeaderMap::new();
-        if let Some(model) = last_mapped_model {
-            if let Ok(v) = header::HeaderValue::from_str(&model) {
+        if let Some(ref model) = last_mapped_model {
+            if let Ok(v) = header::HeaderValue::from_str(model) {
                 headers.insert("X-Mapped-Model", v);
             }
         }
@@ -2052,14 +2079,15 @@ pub async fn handle_messages(
             last_status
         };
 
-        (response_status, headers, Json(json!({
-            "type": "error",
-            "error": {
-                "id": "err_retry_exhausted",
-                "type": error_type,
-                "message": format!("All {} attempts failed. Last status: {}. Error: {}", max_attempts, last_status, last_error)
-            }
-        }))).into_response()
+        let model_str = last_mapped_model.as_deref().unwrap_or("unknown");
+        let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+            "claude",
+            response_status.as_u16(),
+            model_str,
+            &last_error,
+        );
+
+        (response_status, headers, Json(dual_err)).into_response()
     }
 }
 

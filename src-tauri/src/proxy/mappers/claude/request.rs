@@ -3594,10 +3594,9 @@ mod tests {
             .expect("Contents array");
         let assistant_parts = contents[1]["parts"].as_array().expect("Assistant parts");
         assert_eq!(assistant_parts[0]["thought"], true);
-        assert_eq!(
-            assistant_parts[0]["thoughtSignature"],
-            "skip_thought_signature_validator",
-            "Thinking block must use sentinel signature instead of foreign Claude signature"
+        assert!(
+            assistant_parts[0].get("thoughtSignature").is_none(),
+            "Thinking block must be clean without signature"
         );
         assert_eq!(
             assistant_parts[1]["thoughtSignature"],

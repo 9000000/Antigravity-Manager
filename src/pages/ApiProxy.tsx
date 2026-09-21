@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, startTransition } from 'react';
 import { useTranslation } from 'react-i18next';
 import { request as invoke } from '../utils/request';
 import { isTauri } from '../utils/env';
@@ -1433,7 +1433,7 @@ print(response.choices[0].message.content)`;
                         {/* OpenAI Card */}
                         <div
                             className={`p-3 rounded-xl border-2 transition-all cursor-pointer ${selectedProtocol === 'openai' ? 'border-blue-500 bg-blue-50/30 dark:bg-blue-900/10' : 'border-gray-100 dark:border-base-200 hover:border-blue-200'}`}
-                            onClick={() => setSelectedProtocol('openai')}
+                            onClick={() => startTransition(() => setSelectedProtocol('openai'))}
                         >
                             <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-bold text-blue-600">{t('proxy.multi_protocol.openai_label')}</span>
@@ -1482,7 +1482,7 @@ print(response.choices[0].message.content)`;
                         {/* Anthropic Card */}
                         <div
                             className={`p-3 rounded-xl border-2 transition-all cursor-pointer ${selectedProtocol === 'anthropic' ? 'border-purple-500 bg-purple-50/30 dark:bg-purple-900/10' : 'border-gray-100 dark:border-base-200 hover:border-purple-200'}`}
-                            onClick={() => setSelectedProtocol('anthropic')}
+                            onClick={() => startTransition(() => setSelectedProtocol('anthropic'))}
                         >
                             <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-bold text-purple-600">{t('proxy.multi_protocol.anthropic_label')}</span>
@@ -1500,7 +1500,7 @@ print(response.choices[0].message.content)`;
                         {/* Gemini Card */}
                         <div
                             className={`p-3 rounded-xl border-2 transition-all cursor-pointer ${selectedProtocol === 'gemini' ? 'border-green-500 bg-green-50/30 dark:bg-green-900/10' : 'border-gray-100 dark:border-base-200 hover:border-green-200'}`}
-                            onClick={() => setSelectedProtocol('gemini')}
+                            onClick={() => startTransition(() => setSelectedProtocol('gemini'))}
                         >
                             <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-bold text-green-600">{t('proxy.multi_protocol.gemini_label')}</span>
