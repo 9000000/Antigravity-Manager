@@ -808,8 +808,15 @@ pub async fn monitor_middleware(
     let status = response.status().as_u16();
 
     // 过滤健康检查请求，避免每 30 秒探针刷屏淹没真实业务日志 (Issue #3498)
-    // 默认仅过滤成功的健康检查 (2xx)；异常状态 (如 503 等) 依然记录以供排障
-    if is_health_check_path(&uri) && response.status().is_success() && !should_log_health_checks() {
+    // 1. 默认仅过滤成功的 GET 健康检查 (2xx)，非 GET 请求或异常状态 (如 503) 依然记录以供排障；
+    // 2. 联动面板胶囊开关 (capture_health_logs) 与环境变量 (ABV_LOG_HEALTH_CHECKS)。
+    let capture_health_enabled =
+        state.monitor.is_capture_health_logs() || should_log_health_checks();
+    if is_health_check_path(&uri)
+        && method == "GET"
+        && response.status().is_success()
+        && !capture_health_enabled
+    {
         return response;
     }
 
