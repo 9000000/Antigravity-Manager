@@ -58,6 +58,20 @@ fn extract_boundary(content_type: &str) -> Option<String> {
     })
 }
 
+fn is_health_check_path(path: &str) -> bool {
+    let clean_path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
+    clean_path == "/health" || clean_path == "/healthz" || clean_path == "/api/health"
+}
+
+fn should_log_health_checks() -> bool {
+    std::env::var("ABV_LOG_HEALTH_CHECKS")
+        .map(|val| {
+            let v = val.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes" || v == "on"
+        })
+        .unwrap_or(false)
+}
+
 fn find_subslice(haystack: &[u8], needle: &[u8], start: usize) -> Option<usize> {
     if needle.is_empty() || start >= haystack.len() {
         return None;
@@ -792,6 +806,12 @@ pub async fn monitor_middleware(
 
     let duration = start.elapsed().as_millis() as u64;
     let status = response.status().as_u16();
+
+    // 过滤健康检查请求，避免每 30 秒探针刷屏淹没真实业务日志 (Issue #3498)
+    // 默认仅过滤成功的健康检查 (2xx)；异常状态 (如 503 等) 依然记录以供排障
+    if is_health_check_path(&uri) && response.status().is_success() && !should_log_health_checks() {
+        return response;
+    }
 
     let content_type = response
         .headers()
@@ -1695,5 +1715,21 @@ mod tests {
         assert_eq!(super::extract_input_tokens(&usage), Some(10000));
         assert_eq!(super::extract_cached_tokens(&usage), Some(8800));
         assert_eq!(super::extract_output_tokens(&usage), Some(150));
+    }
+
+    #[test]
+    fn test_is_health_check_path() {
+        assert!(super::is_health_check_path("/health"));
+        assert!(super::is_health_check_path("/health/"));
+        assert!(super::is_health_check_path("/healthz"));
+        assert!(super::is_health_check_path("/healthz/"));
+        assert!(super::is_health_check_path("/api/health"));
+        assert!(super::is_health_check_path("/health?probe=k8s"));
+        assert!(super::is_health_check_path("/healthz?t=123"));
+
+        assert!(!super::is_health_check_path("/v1/chat/completions"));
+        assert!(!super::is_health_check_path("/v1/models"));
+        assert!(!super::is_health_check_path("/api/accounts"));
+        assert!(!super::is_health_check_path("/healthy"));
     }
 }
