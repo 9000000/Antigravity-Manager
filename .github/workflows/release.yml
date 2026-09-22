@@ -338,6 +338,21 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # 预发布 Tag (含 '-') 不更新 latest-amd64，与 GitHub Release 的 Pre-release 守卫同一语义
+      - name: Resolve Docker tags (AMD64)
+        run: |
+          OWNER="${{ github.repository_owner }}"
+          VER="${{ github.ref_name }}"
+          TAGS="${OWNER}/antigravity-manager:${VER}-amd64"
+          if [[ "$VER" != *-* ]]; then
+            TAGS="${TAGS}"$'\n'"${OWNER}/antigravity-manager:latest-amd64"
+          fi
+          {
+            echo "DOCKER_TAGS<<EOF"
+            echo "$TAGS"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Build and push (AMD64)
         uses: docker/build-push-action@v6
         with:
@@ -345,9 +360,7 @@ jobs:
           file: docker/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: |
-            ${{ github.repository_owner }}/antigravity-manager:latest-amd64
-            ${{ github.repository_owner }}/antigravity-manager:${{ github.ref_name }}-amd64
+          tags: ${{ env.DOCKER_TAGS }}
           build-args: |
             USE_MIRROR=false
 
@@ -367,6 +380,21 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # 预发布 Tag (含 '-') 不更新 latest-arm64，与 GitHub Release 的 Pre-release 守卫同一语义
+      - name: Resolve Docker tags (ARM64)
+        run: |
+          OWNER="${{ github.repository_owner }}"
+          VER="${{ github.ref_name }}"
+          TAGS="${OWNER}/antigravity-manager:${VER}-arm64"
+          if [[ "$VER" != *-* ]]; then
+            TAGS="${TAGS}"$'\n'"${OWNER}/antigravity-manager:latest-arm64"
+          fi
+          {
+            echo "DOCKER_TAGS<<EOF"
+            echo "$TAGS"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Build and push (ARM64)
         uses: docker/build-push-action@v6
         with:
@@ -374,9 +402,7 @@ jobs:
           file: docker/Dockerfile
           platforms: linux/arm64
           push: true
-          tags: |
-            ${{ github.repository_owner }}/antigravity-manager:latest-arm64
-            ${{ github.repository_owner }}/antigravity-manager:${{ github.ref_name }}-arm64
+          tags: ${{ env.DOCKER_TAGS }}
           build-args: |
             USE_MIRROR=false
 
@@ -393,10 +419,13 @@ jobs:
 
       - name: Create and push manifest
         run: |
-          docker buildx imagetools create -t ${{ github.repository_owner }}/antigravity-manager:latest \
-            ${{ github.repository_owner }}/antigravity-manager:latest-amd64 \
-            ${{ github.repository_owner }}/antigravity-manager:latest-arm64
-
           docker buildx imagetools create -t ${{ github.repository_owner }}/antigravity-manager:${{ github.ref_name }} \
             ${{ github.repository_owner }}/antigravity-manager:${{ github.ref_name }}-amd64 \
             ${{ github.repository_owner }}/antigravity-manager:${{ github.ref_name }}-arm64
+
+          # 预发布 Tag (含 '-') 不更新 latest，避免预发布镜像进入正式更新通道
+          if [[ "${{ github.ref_name }}" != *-* ]]; then
+            docker buildx imagetools create -t ${{ github.repository_owner }}/antigravity-manager:latest \
+              ${{ github.repository_owner }}/antigravity-manager:latest-amd64 \
+              ${{ github.repository_owner }}/antigravity-manager:latest-arm64
+          fi
