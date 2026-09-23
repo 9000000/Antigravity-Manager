@@ -7,13 +7,17 @@
 ## 一、流程概览
 
 ```text
-[1] 预检 · 打版                      [2] 填日志              [3] 提交 · 打 Tag · 推送
-Pre-flight Checks ─► npm run bump ─► 编辑 CHANGELOG.md ─► git push origin main
-                                                          git tag vX.Y.Z && git push origin vX.Y.Z
-                                                                     │
-                                                                     ▼
-                                       GitHub Actions 构建全平台安装包 + Docker 镜像，生成 Releases
+[通道 A: 正式版发布]
+Pre-flight ─► checkout main ─► npm run bump <patch|minor> ─► 补充日志 ─► git push origin main ─► 打 Tag vX.Y.Z ─► 自动发布 Latest Release
+
+[通道 B: Beta 预发布]
+Pre-flight ─► checkout beta ─► npm run bump beta ──────────► 补充日志 ─► git push origin beta ─► 打 Tag vX.Y.Z-beta.N ─► 自动发布 Pre-release (隔离无感)
 ```
+
+> **通道隔离与维护者协作原则**：
+> - **正式版通道 (Main)**：`main` 为**绝对纯净正式打版分支**，仅发布纯数字正式版本（如 `v4.7.14`），流水线严格拦截任何带 `-` 的预发标签。
+> - **预览版通道 (Beta)**：`beta` 为**独立预发布打版分支**，所有预发测试版本（如 `v4.7.14-beta.1`、`-cleaned` 等）在此提交并由 `beta` 触发独立构建。预发布产物自动标记为 Pre-release 且绝不打 Latest，完全不影响正式版主用户更新。
+> - **新更改优先暂存验证 (Staging on Beta First)**：凡涉及新功能、重大重构或高风险修复，**必须主动询问维护者**是否先在 `beta` 分支进行修改与验证。待验证稳定（或发布 Beta 预览版内测确认）后，方可合并进入 `main`。
 
 ---
 
@@ -35,7 +39,7 @@ cd ..
 npm run build
 ```
 
-> `ci.yml` 仅门禁 `main` 推送与面向 `main` 的 PR。tag 若打在 feature 分支上，Release 工作流不受 CI 门禁保护，须由本地预检兜底。
+> CI 门禁已全量覆盖 `main` 与 `beta` 分支。正式发布前确保在 `main` 预检通过，Beta 预发前确保在 `beta` 预检通过。
 
 ### 第 1 步：版本号原子同步
 
@@ -78,29 +82,40 @@ npm run build
 > 3. **测试版不进入 README**：Tag 含 `-` 的预发布 / 衍生版本（`-beta` / `-cleaned` / `-rc` 等）**只在 `CHANGELOG.md` 记录**，不得写入任何 README 的版本号、Shields 徽章或「最新版本」段落。README 始终只反映最新**正式版**。`bump-version.mjs` 已内置该判定：预发布版本自动跳过两个 README，仅同步其余版本配置文件。
 > 4. **贡献者致谢写在条目行内**：不单列致谢块，外部贡献者统一以 `(Thanks to @username)` 标注在对应条目上。Release 页的 **Contributors 头像列表由正文中的 `@username` 自动生成** —— 增删提及即增删头像，条目内没有 `@username` 时该列表为空。
 
-### 第 3 步：提交并推送主干
+### 第 3 步：提交并推送目标分支
 
 ```bash
+# 正式版：提交并推送到 main 分支
+git checkout main
 git add -A
 git commit -m "chore(release): bump version to 4.7.14 and update changelog"
 git push origin main
+
+# Beta 预发版：提交并推送到 beta 分支（严禁推到 main，保持 main 纯净）
+git checkout beta
+git add -A
+git commit -m "chore(release): bump version to 4.7.14-beta.1 and update changelog"
+git push origin beta
 ```
 
 ### 第 4 步：打 Tag 并推送
 
 ```bash
-git tag v4.7.14              # 正式版：注意带 'v' 前缀
-git push origin v4.7.14      # 触发 Release 工作流
+# 正式版：从 main 打纯数字 Tag（触发正式发布，更新 Latest）
+git tag v4.7.14
+git push origin v4.7.14
 
-git tag v4.7.14-beta.1       # 预发布：须与 CHANGELOG 标题逐字符一致（含 .N 序号）
+# Beta 预发版：从 beta 打预发布 Tag（触发隔离构建，不更新 Latest）
+git tag v4.7.14-beta.1
 git push origin v4.7.14-beta.1
 ```
 
 > Tag 串必须与 CHANGELOG 中该版本的标题**逐字符相同**（`v` 前缀 + 完整预发布后缀），否则 Release 正文会退化为占位文案。
 
-**预发布标签规则**：Tag 名含 `-`（如 `v4.7.14-beta.1`、`v4.7.13-cleaned`、`v4.8.0-rc.1`）时，Release 自动标记为 **Pre-release** 且**不更新 Latest**，不会经 `releases/latest/download/updater.json` 推送给正式用户，可放心用于灰度与内测；纯 `vX.Y.Z` 按正式版发布并更新 Latest。
-
-**从 feature 分支发 Beta**：tag 不绑定分支，可直接对分支上的提交打 tag。此时须先本地跑完第 0 步预检（该提交不经过 CI 门禁）。
+**分支与标签严格门禁**：流水线内置分支与标签匹配断言。
+- 带有 `-` 的预发布 Tag 若打在 `main` 独有提交上，流水线立即拦截阻断，拒绝构建与发布；
+- 不带 `-` 的正式版 Tag 若打在 `beta` 独有提交上，流水线立即拦截阻断。
+- 预发布版本自动降级为 NSIS、不更新 Latest、不更新正式用户的 `updater.json`，主用户客户端绝不受任何影响。
 
 ### 第 5 步：验收
 
