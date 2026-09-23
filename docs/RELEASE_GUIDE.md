@@ -64,17 +64,30 @@ npm run build
 
 **预发布版本号形态**：`npm run bump beta` 生成 `X.Y.Z-beta.N`（首次为 `beta.1`，后续递增为 `beta.2`）。该版本串同时决定脚本插入的 CHANGELOG 骨架标题与后续 Tag 名，**三者必须完全一致**（详见第 2 步提示与第 4 步）。
 
-### 第 2 步：补充更新日志
+### 第 2 步：回溯提交与补充更新日志
 
-在脚本插入的版本骨架中填写核心亮点：
+在填写更新日志前，**必须以 Git 提交历史与已合入 PR 为客观事实依据进行完整回溯**，严防遗漏贡献者署名或 Issue 关联：
 
+```bash
+# 1. 扫描上个版本以来的全部提交、Author 与 Co-Authored-By 署名
+git log $(git describe --tags --abbrev=0)..HEAD --format="Commit: %h | %an <%ae> | %s%n%(trailers:key=Co-Authored-By)"
+
+# 2. 列出在此期间合并的 PR 与关联 Issue
+gh pr list --state merged --limit 20
+```
+
+根据盘点结果，在脚本插入的版本骨架中填写核心亮点：
+
+- **强制关联 Issue / PR**：条目标题必须包含对应的来源单号（如 `(PR #3504)` 或 `(Fixes #3499, #3501)`）；
+- **强制行内致谢贡献者**：从提交历史和 PR 中识别出的所有外部贡献者，必须以 `(Thanks to @username)` 形式显式标注在对应条目上。Release 页面的 **Contributors 头像列表由此自动提取生成**；
+- **格式示例**：
 ```markdown
 *   **版本演进**:
-    *   **v4.7.14 (2026-09-22)**:
-        -   **[核心分类] 更新标题 (PR #xxx)**:
-            -   **功能详述**: 该版本修复的核心问题或新增能力。
-        -   **[核心分类] 涉及外部贡献的条目 (Fixes #xxxx, Thanks to @username)**:
-            -   **功能详述**: 致谢以行内形式写在对应条目上。
+    *   **v4.7.14 (2026-09-23)**:
+        -   **[核心分类] 功能重构与优化 (PR #3504)**:
+            -   **功能详述**: 核心实现说明。
+        -   **[核心分类] 涉及外部贡献的修复 (Fixes #3508, Thanks to @username)**:
+            -   **功能详述**: 致谢与修复说明。
 ```
 
 > 1. **标题必须与 Tag 逐字符一致**：流水线用 `awk` 以 tag 名（`github.ref_name`，含 `v` 前缀）匹配 CHANGELOG 标题行，**`v` 前缀与完整预发布后缀都要一字不差**。`npm run bump beta` 自增出的版本号形如 `X.Y.Z-beta.1`，因此 Tag 应为 `vX.Y.Z-beta.1`（而非 `vX.Y.Z-beta`），标题也须写成 `**vX.Y.Z-beta.1 (日期)**`。不匹配时正文会静默退化为占位文案 `See the assets to download this version and install.`。
