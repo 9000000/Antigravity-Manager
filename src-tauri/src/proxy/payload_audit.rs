@@ -389,6 +389,32 @@ const CORE_FIELD_ORDER: [&str; 22] = [
     "tools",
 ];
 
+/// 按关注度重排顶层字段 —— **只调整顺序，不删减任何字段**。
+/// 四协议与调试日志共用，保证展示顺序一致；`request` 包装层递归重排并保持在前。
+pub fn reorder_payload_fields(value: &Value) -> Value {
+    let Value::Object(map) = value else {
+        return value.clone();
+    };
+    let mut ordered = Map::new();
+    let mut rest: Map<String, Value> = Map::new();
+    for (k, v) in map {
+        if k == "request" {
+            ordered.insert(k.clone(), reorder_payload_fields(v));
+        } else {
+            rest.insert(k.clone(), v.clone());
+        }
+    }
+    for key in CORE_FIELD_ORDER {
+        if let Some(v) = rest.remove(key) {
+            ordered.insert(key.to_string(), v);
+        }
+    }
+    for (k, v) in rest {
+        ordered.insert(k, v);
+    }
+    Value::Object(ordered)
+}
+
 pub fn simplify_payload_json(value: &Value) -> Value {
     let inner = value.get("request").unwrap_or(value);
     let mut concise = Map::new();
@@ -631,16 +657,7 @@ pub fn simplify_payload_json(value: &Value) -> Value {
     }
 
     // 按关注度重排字段：核心信息前置；未列入 CORE_FIELD_ORDER 的字段保持原相对顺序追加
-    let mut ordered = Map::new();
-    for key in CORE_FIELD_ORDER {
-        if let Some(v) = concise.remove(key) {
-            ordered.insert(key.to_string(), v);
-        }
-    }
-    for (k, v) in concise {
-        ordered.insert(k, v);
-    }
-    Value::Object(ordered)
+    reorder_payload_fields(&Value::Object(concise))
 }
 
 fn simplify_unknown(value: &Value) -> Value {
