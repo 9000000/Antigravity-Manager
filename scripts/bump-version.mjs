@@ -208,6 +208,22 @@ const TARGET_FILES = [
         ),
     },
     {
+        // npm 以 package.json 为唯一事实来源，但 lock 的镜像字段必须同步跟随，
+        // 否则会出现 package.json=4.7.14-beta / package-lock.json=4.7.13 的版本漂移。
+        // lock 内有两处根版本字段：顶层 "version" 与 packages."" 下的同名 "version"。
+        // 两处均按字段位置锚定（不依赖当前版本串），因此即便存量文件已有漂移也能一次修正。
+        name: 'package-lock.json (根版本镜像，两处)',
+        relPath: 'package-lock.json',
+        replace: (content) => content
+            // 顶层字段：恰为 2 空格缩进（依赖条目的 "version" 为 6 空格，不会误伤）
+            .replace(/^(\s{2}"version":\s*)"[^"]+"/m, `$1"${newVersion}"`)
+            // packages 根条目：以 "": { 紧跟 "name" 的块结构锚定
+            .replace(
+                /("packages":\s*\{\s*\r?\n\s*"":\s*\{\s*\r?\n\s*"name":\s*"[^"]*",\s*\r?\n\s*"version":\s*)"[^"]*"/,
+                `$1"${newVersion}"`
+            ),
+    },
+    {
         name: 'src-tauri/Cargo.toml',
         relPath: 'src-tauri/Cargo.toml',
         replace: (content) => content.replace(
@@ -240,20 +256,23 @@ const TARGET_FILES = [
         ),
     },
     {
+        // 按结构锚定而非精确当前版本串：预发布轮次会跳过 README(stableOnly)，
+        // 此时 currentVersion 已前进到如 4.7.14-beta，而 README 仍停在上一个正式版
+        // (v4.7.13)，精确匹配会静默失配 —— 导致下一轮正式发版 README 不更新。
         name: 'README.md (标题与徽章)',
         relPath: 'README.md',
         stableOnly: true,
         replace: (content) => content
-            .replace(`(v${currentVersion})`, `(v${newVersion})`)
-            .replace(`Version-${currentVersion}-blue`, `Version-${newVersion}-blue`),
+            .replace(/\(v[0-9][^)]*\)/, `(v${newVersion})`)
+            .replace(/Version-[0-9][^"]*-blue/, `Version-${newVersion}-blue`),
     },
     {
         name: 'README_EN.md (标题与徽章)',
         relPath: 'README_EN.md',
         stableOnly: true,
         replace: (content) => content
-            .replace(`(v${currentVersion})`, `(v${newVersion})`)
-            .replace(`Version-${currentVersion}-blue`, `Version-${newVersion}-blue`),
+            .replace(/\(v[0-9][^)]*\)/, `(v${newVersion})`)
+            .replace(/Version-[0-9][^"]*-blue/, `Version-${newVersion}-blue`),
     },
     {
         name: 'src/components/layout/MiniView.tsx',
