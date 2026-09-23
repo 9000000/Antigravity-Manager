@@ -241,6 +241,20 @@ fn simplify_message(msg: &Value) -> Value {
     Value::Object(out)
 }
 
+/// OpenAI Responses 的 `input` 项结构与 chat message 不同（`type` / `call_id` / `arguments` /
+/// `output` 等），单独裁剪：沿用 `simplify_message` 的体积控制，再补回调试必需的字段。
+fn simplify_responses_input_item(item: &Value) -> Value {
+    let mut out = simplify_message(item);
+    if let Some(obj) = out.as_object_mut() {
+        for key in ["type", "role", "call_id", "arguments", "output"] {
+            if let Some(v) = item.get(key) {
+                obj.insert(key.to_string(), v.clone());
+            }
+        }
+    }
+    out
+}
+
 fn simplify_content(content: &Value) -> Value {
     match content {
         Value::String(s) => Value::String(s.clone()),
@@ -428,6 +442,28 @@ pub fn simplify_payload_json(value: &Value) -> Value {
         .or_else(|| value.get("systemInstruction"))
     {
         concise.insert("systemInstruction".into(), sys.clone());
+    }
+
+    // 5.5 OpenAI Responses 协议：instructions（系统指令）与 input（对话上下文）
+    //     这两个是 Responses / Codex 的核心载荷，且不是 messages 的别名 —— 不保留会让
+    //     日志里"系统提示词块与上下文块整段消失"（客户端原文看不到，而中转报文是 Gemini
+    //     格式故看起来完整）。
+    if let Some(instructions) = inner
+        .get("instructions")
+        .or_else(|| value.get("instructions"))
+    {
+        concise.insert("instructions".into(), instructions.clone());
+    }
+    if let Some(input) = inner.get("input").or_else(|| value.get("input")) {
+        concise.insert(
+            "input".into(),
+            match input {
+                Value::Array(arr) => {
+                    Value::Array(arr.iter().map(simplify_responses_input_item).collect())
+                }
+                other => other.clone(),
+            },
+        );
     }
 
     // 6. Configs (generationConfig, thinkingConfig, toolConfig, tool_config, safetySettings)
@@ -664,6 +700,38 @@ mod tests {
             "Tools schema should be completely preserved!"
         );
         assert_eq!(simplified["model"], "gemini-2.5-pro");
+    }
+
+    #[test]
+    fn test_simplify_responses_payload_keeps_instructions_and_input() {
+        // 回归：Responses / Codex 协议的系统提示词在 `instructions`、上下文在 `input`。
+        // 这两个键一度不在白名单里 → simple 模式下整段消失（客户端原文看不到系统提示词与
+        // 上下文，而中转报文是 Gemini 格式故看起来完整）。
+        let req = json!({
+            "model": "gemini-2.5-pro",
+            "instructions": "You are Codex, a coding agent.",
+            "input": [
+                { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "type": "function_call_output", "call_id": "call_1", "output": "ok" }
+            ],
+            "max_output_tokens": 1024
+        });
+
+        let simplified = simplify_payload_json(&req);
+
+        assert_eq!(
+            simplified["instructions"], "You are Codex, a coding agent.",
+            "instructions 必须保留: {simplified}"
+        );
+        assert!(
+            simplified["input"].is_array(),
+            "input 必须保留为数组: {simplified}"
+        );
+        assert_eq!(simplified["input"][0]["role"], "user");
+        assert_eq!(simplified["input"][1]["type"], "function_call_output");
+        assert_eq!(simplified["input"][1]["call_id"], "call_1");
+        assert_eq!(simplified["input"][1]["output"], "ok");
+        assert_eq!(simplified["max_output_tokens"], 1024);
     }
 
     #[test]
