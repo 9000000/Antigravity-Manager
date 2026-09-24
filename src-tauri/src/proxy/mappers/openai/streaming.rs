@@ -70,7 +70,6 @@ where
         let mut emitted_tool_calls = std::collections::HashSet::new();
         let mut final_usage: Option<super::models::OpenAIUsage> = None;
         let mut error_occurred = false;
-        let mut has_emitted_content = false;
         let mut tool_call_index = 0;
         let mut thinking_acc = crate::proxy::thinking_store::TurnAccumulator::new();
 
@@ -215,7 +214,6 @@ where
                                                     }
 
                                                     let raw_finish_reason = candidate.get("finishReason").and_then(|f| f.as_str());
-                                                    let is_malformed_function_call = raw_finish_reason == Some("MALFORMED_FUNCTION_CALL");
 
                                                     let gemini_finish_reason = raw_finish_reason.map(|f| match f {
                                                         "STOP" => "stop",
@@ -234,12 +232,6 @@ where
                                                         gemini_finish_reason
                                                     };
 
-                                                    // [FIX MALFORMED_FUNCTION_CALL] 若模型试图调用未配置的内部工具或格式异常导致提前中断，
-                                                    // 且未生成正文内容，自动注入友好提示，避免客户端显示空白
-                                                    if is_malformed_function_call && content_out.is_empty() && !has_emitted_content {
-                                                        content_out.push_str("很抱歉，当前模型在尝试调取实时信息时遇到了格式异常。若需要查询实时天气或最新资讯，请尝试使用联网模式（模型名带 -online 后缀）或配置天气/搜索插件。");
-                                                    }
-
                                                     if !thought_out.is_empty() {
                                                         let reasoning_chunk = json!({
                                                             "id": &stream_id,
@@ -257,9 +249,11 @@ where
                                                     }
 
                                                     if !content_out.is_empty() || finish_reason.is_some() {
-                                                        if !content_out.is_empty() {
-                                                            has_emitted_content = true;
-                                                        }
+                                                        let delta = if !content_out.is_empty() {
+                                                            json!({ "content": content_out })
+                                                        } else {
+                                                            json!({})
+                                                        };
                                                         let mut openai_chunk = json!({
                                                             "id": &stream_id,
                                                             "object": "chat.completion.chunk",
@@ -267,7 +261,7 @@ where
                                                             "model": &model,
                                                             "choices": [{
                                                                 "index": idx as u32,
-                                                                "delta": { "content": content_out },
+                                                                "delta": delta,
                                                                 "finish_reason": finish_reason
                                                             }]
                                                         });
@@ -1863,5 +1857,73 @@ mod tests {
 
         assert!(has_reasoning, "Should stream reasoning_content");
         assert!(has_content, "Should stream content");
+    }
+
+    #[tokio::test]
+    async fn test_streaming_malformed_function_call_never_injects_hardcoded_online_prompt() {
+        let chunk_json = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        { "text": "Reasoning about weather...", "thought": true }
+                    ]
+                },
+                "finishReason": "MALFORMED_FUNCTION_CALL"
+            }]
+        });
+
+        let items: Vec<Result<Bytes, reqwest::Error>> =
+            vec![Ok(Bytes::from(format!("data: {}\n\n", chunk_json)))];
+
+        let gemini_stream = Box::pin(stream::iter(items));
+
+        let mut openai_stream = create_openai_sse_stream(
+            gemini_stream,
+            "gemini-3.7-flash".to_string(),
+            "test-malformed-session".to_string(),
+            0,
+            None,
+            false,
+        );
+
+        let mut all_content = String::new();
+        let mut final_finish_reason: Option<String> = None;
+
+        while let Some(result) = openai_stream.next().await {
+            if let Ok(bytes) = result {
+                let s = String::from_utf8_lossy(&bytes).to_string();
+                for line in s.lines() {
+                    if line.starts_with("data: ") && !line.contains("[DONE]") {
+                        let json_str = line.trim_start_matches("data: ").trim();
+                        if let Ok(json) = serde_json::from_str::<Value>(json_str) {
+                            if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                                if let Some(choice) = choices.first() {
+                                    if let Some(delta) = choice.get("delta") {
+                                        if let Some(c) =
+                                            delta.get("content").and_then(|c| c.as_str())
+                                        {
+                                            all_content.push_str(c);
+                                        }
+                                    }
+                                    if let Some(fr) =
+                                        choice.get("finish_reason").and_then(|f| f.as_str())
+                                    {
+                                        final_finish_reason = Some(fr.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 验证绝对不会被注入任何臆测性的天气/联网假文本
+        assert!(
+            all_content.is_empty(),
+            "Expected empty content, got: {}",
+            all_content
+        );
+        assert_eq!(final_finish_reason, Some("stop".to_string()));
     }
 }

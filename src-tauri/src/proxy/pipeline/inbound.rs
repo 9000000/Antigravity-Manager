@@ -209,6 +209,27 @@ impl InboundThinkingPipeline {
                     new_parts.extend(extra_thinking_parts);
                     new_parts.extend(other_parts);
                     *parts = new_parts;
+                } else {
+                    // role == "user" 的通用进站治理：多模态工具响应 (functionResponse) 深度解构
+                    // 确保全协议 (OpenAI / Claude / Gemini / Responses) 的工具结果中夹带的图片均被提升为独立的 inlineData 视觉感知输入
+                    let mut extra_inline_parts = Vec::new();
+                    for part in parts.iter_mut() {
+                        if let Some(fr) = part.get_mut("functionResponse") {
+                            if let Some(resp) = fr.get_mut("response") {
+                                for key in ["result", "output"] {
+                                    if let Some(v) = resp.get_mut(key) {
+                                        if let Some(s) = v.as_str() {
+                                            if s.contains("data:image/") {
+                                                let clean_s = crate::proxy::mappers::common_utils::extract_multimodal_from_tool_text(s, &mut extra_inline_parts);
+                                                *v = json!(clean_s);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    parts.extend(extra_inline_parts);
                 }
             }
         }
@@ -634,5 +655,48 @@ mod tests {
             !has_gemini_sig,
             "Foreign Gemini signature must be completely eliminated from Claude turn"
         );
+    }
+
+    #[test]
+    fn test_inbound_pipeline_lifts_multimodal_images_from_function_response() {
+        let fake_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        let mut contents = vec![json!({
+            "role": "user",
+            "parts": [{
+                "functionResponse": {
+                    "name": "take_screenshot",
+                    "response": {
+                        "output": format!("Screenshot result: ![view](data:image/png;base64,{}) done.", fake_b64)
+                    }
+                }
+            }]
+        })];
+
+        InboundThinkingPipeline::process_contents(
+            &mut contents,
+            ProxyProtocol::GeminiNative,
+            "gemini-2.5-flash",
+            false,
+            None,
+            false,
+        );
+
+        let parts = contents[0]["parts"].as_array().expect("parts array");
+        assert_eq!(
+            parts.len(),
+            2,
+            "Should have functionResponse and lifted inlineData"
+        );
+        assert!(parts[0].get("functionResponse").is_some());
+        assert!(parts[1].get("inlineData").is_some());
+
+        assert_eq!(parts[1]["inlineData"]["mimeType"], "image/png");
+        assert_eq!(parts[1]["inlineData"]["data"], fake_b64);
+
+        let output_text = parts[0]["functionResponse"]["response"]["output"]
+            .as_str()
+            .unwrap();
+        assert!(!output_text.contains(fake_b64));
+        assert!(output_text.contains("[Image: forwarded to visual input (image/png)]"));
     }
 }

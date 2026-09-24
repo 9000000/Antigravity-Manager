@@ -1426,7 +1426,12 @@ fn build_contents(
                         let mut extra_parts = Vec::new();
 
                         let mut merged_content = match content {
-                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::String(s) => {
+                                crate::proxy::mappers::common_utils::extract_multimodal_from_tool_text(
+                                    s,
+                                    &mut extra_parts,
+                                )
+                            }
                             serde_json::Value::Array(arr) => {
                                 let mut texts = Vec::new();
                                 for block in arr {
@@ -3781,5 +3786,69 @@ mod tests {
             .any(|t| t.contains("x-anthropic-billing-header:")));
         // Normal prompt must be preserved
         assert!(system_texts.contains(&"You are a helpful assistant."));
+    }
+
+    #[test]
+    fn test_claude_tool_result_multimodal_string_extraction() {
+        let fake_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        let tool_content = format!(
+            "Here is the screenshot: ![screen](data:image/png;base64,{}) and log text",
+            fake_b64
+        );
+
+        let req: ClaudeRequest = serde_json::from_value(json!({
+            "model": "gemini-2.5-flash",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Take screenshot"
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_shot_1",
+                            "name": "screenshot",
+                            "input": {}
+                        }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_shot_1",
+                            "content": tool_content
+                        }
+                    ]
+                }
+            ]
+        }))
+        .expect("ClaudeRequest should deserialize");
+
+        let body =
+            transform_claude_request_in(&req, "test-project", false, None, "test-session", None)
+                .expect("Request should transform");
+        let contents = body["request"]["contents"]
+            .as_array()
+            .expect("contents array");
+        let tool_parts = contents[2]["parts"].as_array().expect("tool turn parts");
+
+        // 验证同时存在 functionResponse 和 inlineData 两个 parts
+        assert_eq!(tool_parts.len(), 2);
+        assert!(tool_parts[0].get("functionResponse").is_some());
+        assert!(tool_parts[1].get("inlineData").is_some());
+
+        let inline_data = &tool_parts[1]["inlineData"];
+        assert_eq!(inline_data["mimeType"], "image/png");
+        assert_eq!(inline_data["data"], fake_b64);
+
+        let res_str = tool_parts[0]["functionResponse"]["response"]["result"]
+            .as_str()
+            .unwrap();
+        assert!(!res_str.contains(fake_b64));
+        assert!(res_str.contains("[Image: forwarded to visual input (image/png)]"));
     }
 }
