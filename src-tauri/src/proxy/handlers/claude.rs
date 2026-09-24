@@ -482,9 +482,36 @@ pub async fn handle_messages(
         || model_lower.ends_with("-extra-low");
 
     let thinking_hint = extract_thinking_hint(&original_body);
+    let tb_config = crate::proxy::config::get_thinking_budget_config();
+    let is_client_control =
+        tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client;
+
+    let client_switch = crate::proxy::pipeline::extract_client_thinking_switch(
+        request.thinking.as_ref().map(|t| t.type_.as_str()),
+        request
+            .thinking
+            .as_ref()
+            .and_then(|t| t.budget_tokens.map(|b| b as u64)),
+        request
+            .output_config
+            .as_ref()
+            .and_then(|c| c.effort.as_deref())
+            .or_else(|| request.thinking.as_ref().and_then(|t| t.effort.as_deref())),
+    );
+    let client_disabled = client_switch.is_disabled();
+
+    let raw_client_budget = request.thinking.as_ref().and_then(|t| t.budget_tokens);
 
     // [USER RULE] 对于 Gemini >= 3 或显式指定档位的模型，进站阶段彻底忽略客户端思考与预算参数，绝不被客户端 1024 或 low 污染
-    if is_v3_or_above || is_explicit_tier_model {
+    if is_client_control {
+        if client_disabled {
+            request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
+                type_: "disabled".to_string(),
+                budget_tokens: Some(0),
+                effort: None,
+            });
+        }
+    } else if is_v3_or_above || is_explicit_tier_model {
         // 无论客户端未提供 thinking，或者传了 disabled，只要是 3+ 或显式模型，强制矫正为 enabled，清理客户端 budget_tokens
         let effort_in_thinking = request.thinking.as_ref().and_then(|t| t.effort.clone());
         request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
@@ -499,7 +526,8 @@ pub async fn handle_messages(
     }
 
     // [USER RULE] 对显式指定档位或 Gemini >= 3 的思考模型，进站阶段彻底忽略客户端思考预算，绝不参与档位推断
-    let effective_budget_hint = if is_explicit_tier_model || is_v3_or_above {
+    let effective_budget_hint = if !is_client_control && (is_explicit_tier_model || is_v3_or_above)
+    {
         None
     } else {
         original_body
@@ -519,6 +547,25 @@ pub async fn handle_messages(
         crate::proxy::common::variant_mapping::tier_from_effort(effort_hint.as_deref());
     let canonical_model = request.model.clone();
     if let Some(spec) = apply_variant(&mut request, effort_tier, effective_budget_hint) {
+        if is_client_control && client_disabled {
+            request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
+                type_: "disabled".to_string(),
+                budget_tokens: Some(0),
+                effort: None,
+            });
+        } else if is_client_control && raw_client_budget.is_some() {
+            request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
+                type_: "enabled".to_string(),
+                budget_tokens: raw_client_budget,
+                effort: effort_hint.clone(),
+            });
+        } else if is_client_control {
+            // [CRITICAL FIX] 客户端控制模式下，客户端未传数字预算（全缺省或仅传等级）
+            // 严禁保留 apply_variant 内部赋予的 spec.thinking_budget (4000)！保持真实客户端状态
+            if let Some(ref mut t) = request.thinking {
+                t.budget_tokens = None;
+            }
+        }
         tracing::info!(
             "[{}] [Variant] canonical='{}' effort_hint={:?} budget_hint={:?} -> real_model='{}' budget={} maxOut={}",
             trace_id, canonical_model, effort_hint, effective_budget_hint, spec.id, spec.thinking_budget, spec.max_output_tokens

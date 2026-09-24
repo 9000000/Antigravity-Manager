@@ -1947,21 +1947,58 @@ pub async fn handle_chat_completions(
     // Replace the client's model/thinking/max_tokens with verified real values so the
     // forwarded request matches the expected upstream format. OpenCode encodes the variant as
     // thinking.budget_tokens; we infer the tier from its magnitude.
+    let tb_config = crate::proxy::config::get_thinking_budget_config();
+    let is_client_control =
+        tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client;
+
     let model_lower = openai_req.model.to_lowercase();
     let is_v3_or_above = crate::proxy::model_specs::is_gemini_v3_or_above(&openai_req.model);
     let is_explicit_tier_model = model_lower.ends_with("-high")
         || model_lower.ends_with("-medium")
         || model_lower.ends_with("-low")
         || model_lower.ends_with("-extra-low");
-    let client_budget = if is_v3_or_above || is_explicit_tier_model {
+
+    let client_switch = crate::proxy::pipeline::extract_client_thinking_switch(
+        openai_req
+            .thinking
+            .as_ref()
+            .and_then(|t| t.thinking_type.as_deref()),
+        openai_req
+            .thinking
+            .as_ref()
+            .and_then(|t| t.budget_tokens.map(|b| b as u64)),
+        openai_req
+            .reasoning_effort
+            .as_deref()
+            .or_else(|| {
+                openai_req
+                    .reasoning
+                    .as_ref()
+                    .and_then(|r| r.effort.as_deref())
+            })
+            .or_else(|| {
+                openai_req
+                    .thinking
+                    .as_ref()
+                    .and_then(|t| t.effort.as_deref())
+            }),
+    );
+    let client_explicit_disabled = client_switch.is_disabled();
+
+    let raw_client_budget = openai_req.thinking.as_ref().and_then(|t| t.budget_tokens);
+
+    let client_budget = if is_client_control {
+        raw_client_budget
+    } else if is_v3_or_above || is_explicit_tier_model {
         if let Some(ref mut t) = openai_req.thinking {
             t.budget_tokens = None; // 清理客户端 budget_tokens，防止污染
         }
         None
     } else {
-        openai_req.thinking.as_ref().and_then(|t| t.budget_tokens)
+        raw_client_budget
     };
-    let effective_budget_hint = if is_explicit_tier_model || is_v3_or_above {
+    let effective_budget_hint = if !is_client_control && (is_explicit_tier_model || is_v3_or_above)
+    {
         None
     } else {
         client_budget
@@ -2006,7 +2043,25 @@ pub async fn handle_chat_completions(
             spec.max_output_tokens
         );
         openai_req.model = spec.id.to_string();
-        if spec.thinking_budget == 0 {
+        if is_client_control && client_explicit_disabled {
+            openai_req.thinking = Some(crate::proxy::mappers::openai::models::ThinkingConfig {
+                thinking_type: Some("disabled".to_string()),
+                budget_tokens: Some(0),
+                effort: None,
+            });
+        } else if is_client_control && raw_client_budget.is_some() {
+            openai_req.thinking = Some(crate::proxy::mappers::openai::models::ThinkingConfig {
+                thinking_type: Some("enabled".to_string()),
+                budget_tokens: raw_client_budget,
+                effort: effort_hint.map(|s| s.to_string()),
+            });
+        } else if is_client_control {
+            // [CRITICAL FIX] 客户端控制模式下，客户端未传数字预算（全缺省或仅传等级）
+            // 严禁伪造并塞入 spec.thinking_budget (4000)！保持真实客户端状态
+            if let Some(ref mut t) = openai_req.thinking {
+                t.budget_tokens = None;
+            }
+        } else if spec.thinking_budget == 0 {
             // Non-thinking checkpoint model (e.g. gemini-3.1-flash-lite): disable thinking
             // AND strip tools/tool_choice — per upstream spec §3 checkpoint requests carry
             // no tools.
@@ -2014,6 +2069,7 @@ pub async fn handle_chat_completions(
             openai_req.tools = None;
             openai_req.tool_choice = None;
         } else {
+            // 网关控制模式继续保留 4000 (Medium) 权威回填
             openai_req.thinking = Some(crate::proxy::mappers::openai::models::ThinkingConfig {
                 thinking_type: Some("enabled".to_string()),
                 budget_tokens: Some(spec.thinking_budget),

@@ -1,6 +1,65 @@
 use super::policy::ProxyProtocol;
 use serde_json::{json, Value};
 
+/// 客户端思考控制开关（三态枚举）
+/// 遵循最高指令：思考开关（一票否决权） > 思考等级 > 思考预算
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientThinkingSwitch {
+    /// 显式关闭（最高准则，一票否决：disabled / 0 / none / off）
+    Disabled,
+    /// 显式开启（enabled / on / 具体档位 / 具体预算）
+    Enabled,
+    /// 缺省（未传任何思考参数，或值为 default；业务铁律：缺省就是默认开）
+    Default,
+}
+
+impl ClientThinkingSwitch {
+    /// 是否允许开启思考（缺省即开，关则一票否决）
+    pub fn is_allowed(self) -> bool {
+        matches!(self, Self::Enabled | Self::Default)
+    }
+
+    /// 是否显式关闭
+    pub fn is_disabled(self) -> bool {
+        matches!(self, Self::Disabled)
+    }
+}
+
+/// 统一归一化提取客户端思考开关状态（适用于 OpenAI / Claude / Gemini / Codex 等所有协议）
+pub fn extract_client_thinking_switch(
+    thinking_type: Option<&str>,
+    budget: Option<u64>,
+    effort: Option<&str>,
+) -> ClientThinkingSwitch {
+    let t_type = thinking_type.map(|s| s.trim().to_lowercase());
+    let eff = effort.map(|s| s.trim().to_lowercase());
+
+    // 1. 显式关闭判定（最高优先级，一票否决）
+    if matches!(
+        t_type.as_deref(),
+        Some("disabled") | Some("off") | Some("false")
+    ) || budget == Some(0)
+        || matches!(eff.as_deref(), Some("none") | Some("off") | Some("false"))
+    {
+        return ClientThinkingSwitch::Disabled;
+    }
+
+    // 2. 显式开启判定（只要客户端带了有效开启标记、具体预算，或任何非空/非关闭的思考等级）
+    if matches!(
+        t_type.as_deref(),
+        Some("enabled") | Some("on") | Some("true")
+    ) || budget.map_or(false, |b| b > 0)
+        || eff.as_deref().map_or(false, |e| {
+            !e.is_empty() && e != "none" && e != "off" && e != "false" && e != "default"
+        })
+    {
+        return ClientThinkingSwitch::Enabled;
+    }
+
+    // 3. 缺省（全未传，或仅为 "default"；铁律：缺省就是默认开）
+    ClientThinkingSwitch::Default
+}
+
 /// 统一进站思考管线（InboundThinkingPipeline）
 /// 接收任何协议转译成的 Google contents 统一报文，单向流转执行：
 /// 1. 协议策略签名清洗 (Chat 协议丢弃客户端签名，其他协议验签)
@@ -235,6 +294,7 @@ impl InboundThinkingPipeline {
         }
 
         // 2. 状态机无损复活 (Hydration)
+        // 思考关闭时绝不执行思考块复活与签名回填；仅在开启思考时才进行复活
         if is_thinking_enabled && !is_retry {
             if let Some(s_id) = session_id {
                 crate::proxy::thinking_store::hydrate_gemini_contents_with_model(
@@ -262,6 +322,7 @@ impl InboundThinkingPipeline {
     pub fn configure_inbound_thinking(
         target_model: &str,
         generation_config: &mut Value,
+        client_switch: ClientThinkingSwitch,
         client_effort: Option<&str>,
         client_budget: Option<u64>,
         token: Option<&crate::proxy::token_manager::ProxyToken>,
@@ -277,6 +338,87 @@ impl InboundThinkingPipeline {
         }
 
         let tb_config = crate::proxy::config::get_thinking_budget_config();
+
+        // ════════════════════════════════════════════════════════════════════
+        // 模式分流 1: 客户端自填控制模式（Client Direct Control）
+        // 遵循最高指令：思考开关 > 思考等级 > 思考预算，缺省默认开，上游自适应
+        // ════════════════════════════════════════════════════════════════════
+        if tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client {
+            match client_switch {
+                ClientThinkingSwitch::Disabled => {
+                    // 1. 思考开关显式关闭（一票否决）：彻底不带 thinkingConfig，不填预算
+                    if let Some(obj) = generation_config.as_object_mut() {
+                        obj.remove("thinkingConfig");
+                        obj.remove("thinking_config");
+                    }
+                    return None;
+                }
+                ClientThinkingSwitch::Enabled | ClientThinkingSwitch::Default => {
+                    // 2. 允许思考（显式开 OR 缺省默认开）
+                    // 2.1 预算显式 (> 0)：忠实透传预算数字，绝不脑补等级（防止 Google 400 双字段冲突），必须带上 includeThoughts: true
+                    if let Some(budget) = client_budget.filter(|&b| b > 0) {
+                        generation_config["thinkingConfig"] = json!({
+                            "includeThoughts": true,
+                            "thinkingBudget": budget
+                        });
+                        // 确保 maxOutputTokens 大于 thinkingBudget 避免 400
+                        let min_overhead = 8192;
+                        let current_max = generation_config
+                            .get("maxOutputTokens")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(65536);
+                        if current_max <= budget as i64 {
+                            generation_config["maxOutputTokens"] =
+                                json!(budget as i64 + min_overhead);
+                        }
+                        return Some(budget as i64);
+                    }
+
+                    // 2.2 预算缺省，但客户端携带了思考等级（包括 low / medium / high 以及任何客户自定义的思考等级）：
+                    // 核心铁律：坚决不填预算！忠实透传等级，并且必须带上 includeThoughts: true 核心开关！
+                    if let Some(raw_effort) = client_effort.map(str::trim).filter(|s| !s.is_empty())
+                    {
+                        let lower_effort = raw_effort.to_lowercase();
+                        if lower_effort != "default"
+                            && lower_effort != "none"
+                            && lower_effort != "off"
+                            && lower_effort != "disabled"
+                        {
+                            let final_level = match lower_effort.as_str() {
+                                "low" | "extra-low" | "min" | "minimal" => "LOW".to_string(),
+                                "medium" | "normal" | "standard" => {
+                                    if target_model.to_lowercase().contains("pro") {
+                                        "HIGH".to_string()
+                                    } else {
+                                        "MEDIUM".to_string()
+                                    }
+                                }
+                                "high" | "xhigh" | "max" | "extreme" => "HIGH".to_string(),
+                                // 客户带了任何自定义等级，直接忠实透传，绝不硬编码限制！
+                                _ => raw_effort.to_uppercase(),
+                            };
+                            generation_config["thinkingConfig"] = json!({
+                                "includeThoughts": true,
+                                "thinkingLevel": final_level
+                            });
+                            return None;
+                        }
+                    }
+
+                    // 2.3 等级与预算均缺省（或 default）：全部预算不传递，默认上游处理（上游自适应）
+                    // ★ 绝对不塞 4000/Medium 预算，仅带 includeThoughts: true
+                    generation_config["thinkingConfig"] = json!({
+                        "includeThoughts": true
+                    });
+                    return None;
+                }
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // 模式分流 2: 网关权威控制模式（Gateway Authority，99% 用户）
+        // 100% 保持原有权威逻辑不变：档位锁死、flash_low/med/high 映射、防 429 注入
+        // ════════════════════════════════════════════════════════════════════
         let resolved_budget = crate::proxy::model_specs::resolve_custom_budget(
             target_model,
             client_effort,
@@ -293,16 +435,22 @@ impl InboundThinkingPipeline {
         });
 
         if let Some(budget) = resolved_budget {
-            tc["thinkingBudget"] = json!(budget);
+            if budget == 0 {
+                tc = json!({
+                    "thinkingBudget": 0
+                });
+            } else {
+                tc["thinkingBudget"] = json!(budget);
 
-            // 确保 maxOutputTokens 大于 thinkingBudget 避免 400
-            let min_overhead = 8192;
-            let current_max = generation_config
-                .get("maxOutputTokens")
-                .and_then(Value::as_i64)
-                .unwrap_or(65536);
-            if current_max <= budget {
-                generation_config["maxOutputTokens"] = json!(budget + min_overhead);
+                // 确保 maxOutputTokens 大于 thinkingBudget 避免 400
+                let min_overhead = 8192;
+                let current_max = generation_config
+                    .get("maxOutputTokens")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(65536);
+                if current_max <= budget {
+                    generation_config["maxOutputTokens"] = json!(budget + min_overhead);
+                }
             }
         } else if is_tiered {
             // Tiered 模型未指定具体数字 budget 时，纯自适应模式：不注入 thinkingBudget
@@ -698,5 +846,163 @@ mod tests {
             .unwrap();
         assert!(!output_text.contains(fake_b64));
         assert!(output_text.contains("[Image: forwarded to visual input (image/png)]"));
+    }
+
+    #[test]
+    fn test_extract_client_thinking_switch_coverage() {
+        // 1. 显式关闭 (一票否决)
+        assert_eq!(
+            extract_client_thinking_switch(Some("disabled"), None, None),
+            ClientThinkingSwitch::Disabled
+        );
+        assert_eq!(
+            extract_client_thinking_switch(Some("off"), None, None),
+            ClientThinkingSwitch::Disabled
+        );
+        assert_eq!(
+            extract_client_thinking_switch(None, Some(0), None),
+            ClientThinkingSwitch::Disabled
+        );
+        assert_eq!(
+            extract_client_thinking_switch(None, None, Some("none")),
+            ClientThinkingSwitch::Disabled
+        );
+        assert_eq!(
+            extract_client_thinking_switch(None, None, Some("off")),
+            ClientThinkingSwitch::Disabled
+        );
+
+        // 2. 显式开启
+        assert_eq!(
+            extract_client_thinking_switch(Some("enabled"), None, None),
+            ClientThinkingSwitch::Enabled
+        );
+        assert_eq!(
+            extract_client_thinking_switch(None, Some(1024), None),
+            ClientThinkingSwitch::Enabled
+        );
+        assert_eq!(
+            extract_client_thinking_switch(None, None, Some("low")),
+            ClientThinkingSwitch::Enabled
+        );
+        assert_eq!(
+            extract_client_thinking_switch(None, None, Some("high")),
+            ClientThinkingSwitch::Enabled
+        );
+
+        // 3. 缺省（开关缺省就是默认开）
+        assert_eq!(
+            extract_client_thinking_switch(None, None, None),
+            ClientThinkingSwitch::Default
+        );
+        assert_eq!(
+            extract_client_thinking_switch(Some("default"), None, None),
+            ClientThinkingSwitch::Default
+        );
+        assert_eq!(
+            extract_client_thinking_switch(None, None, Some("default")),
+            ClientThinkingSwitch::Default
+        );
+    }
+
+    #[test]
+    fn test_configure_inbound_thinking_client_mode_routing_clean_isolation() {
+        use crate::proxy::config::{
+            update_thinking_budget_config, ThinkingBudgetConfig, ThinkingControlSource,
+        };
+
+        let mut config = ThinkingBudgetConfig::default();
+        config.control_source = ThinkingControlSource::Client;
+        update_thinking_budget_config(config);
+
+        struct ResetGuard;
+        impl Drop for ResetGuard {
+            fn drop(&mut self) {
+                crate::proxy::config::update_thinking_budget_config(ThinkingBudgetConfig::default());
+            }
+        }
+        let _guard = ResetGuard;
+
+        // 1. 显式关闭：彻底不带 thinkingConfig
+        let mut gc1 = json!({
+            "thinkingConfig": { "includeThoughts": true }
+        });
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-3.8-flash-tiered",
+            &mut gc1,
+            ClientThinkingSwitch::Disabled,
+            None,
+            None,
+            None,
+        );
+        assert!(gc1.get("thinkingConfig").is_none());
+
+        // 2. 缺省：includeThoughts=true，绝无 thinkingBudget
+        let mut gc2 = json!({});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-3.8-flash-tiered",
+            &mut gc2,
+            ClientThinkingSwitch::Default,
+            None,
+            None,
+            None,
+        );
+        let tc2 = gc2.get("thinkingConfig").unwrap().as_object().unwrap();
+        assert_eq!(tc2.get("includeThoughts"), Some(&json!(true)));
+        assert!(tc2.get("thinkingBudget").is_none());
+        assert!(tc2.get("thinkingLevel").is_none());
+
+        // 3. 显式等级：thinkingLevel=LOW / HIGH，绝无 thinkingBudget，必须带上 includeThoughts: true
+        let mut gc3 = json!({});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-3.8-flash-tiered",
+            &mut gc3,
+            ClientThinkingSwitch::Enabled,
+            Some("low"),
+            None,
+            None,
+        );
+        let tc3 = gc3.get("thinkingConfig").unwrap().as_object().unwrap();
+        assert_eq!(tc3.get("includeThoughts"), Some(&json!(true)));
+        assert_eq!(tc3.get("thinkingLevel"), Some(&json!("LOW")));
+        assert!(tc3.get("thinkingBudget").is_none());
+
+        // 3.1 客户端填了任何自定义等级（非硬编码）且没填预算，忠实透传等级，坚决不填预算
+        let mut gc3_custom = json!({});
+        let budget_custom_res = InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-3.8-flash-tiered",
+            &mut gc3_custom,
+            ClientThinkingSwitch::Enabled,
+            Some("custom_ultra_level"),
+            None,
+            None,
+        );
+        let tc3_custom = gc3_custom
+            .get("thinkingConfig")
+            .unwrap()
+            .as_object()
+            .unwrap();
+        assert_eq!(tc3_custom.get("includeThoughts"), Some(&json!(true)));
+        assert_eq!(
+            tc3_custom.get("thinkingLevel"),
+            Some(&json!("CUSTOM_ULTRA_LEVEL"))
+        );
+        assert!(tc3_custom.get("thinkingBudget").is_none(), "When client provides custom effort without budget, thinkingBudget must strictly remain None");
+        assert!(budget_custom_res.is_none());
+
+        // 4. 显式预算：thinkingBudget=8192，绝无 thinkingLevel，必须带上 includeThoughts: true
+        let mut gc4 = json!({});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-3.8-flash-tiered",
+            &mut gc4,
+            ClientThinkingSwitch::Enabled,
+            None,
+            Some(8192),
+            None,
+        );
+        let tc4 = gc4.get("thinkingConfig").unwrap().as_object().unwrap();
+        assert_eq!(tc4.get("includeThoughts"), Some(&json!(true)));
+        assert_eq!(tc4.get("thinkingBudget"), Some(&json!(8192)));
+        assert!(tc4.get("thinkingLevel").is_none());
     }
 }

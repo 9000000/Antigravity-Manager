@@ -231,6 +231,28 @@ pub fn wrap_request_v2(
     }
 
     let lower_model = final_model_name.to_lowercase();
+    let tb_config = crate::proxy::config::get_thinking_budget_config();
+    let is_client_control =
+        tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client;
+
+    let client_budget = inner_request
+        .get("generationConfig")
+        .and_then(|gc| gc.get("thinkingConfig"))
+        .and_then(|tc| tc.get("thinkingBudget"))
+        .and_then(|b| b.as_i64());
+    let client_level = inner_request
+        .get("generationConfig")
+        .and_then(|gc| gc.get("thinkingConfig"))
+        .and_then(|tc| tc.get("thinkingLevel"))
+        .and_then(|v| v.as_str());
+
+    let client_switch = crate::proxy::pipeline::extract_client_thinking_switch(
+        None,
+        client_budget.map(|b| if b <= 0 { 0 } else { b as u64 }),
+        client_level,
+    );
+    let is_client_disabled = is_client_control && client_switch.is_disabled();
+
     let is_under_v3 = crate::proxy::model_specs::is_gemini_under_v3(final_model_name)
         || crate::proxy::model_specs::is_gemini_under_v3(original_model);
     let force_server_thinking = !is_under_v3
@@ -239,7 +261,8 @@ pub fn wrap_request_v2(
             original_model,
         ]);
     let is_preview = lower_model.contains("preview");
-    let should_inject = !is_under_v3
+    let should_inject = !is_client_disabled
+        && !is_under_v3
         && (force_server_thinking
             || lower_model.contains("thinking")
             || (crate::proxy::model_specs::is_gemini_v3_or_above(final_model_name) && !is_preview));
@@ -464,62 +487,9 @@ pub fn wrap_request_v2(
                                     .and_then(|s| s.as_str())
                                     .map(str::to_string);
 
-                                let mut effective_fc_sig = None;
+                                // 纯净线缆透传：客户端若自带签名则保持；缺失签名全权委托进站流水线统一对齐与回填
                                 if let Some(ref sig) = incoming_fc_sig {
-                                    if !sig.is_empty() {
-                                        let cached_family = crate::proxy::SignatureCache::global()
-                                            .get_signature_family(sig);
-                                        match cached_family {
-                                            Some(family) => {
-                                                if crate::proxy::mappers::common_utils::is_model_compatible(&family, final_model_name) {
-                                                    effective_fc_sig = Some(sig.clone());
-                                                }
-                                            }
-                                            None => {
-                                                effective_fc_sig = Some(sig.clone());
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if effective_fc_sig.is_none() {
-                                    if let Some(ref id) = call_id {
-                                        effective_fc_sig = crate::proxy::SignatureCache::global()
-                                            .get_tool_signature(id);
-                                    }
-                                }
-                                if effective_fc_sig.is_none() {
-                                    effective_fc_sig = turn_signature.clone();
-                                }
-                                if effective_fc_sig.is_none()
-                                    && (crate::proxy::thinking_store::model_forces_server_thinking(
-                                        &final_model_name,
-                                    ) || should_inject)
-                                {
-                                    effective_fc_sig = Some(
-                                        crate::proxy::thinking_store::SENTINEL_SIGNATURE
-                                            .to_string(),
-                                    );
-                                }
-
-                                // 单轮单真签名原则：
-                                // 首个工具调用挂载真实签名 (若有)，后续并行工具调用统一打上 32 字节哨兵占位 (满足 Google AST 校验且绝不复制 500KB)
-                                let has_preceding_fc =
-                                    new_parts.iter().any(|p| p.get("functionCall").is_some());
-                                if !has_preceding_fc {
-                                    if let Some(sig) = effective_fc_sig {
-                                        obj.insert("thoughtSignature".to_string(), json!(sig));
-                                    } else {
-                                        obj.insert(
-                                            "thoughtSignature".to_string(),
-                                            json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE),
-                                        );
-                                    }
-                                } else {
-                                    obj.insert(
-                                        "thoughtSignature".to_string(),
-                                        json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE),
-                                    );
+                                    obj.insert("thoughtSignature".to_string(), json!(sig));
                                 }
                                 obj.remove("thought_signature");
                             }
@@ -591,6 +561,10 @@ pub fn wrap_request_v2(
                     .map_or(false, |gc| gc.get("thinkingConfig").is_some())
             };
 
+            let tb_config = crate::proxy::config::get_thinking_budget_config();
+            let is_client_control =
+                tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client;
+
             let default_budget =
                 crate::proxy::model_specs::get_thinking_budget(final_model_name, token);
 
@@ -598,7 +572,8 @@ pub fn wrap_request_v2(
                 crate::proxy::model_specs::is_explicit_heuristic_tier_model(final_model_name);
 
             // [ANTI-POLLUTION] 对齐 Anthropic 与 OpenAI：对于未设置思考配置或显式档位模型，设定权威 default_budget；对于裸模型保留客户端配置供后续 resolve_authoritative_thinking_budget 仲裁
-            let should_override_budget = !has_thinking || is_explicit_tier;
+            // 客户端直接控制模式下，严禁篡改覆盖客户端的思考意图
+            let should_override_budget = !is_client_control && (!has_thinking || is_explicit_tier);
 
             if should_override_budget {
                 tracing::debug!(
@@ -678,15 +653,29 @@ pub fn wrap_request_v2(
             .and_then(|t| t.get("thinkingBudget"))
             .and_then(|v| v.as_i64());
 
+        let client_switch = crate::proxy::pipeline::extract_client_thinking_switch(
+            None,
+            client_budget.map(|b| if b <= 0 { 0 } else { b as u64 }),
+            client_level.as_deref(),
+        );
+
         let tb_config = crate::proxy::config::get_thinking_budget_config();
+        let is_client_control =
+            tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client;
         let budget_opt = if has_thinking_config || force_server_thinking {
             let mut gc_val = serde_json::Value::Object(std::mem::take(gen_config));
+            let client_budget_for_pipeline = if is_client_control {
+                client_budget.filter(|b| *b >= 0).map(|b| b as u64)
+            } else {
+                client_budget.filter(|b| *b > 0).map(|b| b as u64)
+            };
             let resolved =
                 crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
                     final_model_name,
                     &mut gc_val,
+                    client_switch,
                     client_level.as_deref(),
-                    client_budget.filter(|b| *b > 0).map(|b| b as u64),
+                    client_budget_for_pipeline,
                     token,
                 );
             if let serde_json::Value::Object(map) = gc_val {
@@ -697,43 +686,19 @@ pub fn wrap_request_v2(
             None
         };
 
-        if tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client {
-            if let Some(thinking_config) = gen_config.get_mut("thinkingConfig") {
-                if let Some(ref lvl) = client_level {
-                    if let Some(norm_lvl) =
-                        crate::proxy::model_specs::normalize_client_thinking_level(lvl)
-                    {
-                        let final_lvl = if final_model_name.to_lowercase().contains("pro")
-                            && norm_lvl == "MEDIUM"
-                        {
-                            "HIGH"
-                        } else {
-                            norm_lvl
-                        };
-                        thinking_config["thinkingLevel"] = json!(final_lvl);
-                    }
-                }
-                if let Some(b) = client_budget {
-                    if b > 0 {
-                        thinking_config["thinkingBudget"] = json!(b);
-                    } else if b == -1 {
-                        if let Some(tc) = thinking_config.as_object_mut() {
-                            tc.remove("thinkingBudget");
-                        }
-                    }
-                }
+        if !is_client_control {
+            if let Some(tc) = gen_config
+                .get_mut("thinkingConfig")
+                .and_then(|v| v.as_object_mut())
+            {
+                tracing::info!(
+                    "[Gemini-Wrap] Pipeline thinking budget {:?} for {} (client_level={:?})",
+                    budget_opt,
+                    final_model_name,
+                    client_level
+                );
+                tc.remove("thinkingLevel");
             }
-        } else if let Some(tc) = gen_config
-            .get_mut("thinkingConfig")
-            .and_then(|v| v.as_object_mut())
-        {
-            tracing::info!(
-                "[Gemini-Wrap] Pipeline thinking budget {:?} for {} (client_level={:?})",
-                budget_opt,
-                final_model_name,
-                client_level
-            );
-            tc.remove("thinkingLevel");
         }
 
         // [FIX #1747] Ensure max_tokens (maxOutputTokens) is greater than thinking_budget

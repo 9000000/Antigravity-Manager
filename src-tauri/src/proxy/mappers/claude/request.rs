@@ -563,6 +563,29 @@ pub fn transform_claude_request_in_timed(
     let allow_dummy_thought = false;
 
     // Check if thinking is enabled in the request
+    let client_switch = crate::proxy::pipeline::extract_client_thinking_switch(
+        claude_req.thinking.as_ref().map(|t| t.type_.as_str()),
+        claude_req
+            .thinking
+            .as_ref()
+            .and_then(|t| t.budget_tokens.map(|b| b as u64)),
+        claude_req
+            .output_config
+            .as_ref()
+            .and_then(|c| c.effort.as_deref())
+            .or_else(|| {
+                claude_req
+                    .thinking
+                    .as_ref()
+                    .and_then(|t| t.effort.as_deref())
+            }),
+    );
+
+    let tb_config = crate::proxy::config::get_thinking_budget_config();
+    let is_client_control =
+        tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client;
+    let is_client_disabled = is_client_control && client_switch.is_disabled();
+
     let thinking_type = claude_req.thinking.as_ref().map(|t| t.type_.as_str());
     let force_server_thinking = crate::proxy::thinking_store::any_model_forces_server_thinking(&[
         claude_req.model.as_str(),
@@ -571,7 +594,8 @@ pub fn transform_claude_request_in_timed(
     let target_model_supports_thinking = model_supports_thinking(&mapped_model);
     let is_under_v3 = crate::proxy::model_specs::is_gemini_under_v3(&mapped_model)
         || crate::proxy::model_specs::is_gemini_under_v3(&claude_req.model);
-    let mut is_thinking_enabled = !is_under_v3
+    let mut is_thinking_enabled = !is_client_disabled
+        && !is_under_v3
         && (target_model_supports_thinking
             || force_server_thinking
             || thinking_type == Some("enabled")
@@ -1566,26 +1590,8 @@ fn build_contents(
                 parts.insert(0, thought_part);
             }
             None => {
-                let is_claude_model = mapped_model.to_lowercase().contains("claude");
-                if is_claude_model && turn_signature.is_none() {
-                    // Claude 模型：若本轮无签名，绝不强行凭空插入无签名的 thinking 占位块！
-                    // Anthropic 官方规范要求有 thinking 块必须有 signature，否则报 Field required
-                } else {
-                    // Gemini 原生模型：允许使用哨兵占位块保证思考模型格式一致
-                    let sig_to_use = turn_signature.as_deref().unwrap_or(SENTINEL_SIGNATURE);
-                    let mut thought_part = json!({
-                        "text": "...",
-                        "thought": true,
-                    });
-                    if !is_google_cloud || sig_to_use != SENTINEL_SIGNATURE {
-                        thought_part["thoughtSignature"] = json!(sig_to_use);
-                    }
-                    parts.insert(0, thought_part);
-                    tracing::debug!(
-                        "Injected placeholder thinking block for assistant message at turn {}",
-                        msg_index
-                    );
-                }
+                // 纯净线缆原则：客户端若原本无思考块，适配器严禁凭空伪造 "..." 占位块！
+                // 缺失思考块的判定与状态机复活统一委托给进站流水线（InboundThinkingPipeline）
             }
         }
     }
@@ -1920,10 +1926,54 @@ fn build_generation_config(
     let mut config = json!({});
 
     // Thinking 配置
-    if is_thinking_enabled && !crate::proxy::model_specs::is_gemini_under_v3(mapped_model) {
+    let client_switch = crate::proxy::pipeline::extract_client_thinking_switch(
+        claude_req.thinking.as_ref().map(|t| t.type_.as_str()),
+        claude_req
+            .thinking
+            .as_ref()
+            .and_then(|t| t.budget_tokens.map(|b| b as u64)),
+        claude_req
+            .output_config
+            .as_ref()
+            .and_then(|c| c.effort.as_deref())
+            .or_else(|| {
+                claude_req
+                    .thinking
+                    .as_ref()
+                    .and_then(|t| t.effort.as_deref())
+            }),
+    );
+
+    let tb_config = crate::proxy::config::get_thinking_budget_config();
+    let is_client_control =
+        tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client;
+    let is_client_disabled = is_client_control && client_switch.is_disabled();
+
+    let effort = claude_req
+        .output_config
+        .as_ref()
+        .and_then(|c| c.effort.as_ref())
+        .or_else(|| claude_req.thinking.as_ref().and_then(|t| t.effort.as_ref()))
+        .or_else(|| tb_config.effort.as_ref());
+
+    let client_effort = effort.map(|s| s.as_str());
+    let client_budget = claude_req
+        .thinking
+        .as_ref()
+        .and_then(|t| t.budget_tokens.map(|b| b as u64));
+
+    if is_client_disabled {
+        crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
+            mapped_model,
+            &mut config,
+            client_switch,
+            None,
+            None,
+            token,
+        );
+    } else if is_thinking_enabled && !crate::proxy::model_specs::is_gemini_under_v3(mapped_model) {
         let mut thinking_config = json!({"includeThoughts": true});
 
-        let tb_config = crate::proxy::config::get_thinking_budget_config();
         let global_mode_is_adaptive = matches!(
             tb_config.mode,
             crate::proxy::config::ThinkingBudgetMode::Adaptive
@@ -1935,19 +1985,6 @@ fn build_generation_config(
             .unwrap_or(false);
         let should_use_adaptive = (user_is_adaptive || global_mode_is_adaptive)
             && mapped_model.to_lowercase().contains("claude");
-
-        let effort = claude_req
-            .output_config
-            .as_ref()
-            .and_then(|c| c.effort.as_ref())
-            .or_else(|| claude_req.thinking.as_ref().and_then(|t| t.effort.as_ref()))
-            .or_else(|| tb_config.effort.as_ref());
-
-        let client_effort = effort.map(|s| s.as_str());
-        let client_budget = claude_req
-            .thinking
-            .as_ref()
-            .and_then(|t| t.budget_tokens.map(|b| b as u64));
 
         if should_use_adaptive {
             let mapped_level = match effort.map(|e| e.to_lowercase()).as_deref() {
@@ -1964,30 +2001,14 @@ fn build_generation_config(
             config["thinkingConfig"] = thinking_config;
         } else {
             // 协议无关：思考预算与 thinkingConfig 统一由进站流水线节点治理
-            let _budget_opt =
-                crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
-                    mapped_model,
-                    &mut config,
-                    client_effort,
-                    client_budget,
-                    token,
-                );
-            if tb_config.control_source == crate::proxy::config::ThinkingControlSource::Client {
-                if let Some(eff_str) = client_effort {
-                    if let Some(norm_level) =
-                        crate::proxy::model_specs::normalize_client_thinking_level(eff_str)
-                    {
-                        let target_level = if mapped_model.to_lowercase().contains("pro")
-                            && norm_level == "MEDIUM"
-                        {
-                            "HIGH"
-                        } else {
-                            norm_level
-                        };
-                        config["thinkingConfig"]["thinkingLevel"] = json!(target_level);
-                    }
-                }
-            }
+            crate::proxy::pipeline::InboundThinkingPipeline::configure_inbound_thinking(
+                mapped_model,
+                &mut config,
+                client_switch,
+                client_effort,
+                client_budget,
+                token,
+            );
         }
     }
 
