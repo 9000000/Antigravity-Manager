@@ -37,9 +37,12 @@ pub fn extract_client_thinking_switch(
     // 1. 显式关闭判定（最高优先级，一票否决）
     if matches!(
         t_type.as_deref(),
-        Some("disabled") | Some("off") | Some("false")
+        Some("disabled") | Some("off") | Some("false") | Some("0")
     ) || budget == Some(0)
-        || matches!(eff.as_deref(), Some("none") | Some("off") | Some("false"))
+        || matches!(
+            eff.as_deref(),
+            Some("none") | Some("off") | Some("false") | Some("0") | Some("disabled")
+        )
     {
         return ClientThinkingSwitch::Disabled;
     }
@@ -50,7 +53,13 @@ pub fn extract_client_thinking_switch(
         Some("enabled") | Some("on") | Some("true")
     ) || budget.map_or(false, |b| b > 0)
         || eff.as_deref().map_or(false, |e| {
-            !e.is_empty() && e != "none" && e != "off" && e != "false" && e != "default"
+            !e.is_empty()
+                && e != "none"
+                && e != "off"
+                && e != "false"
+                && e != "0"
+                && e != "disabled"
+                && e != "default"
         })
     {
         return ClientThinkingSwitch::Enabled;
@@ -228,6 +237,33 @@ impl InboundThinkingPipeline {
                                     continue;
                                 }
 
+                                // 跨家族协议自愈：检查是否夹带 <think> 标签包裹的思考内容（如从 Claude 跨切回 Gemini）
+                                if let Some((extracted_thought, clean_visible)) =
+                                    crate::proxy::thinking_store::extract_think_tags(raw_text)
+                                {
+                                    if thinking_part.is_none() && is_thinking_enabled {
+                                        let final_thought = if extracted_thought.is_empty() {
+                                            "..."
+                                        } else {
+                                            extracted_thought.as_str()
+                                        };
+                                        let mut t_obj = json!({
+                                            "text": final_thought,
+                                            "thought": true,
+                                        });
+                                        if !is_claude {
+                                            t_obj["thoughtSignature"] = json!(
+                                                crate::proxy::thinking_store::SENTINEL_SIGNATURE
+                                            );
+                                        }
+                                        thinking_part = Some(t_obj);
+                                    }
+                                    if !clean_visible.is_empty() {
+                                        other_parts.push(json!({ "text": clean_visible }));
+                                    }
+                                    continue;
+                                }
+
                                 // 协议无关自愈：检查是否夹带旧版遗留思考前缀 (如 **Thinking**)
                                 if raw_text.trim_start().starts_with("**Thinking**") {
                                     let clean_thought = Self::strip_thinking_prefix(raw_text);
@@ -294,8 +330,15 @@ impl InboundThinkingPipeline {
         }
 
         // 2. 状态机无损复活 (Hydration)
-        // 思考关闭时绝不执行思考块复活与签名回填；仅在开启思考时才进行复活
-        if is_thinking_enabled && !is_retry {
+        // 开思考时全局复活；关思考时若包含工具调用，亦执行复活以取回历史工具防伪签名
+        let has_function_call = contents.iter().any(|c| {
+            c.get("parts")
+                .and_then(|p| p.as_array())
+                .map_or(false, |parts| {
+                    parts.iter().any(|p| p.get("functionCall").is_some())
+                })
+        });
+        if (is_thinking_enabled || has_function_call) && !is_retry {
             if let Some(s_id) = session_id {
                 crate::proxy::thinking_store::hydrate_gemini_contents_with_model(
                     s_id,
@@ -1004,5 +1047,41 @@ mod tests {
         assert_eq!(tc4.get("includeThoughts"), Some(&json!(true)));
         assert_eq!(tc4.get("thinkingBudget"), Some(&json!(8192)));
         assert!(tc4.get("thinkingLevel").is_none());
+    }
+
+    #[test]
+    fn test_cross_family_think_tag_extraction_and_elevation_for_gemini() {
+        let thought_text = "Analyzing user code structure and determining route.";
+        let visible_answer = "The issue has been identified and isolated.";
+        let wrapped_text = format!("<think>\n{}\n</think>\n\n{}", thought_text, visible_answer);
+
+        let mut contents = vec![json!({
+            "role": "model",
+            "parts": [
+                { "text": wrapped_text }
+            ]
+        })];
+
+        InboundThinkingPipeline::process_contents(
+            &mut contents,
+            ProxyProtocol::AnthropicClaude,
+            "gemini-3.8-flash-tiered",
+            true,
+            None,
+            false,
+        );
+
+        let parts = contents[0]["parts"].as_array().expect("parts array");
+        // 1. 首位成功提升为 thought: true 的思考块
+        assert_eq!(parts[0]["thought"], true);
+        assert_eq!(parts[0]["text"], thought_text);
+        assert_eq!(
+            parts[0]["thoughtSignature"],
+            crate::proxy::thinking_store::SENTINEL_SIGNATURE
+        );
+
+        // 2. 正文部件已干净剔除 <think>...</think> 标签与换行，仅保留真实回答
+        assert_eq!(parts[1]["text"], visible_answer);
+        assert!(parts[1].get("thought").is_none());
     }
 }
