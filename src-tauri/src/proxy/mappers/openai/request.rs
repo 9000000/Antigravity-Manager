@@ -1554,7 +1554,7 @@ mod tests {
 
     #[test]
     fn test_openai_aliases_max_completion_tokens_and_reasoning_max_tokens() {
-        // 1. max_completion_tokens 别名支持
+        // 1. max_completion_tokens 及 max_output_tokens 别名支持
         let req1: OpenAIRequest = serde_json::from_value(json!({
             "model": "o3-mini",
             "messages": [{"role": "user", "content": "hello"}],
@@ -1562,6 +1562,14 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(req1.max_tokens, Some(16384));
+
+        let req1_resp: OpenAIRequest = serde_json::from_value(json!({
+            "model": "gpt-5",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_output_tokens": 128000
+        }))
+        .unwrap();
+        assert_eq!(req1_resp.max_tokens, Some(128000));
 
         // 2. reasoning.max_tokens 与 reasoning.effort 支持
         let req2: OpenAIRequest = serde_json::from_value(json!({

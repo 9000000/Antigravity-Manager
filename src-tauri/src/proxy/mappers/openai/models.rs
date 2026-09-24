@@ -19,7 +19,9 @@ pub struct OpenAIRequest {
         rename = "max_tokens",
         alias = "max_completion_tokens",
         alias = "maxCompletionTokens",
-        alias = "maxTokens"
+        alias = "maxTokens",
+        alias = "max_output_tokens",
+        alias = "maxOutputTokens"
     )]
     pub max_tokens: Option<u32>,
     pub temperature: Option<f64>,

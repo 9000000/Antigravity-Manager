@@ -3,6 +3,11 @@
 > Complete version history for Antigravity Tools. Return to project home at [README_EN.md](README_EN.md).
 
 *   **Version History**:
+    *   **v4.8.1-beta.1 (2026-09-25)**:
+        -   **[OpenAI Responses Protocol Enhancement] Add max_output_tokens Alias Support & Precise Thinking Budget/Level Mapping**:
+            -   **Support max_output_tokens Deserialization Alias**: Added `max_output_tokens` and `maxOutputTokens` field aliases to top-level `OpenAIRequest`, ensuring standard client outputs are properly mapped to upstream `maxOutputTokens`.
+            -   **Unit Tests & Edge-Case Coverage**: Enhanced test suites to cover `max_completion_tokens`, `max_output_tokens`, and `reasoning.max_tokens` thinking budget alias resolution paths.
+
     *   **v4.8.0 (2026-09-23)**:
         -   **[Full-Protocol Tool & Argument 100% Pure Passthrough] Eliminate Agent-Client Tool Call Failures Caused by Legacy Truncation and Opaque Rewriting (PR #3504)**:
             -   **Lossless Tool & Argument Egress**: Removed tool-name mapping, argument alias rewriting, and error command injection across OpenAI, Anthropic Claude, and Google Gemini adapters, allowing tool names and arguments to reach upstream with the client's original semantics intact — resolving tool call errors in OpenClaw and other agent clients.

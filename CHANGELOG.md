@@ -3,6 +3,11 @@
 > 完整版本历史记录。返回项目主页请查看 [README.md](README.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v4.8.1-beta.1 (2026-09-25)**:
+        -   **[OpenAI Responses 协议适配增强] 完善 max_output_tokens 别名支持与思考预算/等级精准映射**:
+            -   **支持 max_output_tokens 反序列化别名**: `OpenAIRequest` 顶层增加 `max_output_tokens` 与 `maxOutputTokens` 字段别名映射，保证客户端发送该标准字段时网关能够精准解析并映射为 upstream 的 `maxOutputTokens`。
+            -   **单元测试与边界补全**: 完善单元测试，确保 `max_completion_tokens`、`max_output_tokens` 及 `reasoning.max_tokens` 思考预算别名链路测试全面覆盖。
+
     *   **v4.8.0 (2026-09-23)**:
         -   **[全协议工具与参数 100% 纯透传] 彻底根除历史截断与不透明改写导致的 Agent 客户端工具调用异常 (PR #3504)**:
             -   **工具与参数语义无损透传**: 拔除 OpenAI / Anthropic Claude / Google Gemini 三套协议中工具名称映射、参数别名改写与错误命令注入等中间篡改逻辑，工具名与实参以客户端原始语义直达上游，根治 OpenClaw 等 Agent 客户端因截断与改写产生的各类诡异工具调用报错。
