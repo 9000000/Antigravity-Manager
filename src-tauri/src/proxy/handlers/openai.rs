@@ -2823,28 +2823,7 @@ pub async fn handle_chat_completions(
                     .purge_corrupted_signatures(&session_id, &mapped_model);
                 // 2. 清理当前 session 的 SignatureCache
                 crate::proxy::SignatureCache::global().delete_session_signature(&client_session_id);
-                // 3. 追加修复提示词到最后一条用户消息
-                if let Some(last_msg) = openai_req.messages.last_mut() {
-                    if last_msg.role == "user" {
-                        let repair_prompt = "\n\n[System Recovery] Your previous output contained an invalid signature. Please regenerate the response without the corrupted signature block.";
-                        if let Some(content) = &mut last_msg.content {
-                            use crate::proxy::mappers::openai::{
-                                OpenAIContent, OpenAIContentBlock,
-                            };
-                            match content {
-                                OpenAIContent::String(s) => {
-                                    s.push_str(repair_prompt);
-                                }
-                                OpenAIContent::Array(arr) => {
-                                    arr.push(OpenAIContentBlock::Text {
-                                        text: repair_prompt.to_string(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                // 4. 保持同一账号原地重试
+                // 3. 保持同一账号原地重试
                 force_rotate = false;
                 continue;
             } else {
@@ -4807,8 +4786,13 @@ pub async fn handle_completions(
                 "[{}] Pipeline: Target model [{}] not found on upstream (HTTP {}). Terminating completions retry loop without account lockout.",
                 trace_id, mapped_model, status_code
             );
+            let protocol = if is_responses_api {
+                "responses"
+            } else {
+                "openai"
+            };
             let dual_err = crate::proxy::handlers::common::build_dual_track_error(
-                "openai",
+                protocol,
                 status_code,
                 &mapped_model,
                 &error_text,
@@ -4884,13 +4868,24 @@ pub async fn handle_completions(
             continue;
         } else {
             // 不可重试
+            let protocol = if is_responses_api {
+                "responses"
+            } else {
+                "openai"
+            };
+            let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+                protocol,
+                status_code,
+                &mapped_model,
+                &error_text,
+            );
             return (
                 status,
                 [
                     ("X-Account-Email", email.as_str()),
                     ("X-Mapped-Model", mapped_model.as_str()),
                 ],
-                error_text,
+                axum::Json(dual_err),
             )
                 .into_response();
         }
@@ -4903,12 +4898,18 @@ pub async fn handle_completions(
         last_email.as_deref(),
         &last_error,
     );
-    (
-        final_status,
-        headers,
-        format!("All accounts exhausted. Last error: {}", last_error),
-    )
-        .into_response()
+    let protocol = if is_responses_api {
+        "responses"
+    } else {
+        "openai"
+    };
+    let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+        protocol,
+        final_status.as_u16(),
+        &mapped_model,
+        &last_error,
+    );
+    (final_status, headers, axum::Json(dual_err)).into_response()
 }
 
 pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoResponse {

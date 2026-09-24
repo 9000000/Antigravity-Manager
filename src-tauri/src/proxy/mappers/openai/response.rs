@@ -250,7 +250,10 @@ pub fn transform_openai_response(
             };
 
             let refusal_val = if finish_reason == "content_filter" {
-                Some("生成由于安全策略或背诵保护被中止".to_string())
+                Some(
+                    "Generation was terminated due to safety policy or recitation checks."
+                        .to_string(),
+                )
             } else {
                 None
             };
@@ -291,7 +294,10 @@ pub fn transform_openai_response(
                 .get("blockReason")
                 .and_then(|v| v.as_str())
                 .unwrap_or("UNKNOWN");
-            let refusal_msg = format!("请求由于安全策略被拦截 (blockReason: {})", reason);
+            let refusal_msg = format!(
+                "Request was blocked due to safety policy (blockReason: {}).",
+                reason
+            );
             choices.push(Choice {
                 index: 0,
                 message: OpenAIMessage {

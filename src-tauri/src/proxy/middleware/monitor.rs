@@ -1573,7 +1573,9 @@ pub async fn monitor_middleware(
                                 .ok()
                                 .or_else(|| Some(s.to_string()));
                         } else {
-                            log.response_body = Some(s.to_string());
+                            log.response_body = serde_json::to_string_pretty(&json)
+                                .ok()
+                                .or_else(|| Some(s.to_string()));
                         }
                     } else {
                         log.response_body = Some(s.to_string());
