@@ -1270,6 +1270,11 @@ impl TurnAccumulator {
             );
             self.function_call_count += 1;
 
+            // 核心演进：全面转战因果伪哈希 ID！首位强制存入确定性 synthetic ID，客户端 real_id 紧随其后作为元数据兜底
+            if !self.tool_ids.iter().any(|x| x == &synthetic) {
+                self.tool_ids.push(synthetic.clone());
+            }
+
             if let Some(ref real_id) = explicit_id {
                 if !self.tool_ids.iter().any(|x| x == real_id) {
                     self.tool_ids.push(real_id.clone());
@@ -1293,9 +1298,6 @@ impl TurnAccumulator {
                     .cache_tool_signature(&synthetic, sig.to_string());
             }
 
-            if !self.tool_ids.iter().any(|x| x == &synthetic) {
-                self.tool_ids.push(synthetic);
-            }
             if !self.tool_names.iter().any(|x| x == &name) {
                 self.tool_names.push(name);
             }
@@ -2668,13 +2670,14 @@ fn inspect_parts_with_anchor(
             let synthetic = synthesize_tool_id(&name, fc.get("args"), anchor, function_call_count);
             function_call_count += 1;
 
+            // 核心演进：全面转战因果伪哈希 ID！首位强制存入确定性 synthetic ID
+            if !tool_ids.iter().any(|x| x == &synthetic) {
+                tool_ids.push(synthetic);
+            }
             if let Some(real_id) = explicit_id {
                 if !tool_ids.iter().any(|x| x == &real_id) {
                     tool_ids.push(real_id);
                 }
-            }
-            if !tool_ids.iter().any(|x| x == &synthetic) {
-                tool_ids.push(synthetic);
             }
             tool_names.push(name);
         }
