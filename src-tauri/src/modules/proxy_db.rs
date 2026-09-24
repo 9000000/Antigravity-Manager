@@ -935,6 +935,42 @@ pub fn load_thinking_by_signature(
     }
 }
 
+/// 为 UI 展示层兜底提供：按会话查找最新记录中的权威签名 (支持带租户前缀的容错匹配)
+pub fn lookup_latest_thinking_signature(session_id: &str) -> Option<String> {
+    if session_id.trim().is_empty() {
+        return None;
+    }
+    let conn = thinking_db().ok()?;
+    let suffix = format!("%:{}", session_id.trim());
+    conn.query_row(
+        "SELECT signature FROM thinking_records 
+         WHERE (session_key = ?1 OR session_key LIKE ?2) 
+           AND signature IS NOT NULL 
+         ORDER BY id DESC LIMIT 1",
+        rusqlite::params![session_id.trim(), suffix],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
+/// 为 UI 展示层兜底提供：按思考内容片段模糊查找权威签名
+pub fn lookup_signature_by_thought_snippet(snippet: &str) -> Option<String> {
+    let clean = snippet.trim();
+    if clean.is_empty() {
+        return None;
+    }
+    let conn = thinking_db().ok()?;
+    let pattern = format!("%{}%", clean);
+    conn.query_row(
+        "SELECT signature FROM thinking_records 
+         WHERE thought LIKE ?1 AND signature IS NOT NULL 
+         ORDER BY id DESC LIMIT 1",
+        rusqlite::params![pattern],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
 /// 根据 fingerprint 精准穿透点查纯文本历史思考（利用 idx_thinking_rec_fp 索引）
 pub fn load_thinking_by_fingerprint(
     session_key: &str,
