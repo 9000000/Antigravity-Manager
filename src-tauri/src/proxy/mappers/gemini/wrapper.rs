@@ -238,12 +238,25 @@ pub fn wrap_request_v2(
     let client_budget = inner_request
         .get("generationConfig")
         .and_then(|gc| gc.get("thinkingConfig"))
-        .and_then(|tc| tc.get("thinkingBudget"))
+        .and_then(|tc| {
+            tc.get("thinkingBudget")
+                .or_else(|| tc.get("thinking_budget"))
+                .or_else(|| tc.get("budget_tokens"))
+                .or_else(|| tc.get("budgetTokens"))
+                .or_else(|| tc.get("max_tokens"))
+                .or_else(|| tc.get("maxTokens"))
+        })
         .and_then(|b| b.as_i64());
     let client_level = inner_request
         .get("generationConfig")
         .and_then(|gc| gc.get("thinkingConfig"))
-        .and_then(|tc| tc.get("thinkingLevel"))
+        .and_then(|tc| {
+            tc.get("thinkingLevel")
+                .or_else(|| tc.get("thinking_level"))
+                .or_else(|| tc.get("reasoning_effort"))
+                .or_else(|| tc.get("reasoningEffort"))
+                .or_else(|| tc.get("effort"))
+        })
         .and_then(|v| v.as_str());
 
     let client_switch = crate::proxy::pipeline::extract_client_thinking_switch(
@@ -544,8 +557,13 @@ pub fn wrap_request_v2(
         || lower_model.contains("agent")
         || lower_model.contains("gemini")
     {
-        // [NEW] Extract OpenAI-style max_tokens before mutably borrowing gen_config
-        let req_max_tokens = inner_request.get("max_tokens").and_then(|v| v.as_u64());
+        // [NEW] Extract OpenAI/Claude-style max_tokens before mutably borrowing gen_config
+        let req_max_tokens = inner_request
+            .get("max_tokens")
+            .or_else(|| inner_request.get("max_completion_tokens"))
+            .or_else(|| inner_request.get("maxCompletionTokens"))
+            .or_else(|| inner_request.get("maxTokens"))
+            .and_then(|v| v.as_u64());
 
         // Determine model family and capability beforehand to avoid borrow checker conflicts
         let is_claude = lower_model.contains("claude");
@@ -645,12 +663,25 @@ pub fn wrap_request_v2(
         let has_thinking_config = gen_config.contains_key("thinkingConfig");
         let client_level = gen_config
             .get("thinkingConfig")
-            .and_then(|t| t.get("thinkingLevel"))
+            .and_then(|t| {
+                t.get("thinkingLevel")
+                    .or_else(|| t.get("thinking_level"))
+                    .or_else(|| t.get("reasoning_effort"))
+                    .or_else(|| t.get("reasoningEffort"))
+                    .or_else(|| t.get("effort"))
+            })
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let client_budget = gen_config
             .get("thinkingConfig")
-            .and_then(|t| t.get("thinkingBudget"))
+            .and_then(|t| {
+                t.get("thinkingBudget")
+                    .or_else(|| t.get("thinking_budget"))
+                    .or_else(|| t.get("budget_tokens"))
+                    .or_else(|| t.get("budgetTokens"))
+                    .or_else(|| t.get("max_tokens"))
+                    .or_else(|| t.get("maxTokens"))
+            })
             .and_then(|v| v.as_i64());
 
         let client_switch = crate::proxy::pipeline::extract_client_thinking_switch(

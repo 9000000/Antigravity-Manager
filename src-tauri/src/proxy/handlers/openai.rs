@@ -1966,7 +1966,13 @@ pub async fn handle_chat_completions(
         openai_req
             .thinking
             .as_ref()
-            .and_then(|t| t.budget_tokens.map(|b| b as u64)),
+            .and_then(|t| t.budget_tokens.map(|b| b as u64))
+            .or_else(|| {
+                openai_req
+                    .reasoning
+                    .as_ref()
+                    .and_then(|r| r.max_tokens.map(|b| b as u64))
+            }),
         openai_req
             .reasoning_effort
             .as_deref()
@@ -1985,13 +1991,20 @@ pub async fn handle_chat_completions(
     );
     let client_explicit_disabled = client_switch.is_disabled();
 
-    let raw_client_budget = openai_req.thinking.as_ref().and_then(|t| t.budget_tokens);
+    let raw_client_budget = openai_req
+        .thinking
+        .as_ref()
+        .and_then(|t| t.budget_tokens)
+        .or_else(|| openai_req.reasoning.as_ref().and_then(|r| r.max_tokens));
 
     let client_budget = if is_client_control {
         raw_client_budget
     } else if is_v3_or_above || is_explicit_tier_model {
         if let Some(ref mut t) = openai_req.thinking {
             t.budget_tokens = None; // 清理客户端 budget_tokens，防止污染
+        }
+        if let Some(ref mut r) = openai_req.reasoning {
+            r.max_tokens = None;
         }
         None
     } else {
@@ -2060,6 +2073,9 @@ pub async fn handle_chat_completions(
             // 严禁伪造并塞入 spec.thinking_budget (4000)！保持真实客户端状态
             if let Some(ref mut t) = openai_req.thinking {
                 t.budget_tokens = None;
+            }
+            if let Some(ref mut r) = openai_req.reasoning {
+                r.max_tokens = None;
             }
         } else if spec.thinking_budget == 0 {
             // Non-thinking checkpoint model (e.g. gemini-3.1-flash-lite): disable thinking

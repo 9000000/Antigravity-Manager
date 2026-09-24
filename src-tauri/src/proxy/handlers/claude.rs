@@ -45,35 +45,52 @@ fn extract_thinking_hint(body: &Value) -> ThinkingHint {
     };
 
     // Try to extract budget_tokens from various paths
-    // Priority: thinking.budget_tokens > thinking.budgetTokens > thinking.budget > thinkingConfig.thinkingBudget
+    // Priority: thinking.budget_tokens > thinking.budgetTokens > thinking.max_tokens > thinking.budget > thinkingConfig.thinkingBudget > reasoning.max_tokens
     if let Some(budget) = body
         .get("thinking")
-        .and_then(|t| t.get("budget_tokens"))
-        .and_then(|b| b.as_u64())
-    {
-        hint.budget_tokens = Some(budget as u32);
-    } else if let Some(budget) = body
-        .get("thinking")
-        .and_then(|t| t.get("budgetTokens"))
-        .and_then(|b| b.as_u64())
-    {
-        hint.budget_tokens = Some(budget as u32);
-    } else if let Some(budget) = body
-        .get("thinking")
-        .and_then(|t| t.get("budget"))
+        .and_then(|t| {
+            t.get("budget_tokens")
+                .or_else(|| t.get("budgetTokens"))
+                .or_else(|| t.get("max_tokens"))
+                .or_else(|| t.get("maxTokens"))
+                .or_else(|| t.get("budget"))
+        })
         .and_then(|b| b.as_u64())
     {
         hint.budget_tokens = Some(budget as u32);
     } else if let Some(budget) = body
         .get("thinkingConfig")
-        .and_then(|t| t.get("thinkingBudget"))
+        .and_then(|t| {
+            t.get("thinkingBudget")
+                .or_else(|| t.get("thinking_budget"))
+                .or_else(|| t.get("budget_tokens"))
+                .or_else(|| t.get("budgetTokens"))
+        })
+        .and_then(|b| b.as_u64())
+    {
+        hint.budget_tokens = Some(budget as u32);
+    } else if let Some(budget) = body
+        .get("reasoning")
+        .and_then(|r| {
+            r.get("max_tokens")
+                .or_else(|| r.get("maxTokens"))
+                .or_else(|| r.get("budget_tokens"))
+                .or_else(|| r.get("budgetTokens"))
+        })
         .and_then(|b| b.as_u64())
     {
         hint.budget_tokens = Some(budget as u32);
     }
 
-    // Try to extract level from thinkingLevel
-    if let Some(level) = body.get("thinkingLevel").and_then(|l| l.as_str()) {
+    // Try to extract level from thinkingLevel / reasoning_effort / output_config.effort
+    if let Some(level) = body
+        .get("thinkingLevel")
+        .or_else(|| body.get("thinking_level"))
+        .or_else(|| body.get("reasoning_effort"))
+        .or_else(|| body.get("reasoningEffort"))
+        .or_else(|| body.get("output_config").and_then(|o| o.get("effort")))
+        .and_then(|l| l.as_str())
+    {
         hint.level = Some(level.to_lowercase());
     }
 
