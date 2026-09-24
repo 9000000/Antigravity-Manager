@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::{env, fs, path::PathBuf, process::Command};
+use std::{env, fs, path::PathBuf, time::Duration};
+use tokio::process::Command;
 use yaml_rt::{JsonPointer, NodeId, SemanticKind, YamlDoc, YamlFragment};
 
 #[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-#[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 const HERMES_DIR: &str = ".hermes";
 const HERMES_CONFIG_FILE: &str = "config.yaml";
@@ -149,18 +149,14 @@ fn is_valid_version(value: &str) -> bool {
             .all(|character| character.is_ascii_digit() || character == '.')
 }
 
-fn run_hermes_version(path: &PathBuf) -> Option<String> {
+async fn run_version_command(mut command: Command, timeout: Duration) -> Option<String> {
+    command.kill_on_drop(true);
     #[cfg(target_os = "windows")]
-    let output = {
-        let mut command = Command::new(path);
-        command.arg("--version").creation_flags(CREATE_NO_WINDOW);
-        command.output()
-    };
-    #[cfg(not(target_os = "windows"))]
-    let output = Command::new(path).arg("--version").output();
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = tokio::time::timeout(timeout, command.output()).await;
 
     match output {
-        Ok(output) if output.status.success() => {
+        Ok(Ok(output)) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             Some(extract_version(if stdout.trim().is_empty() {
@@ -173,9 +169,15 @@ fn run_hermes_version(path: &PathBuf) -> Option<String> {
     }
 }
 
-pub fn check_hermes_installed() -> (bool, Option<String>) {
+async fn run_hermes_version(path: &PathBuf) -> Option<String> {
+    let mut command = Command::new(path);
+    command.arg("--version");
+    run_version_command(command, VERSION_PROBE_TIMEOUT).await
+}
+
+pub async fn check_hermes_installed() -> (bool, Option<String>) {
     match resolve_hermes_path() {
-        Some(path) => (true, run_hermes_version(&path)),
+        Some(path) => (true, run_hermes_version(&path).await),
         None => (false, None),
     }
 }
@@ -1027,9 +1029,10 @@ pub fn read_hermes_config_content() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn get_hermes_sync_status(proxy_url: Option<String>) -> Result<HermesStatus, String> {
+    // CLI startup can be slow or hang; never block configuration operations on it.
+    let (installed, version) = check_hermes_installed().await;
     tokio::task::spawn_blocking(move || {
         let _lock = acquire_hermes_config_lock();
-        let (installed, version) = check_hermes_installed();
         let state = read_config_state(proxy_url);
         Ok(HermesStatus {
             installed,
@@ -1095,6 +1098,50 @@ pub async fn get_hermes_config_content() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn version_probe_test_command(mode: &str) -> Command {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "proxy::hermes_sync::tests::version_probe_subprocess_helper",
+                "--nocapture",
+            ])
+            .env("ANTIGRAVITY_HERMES_VERSION_PROBE_TEST", mode);
+        command
+    }
+
+    #[test]
+    fn version_probe_subprocess_helper() {
+        match std::env::var("ANTIGRAVITY_HERMES_VERSION_PROBE_TEST").as_deref() {
+            Ok("success") => println!("Hermes Agent v0.21.3 (2026.9.14)"),
+            Ok("timeout") => std::thread::sleep(Duration::from_secs(60)),
+            _ => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn version_probe_extracts_version_from_successful_subprocess() {
+        assert_eq!(
+            run_version_command(
+                version_probe_test_command("success"),
+                Duration::from_secs(10)
+            )
+            .await
+            .as_deref(),
+            Some("0.21.3")
+        );
+    }
+
+    #[tokio::test]
+    async fn version_probe_times_out_hung_subprocess() {
+        assert!(run_version_command(
+            version_probe_test_command("timeout"),
+            Duration::from_millis(100)
+        )
+        .await
+        .is_none());
+    }
 
     fn doc(source: &str) -> YamlDoc {
         parse_doc(source).expect("valid yaml")
