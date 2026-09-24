@@ -158,6 +158,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "yaml-rt",
 ]
 
 [[package]]
@@ -7183,6 +7184,21 @@ dependencies = [
  "libc",
  "rustix",
 ]
+
+[[package]]
+name = "yaml-rt"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47cba0986904d72ac28dd1afa6c55cbed7b3bf761ed72062adcd53e310025a0c"
+dependencies = [
+ "yaml-rt-core",
+]
+
+[[package]]
+name = "yaml-rt-core"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c25dd380b82002cfed6591070a8c20adbc055f5e299d9909eb4d9b21d155457"
 
 [[package]]
 name = "yoke"

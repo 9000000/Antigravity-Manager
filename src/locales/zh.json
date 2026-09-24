@@ -1328,6 +1328,37 @@
       "sync_confirm_title": "同步确认",
       "sync_confirm_message": "即将为您同步 {{name}} 的配置。⚠️ 注意：此操作将覆盖您本地已有的配置文件（如登录状态、API Key 等）。确定要继续吗？"
     },
+    "hermes_sync": {
+      "modal_title": "在 Hermes 中配置 Antigravity Manager",
+      "endpoint_title": "连接地址",
+      "local_endpoint": "本地代理",
+      "custom_endpoint": "自定义地址",
+      "custom_endpoint_desc": "Docker、局域网或反向代理",
+      "url_required": "请输入 Hermes 连接地址",
+      "models_title": "Hermes 中可用的模型",
+      "discover_models": "自动发现",
+      "discover_models_desc": "Hermes 通过 /v1/models 获取实时模型列表",
+      "selected_models": "仅使用选中的模型",
+      "models_required": "请至少选择一个模型",
+      "activate_provider": "将 Antigravity Manager 设为 Hermes 默认提供商",
+      "activate_provider_desc": "默认关闭，以避免更改当前的 Hermes 提供商。",
+      "default_model": "默认模型",
+      "select_default_model": "选择模型",
+      "default_model_required": "请选择默认模型",
+      "default_model_invalid": "请选择 Antigravity Manager 提供的可用模型",
+      "currently_active": "当前已在 Hermes 中启用",
+      "btn_confirm_sync": "保存到 Hermes",
+      "btn_view": "查看配置",
+      "btn_restore": "恢复",
+      "btn_clear": "清除",
+      "clear_confirm_title": "清除 Hermes 配置",
+      "clear_confirm_message": "此操作将从 Hermes 中移除 Antigravity Manager 提供商。确定要继续吗？",
+      "toast": {
+        "sync_success": "Hermes 配置同步成功",
+        "clear_success": "Hermes 配置已成功清除",
+        "clear_error": "清除 Hermes 配置失败：{{error}}"
+      }
+    },
     "error": {
       "load_failed": "加载失败"
     }

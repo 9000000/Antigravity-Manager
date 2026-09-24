@@ -788,6 +788,14 @@ impl AxumServer {
                 post(admin_get_opencode_config_content),
             )
             .route("/proxy/opencode/families", get(admin_get_opencode_families))
+            .route("/proxy/hermes/status", post(admin_get_hermes_sync_status))
+            .route("/proxy/hermes/sync", post(admin_execute_hermes_sync))
+            .route("/proxy/hermes/restore", post(admin_execute_hermes_restore))
+            .route("/proxy/hermes/clear", post(admin_execute_hermes_clear))
+            .route(
+                "/proxy/hermes/config",
+                post(admin_get_hermes_config_content),
+            )
             .route("/proxy/droid/status", post(admin_get_droid_sync_status))
             .route("/proxy/droid/sync", post(admin_execute_droid_sync))
             .route("/proxy/droid/restore", post(admin_execute_droid_restore))
@@ -4347,6 +4355,103 @@ async fn admin_execute_opencode_clear(
     crate::proxy::opencode_sync::execute_opencode_clear(payload.proxy_url, payload.clear_legacy)
         .await
         .map(|_| StatusCode::OK)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+// ── Hermes Agent Sync Admin Handlers ──
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HermesSyncStatusRequest {
+    #[serde(default)]
+    proxy_url: Option<String>,
+}
+
+async fn admin_get_hermes_sync_status(
+    Json(payload): Json<HermesSyncStatusRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::hermes_sync::get_hermes_sync_status(payload.proxy_url)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HermesSyncRequest {
+    proxy_url: String,
+    api_key: String,
+    discover_models: bool,
+    #[serde(default)]
+    models: Vec<String>,
+    #[serde(default)]
+    activate: bool,
+    #[serde(default)]
+    default_model: Option<String>,
+}
+
+async fn admin_execute_hermes_sync(
+    Json(payload): Json<HermesSyncRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::hermes_sync::execute_hermes_sync(
+        payload.proxy_url,
+        payload.api_key,
+        payload.discover_models,
+        payload.models,
+        payload.activate,
+        payload.default_model,
+    )
+    .await
+    .map(|_| StatusCode::OK)
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })
+}
+
+async fn admin_execute_hermes_restore(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::hermes_sync::execute_hermes_restore()
+        .await
+        .map(|_| StatusCode::OK)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+async fn admin_execute_hermes_clear() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)>
+{
+    crate::proxy::hermes_sync::execute_hermes_clear()
+        .await
+        .map(|_| StatusCode::OK)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+async fn admin_get_hermes_config_content(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::hermes_sync::get_hermes_config_content()
+        .await
+        .map(Json)
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,

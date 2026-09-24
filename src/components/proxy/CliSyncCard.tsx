@@ -23,6 +23,7 @@ import ModalDialog from '../common/ModalDialog';
 import { cn } from '../../utils/cn';
 import { DroidSyncModal } from './DroidSyncModal';
 import { OpenCodeSyncModal } from './OpenCodeSyncModal';
+import { HermesSyncModal } from './HermesSyncModal';
 import { useProxyModels } from '../../hooks/useProxyModels';
 import GroupedSelect from '../common/GroupedSelect';
 
@@ -32,7 +33,7 @@ interface CliSyncCardProps {
     className?: string;
 }
 
-type CliAppType = 'Claude' | 'Codex' | 'Gemini' | 'OpenCode' | 'Droid';
+type CliAppType = 'Claude' | 'Codex' | 'Gemini' | 'OpenCode' | 'Droid' | 'Hermes';
 
 interface CliStatus {
     installed: boolean;
@@ -51,21 +52,24 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         Codex: null,
         Gemini: null,
         OpenCode: null,
-        Droid: null
+        Droid: null,
+        Hermes: null
     });
     const [loading, setLoading] = useState<Record<CliAppType, boolean>>({
         Claude: false,
         Codex: false,
         Gemini: false,
         OpenCode: false,
-        Droid: false
+        Droid: false,
+        Hermes: false
     });
     const [syncing, setSyncing] = useState<Record<CliAppType, boolean>>({
         Claude: false,
         Codex: false,
         Gemini: false,
         OpenCode: false,
-        Droid: false
+        Droid: false,
+        Hermes: false
     });
     const [syncAccounts, setSyncAccounts] = useState(false);
     const [droidSyncModal, setDroidSyncModal] = useState(false);
@@ -74,7 +78,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         Codex: 'gpt-4o',
         Gemini: 'gemini-1.5-pro',
         OpenCode: '',
-        Droid: ''
+        Droid: '',
+        Hermes: ''
     });
     const [viewingConfig, setViewingConfig] = useState<{
         app: CliAppType,
@@ -85,6 +90,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
     const [restoreConfirmApp, setRestoreConfirmApp] = useState<CliAppType | null>(null);
     const [syncConfirmApp, setSyncConfirmApp] = useState<CliAppType | null>(null);
     const [openCodeSyncModal, setOpenCodeSyncModal] = useState(false);
+    const [hermesSyncModal, setHermesSyncModal] = useState(false);
     const [clearConfirmApp, setClearConfirmApp] = useState<CliAppType | null>(null);
 
     const { models: proxyModels } = useProxyModels();
@@ -100,7 +106,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         if (!proxyUrl) return '';
         const base = proxyUrl.trimEnd().replace(/\/+$/, '');
         // Codex & OpenCode (OpenAI 协议) 通常需要带 /v1
-        if (app === 'Codex' || app === 'OpenCode') {
+        if (app === 'Codex' || app === 'OpenCode' || app === 'Hermes') {
             return base.endsWith('/v1') ? base : `${base}/v1`;
         }
         // Claude 和 Gemini 的 SDK 通常会自动处理版本路径或不需要 /v1
@@ -118,6 +124,9 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                 params = { proxyUrl: formattedUrl };
             } else if (app === 'OpenCode') {
                 command = 'get_opencode_sync_status';
+                params = { proxyUrl: formattedUrl };
+            } else if (app === 'Hermes') {
+                command = 'get_hermes_sync_status';
                 params = { proxyUrl: formattedUrl };
             } else {
                 command = 'get_cli_sync_status';
@@ -140,6 +149,10 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         }
         if (app === 'OpenCode') {
             setOpenCodeSyncModal(true);
+            return;
+        }
+        if (app === 'Hermes') {
+            setHermesSyncModal(true);
             return;
         }
         setSyncConfirmApp(app);
@@ -183,8 +196,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
 
         setSyncing(prev => ({ ...prev, [app]: true }));
         try {
-            const command = app === 'Droid' ? 'execute_droid_restore' : app === 'OpenCode' ? 'execute_opencode_restore' : 'execute_cli_restore';
-            const params = (app === 'Droid' || app === 'OpenCode') ? {} : { appType: app };
+            const command = app === 'Droid' ? 'execute_droid_restore' : app === 'OpenCode' ? 'execute_opencode_restore' : app === 'Hermes' ? 'execute_hermes_restore' : 'execute_cli_restore';
+            const params = (app === 'Droid' || app === 'OpenCode' || app === 'Hermes') ? {} : { appType: app };
             await invoke(command, params);
             showToast(t('common.success'), 'success');
             await checkStatus(app);
@@ -207,11 +220,11 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         setSyncing(prev => ({ ...prev, [app]: true }));
         try {
             const formattedUrl = getFormattedProxyUrl(app);
-            await invoke('execute_opencode_clear', { proxyUrl: formattedUrl, clearLegacy: true });
-            showToast(t('proxy.opencode_sync.toast.clear_success', { defaultValue: 'OpenCode cleared successfully' }), 'success');
+            await invoke(app === 'Hermes' ? 'execute_hermes_clear' : 'execute_opencode_clear', app === 'Hermes' ? {} : { proxyUrl: formattedUrl, clearLegacy: true });
+            showToast(t(app === 'Hermes' ? 'proxy.hermes_sync.toast.clear_success' : 'proxy.opencode_sync.toast.clear_success', { defaultValue: `${app} cleared successfully` }), 'success');
             await checkStatus(app);
         } catch (error: any) {
-            showToast(t('proxy.opencode_sync.toast.clear_error', { defaultValue: `Clear failed: ${error.toString()}` }), 'error');
+            showToast(t(app === 'Hermes' ? 'proxy.hermes_sync.toast.clear_error' : 'proxy.opencode_sync.toast.clear_error', { error: error.toString(), defaultValue: `Failed to clear ${app}: ${error.toString()}` }), 'error');
         } finally {
             setSyncing(prev => ({ ...prev, [app]: false }));
         }
@@ -231,6 +244,9 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
             } else if (app === 'OpenCode') {
                 command = 'get_opencode_config_content';
                 params = { request: { fileName: targetFile } };
+            } else if (app === 'Hermes') {
+                command = 'get_hermes_config_content';
+                params = {};
             } else {
                 command = 'get_cli_config_content';
                 params = { appType: app, fileName: targetFile };
@@ -254,6 +270,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         checkStatus('Gemini');
         checkStatus('OpenCode');
         checkStatus('Droid');
+        checkStatus('Hermes');
     }, [checkStatus]);
 
     const renderCliItem = (app: CliAppType, icon: React.ReactNode, name: string) => {
@@ -292,7 +309,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     </div>
 
                     {/* Show Sync Status if installed OR if it's OpenCode (which we now allow configuring even if not installed) */}
-                    {!isAppLoading && (status?.installed || app === 'OpenCode' && status?.current_base_url) && (
+                    {!isAppLoading && (status?.installed || (app === 'OpenCode' || app === 'Hermes') && status?.current_base_url) && (
                         <div className={cn(
                             "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold tracking-wide transition-all h-6 shrink-0 whitespace-nowrap shadow-sm",
                             status.is_synced
@@ -319,7 +336,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     </div>
 
                     {/* Claude, Codex, Gemini 的模型选择 */}
-                    {(status?.installed || app === 'OpenCode') && (app === 'Claude' || app === 'Codex' || app === 'Gemini') && (
+                    {status?.installed && (app === 'Claude' || app === 'Codex' || app === 'Gemini') && (
                         <div className="space-y-1">
                             <div className="text-[9px] text-gray-400 dark:text-gray-500 uppercase font-bold tracking-wider px-1">
                                 {t('proxy.cli_sync.model_select', { defaultValue: 'Select Model' })}
@@ -351,14 +368,14 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     )}
 
                     <div className="flex items-center gap-2">
-                        {(status?.installed || app === 'OpenCode') && (
+                        {(status?.installed || app === 'OpenCode' || app === 'Hermes') && (
                             <>
                                 {/* 对于 OpenCode，如果未同步，则不显示查看按钮（因为文件尚未生成，后端会报错） */}
-                                {(app !== 'OpenCode' || status?.is_synced) && (
+                                {((app !== 'OpenCode' && app !== 'Hermes') || status?.is_synced) && (
                                     <button
                                         onClick={() => handleViewConfig(app)}
                                         className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
-                                        title={t(app === 'OpenCode' ? 'proxy.opencode_sync.btn_view' : 'proxy.cli_sync.btn_view', { defaultValue: 'View Config' })}
+                                        title={t(app === 'OpenCode' ? 'proxy.opencode_sync.btn_view' : app === 'Hermes' ? 'proxy.hermes_sync.btn_view' : 'proxy.cli_sync.btn_view', { defaultValue: 'View Config' })}
                                     >
                                         <Eye size={14} />
                                     </button>
@@ -366,16 +383,16 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                                 <button
                                     onClick={() => handleRestore(app)}
                                     className="p-1 text-gray-400 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded transition-colors"
-                                    title={t(app === 'OpenCode' ? 'proxy.opencode_sync.btn_restore' : 'proxy.cli_sync.btn_restore', { defaultValue: 'Restore' })}
+                                    title={t(app === 'OpenCode' ? 'proxy.opencode_sync.btn_restore' : app === 'Hermes' ? 'proxy.hermes_sync.btn_restore' : 'proxy.cli_sync.btn_restore', { defaultValue: 'Restore' })}
                                 >
                                     <RotateCcw size={14} />
                                 </button>
                                 {/* OpenCode 独有的 Clear 按钮 */}
-                                {app === 'OpenCode' && (
+                                {(app === 'OpenCode' || app === 'Hermes') && (
                                     <button
                                         onClick={() => handleClear(app)}
                                         className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                                        title={t('proxy.opencode_sync.btn_clear', { defaultValue: 'Clear' })}
+                                        title={t(app === 'Hermes' ? 'proxy.hermes_sync.btn_clear' : 'proxy.opencode_sync.btn_clear', { defaultValue: 'Clear' })}
                                     >
                                         <Trash2 size={14} />
                                     </button>
@@ -384,7 +401,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                         )}
                         <button
                             onClick={() => handleSync(app)}
-                            disabled={(app !== 'OpenCode' && !status?.installed) || isAppSyncing || isAppLoading}
+                            disabled={(app !== 'OpenCode' && app !== 'Hermes' && !status?.installed) || isAppSyncing || isAppLoading}
                             className={cn(
                                 "btn btn-sm flex-1 gap-2 rounded-xl transition-all font-bold shadow-sm",
                                 status?.is_synced
@@ -425,6 +442,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                 {renderCliItem('Gemini', <Globe size={20} className="text-green-500" />, 'Gemini CLI')}
                 {renderCliItem('OpenCode', <CodeXml size={20} className="text-blue-500" />, 'OpenCode')}
                 {renderCliItem('Droid', <Bot size={20} className="text-orange-500" />, 'Droid')}
+                {renderCliItem('Hermes', <Bot size={20} className="text-purple-500" />, 'Hermes Agent')}
             </div>
 
             {/* Config Viewer Modal */}
@@ -510,11 +528,15 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                 isDestructive={true}
             />
 
-            {/* Clear 确认弹窗 - 仅 OpenCode */}
+            {/* Clear 确认弹窗 - OpenCode / Hermes */}
             <ModalDialog
                 isOpen={!!clearConfirmApp}
-                title={t('proxy.opencode_sync.clear_confirm_title', { defaultValue: 'Clear OpenCode Configuration' })}
-                message={t('proxy.opencode_sync.clear_confirm_message', { defaultValue: 'This will clear all OpenCode configurations including legacy settings. Are you sure?' })}
+                title={clearConfirmApp === 'Hermes'
+                    ? t('proxy.hermes_sync.clear_confirm_title', { defaultValue: 'Clear Hermes Configuration' })
+                    : t('proxy.opencode_sync.clear_confirm_title', { defaultValue: 'Clear OpenCode Configuration' })}
+                message={clearConfirmApp === 'Hermes'
+                    ? t('proxy.hermes_sync.clear_confirm_message', { defaultValue: 'This will remove the Antigravity Manager provider from Hermes. Are you sure?' })
+                    : t('proxy.opencode_sync.clear_confirm_message', { defaultValue: 'This will clear all OpenCode configurations including legacy settings. Are you sure?' })}
                 onConfirm={executeClear}
                 onCancel={() => setClearConfirmApp(null)}
                 isDestructive={true}
@@ -529,6 +551,10 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     onClose={() => setDroidSyncModal(false)}
                     onSyncDone={() => checkStatus('Droid')}
                 />
+            )}
+
+            {hermesSyncModal && (
+                <HermesSyncModal apiKey={apiKey} getFormattedProxyUrl={getFormattedProxyUrl} onClose={() => setHermesSyncModal(false)} onSyncDone={() => checkStatus('Hermes')} />
             )}
 
             {/* OpenCode 模型选择弹窗 */}
