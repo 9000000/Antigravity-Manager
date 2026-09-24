@@ -1285,8 +1285,8 @@
       "action": "Tindakan"
     },
     "cli_sync": {
-      "title": "Segerak CLI Satu-klik",
-      "subtitle": "Segerakkan endpoint API semasa dan kunci ke alat CLI AI tempatan anda dengan cepat.",
+      "title": "Konfigurasi Alat Agent Satu-Klik",
+      "subtitle": "Segerakkan endpoint API semasa dan kunci ke alat AI Agent tempatan anda dengan cepat.",
       "card_title": "Konfigurasi {{name}}",
       "status": {
         "not_installed": "Tidak dikesan",

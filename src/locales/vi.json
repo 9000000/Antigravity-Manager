@@ -1290,8 +1290,8 @@
       "copy_base": "Sao chép Base"
     },
     "cli_sync": {
-      "title": "Đồng bộ CLI",
-      "subtitle": "Đồng bộ URL API và Key hiện tại với các công cụ AI CLI của bạn",
+      "title": "Cấu hình một cú nhấp cho công cụ Agent",
+      "subtitle": "Đồng bộ URL API và Key hiện tại với các công cụ AI Agent của bạn",
       "card_title": "Cấu hình {{name}}",
       "status": {
         "not_installed": "Chưa cài đặt",

@@ -1308,9 +1308,17 @@
       "action": "Action"
     },
     "cli_sync": {
-      "title": "One-click CLI Sync",
-      "subtitle": "Quickly sync current API endpoints and keys to your local AI CLI tools.",
+      "title": "One-Click Agent Tools Configuration",
+      "subtitle": "Quickly sync current API endpoints and keys to your local AI Agent tools.",
       "card_title": "{{name}} Config",
+      "jeikcode_recommended": "Recommended",
+      "jeikcode_badge": "Best Matched",
+      "jeikcode_author": "by Jeikl",
+      "jeikcode_tagline": "Built by Core Maintainer · Best Gateway Fit",
+      "jeikcode_tag_cache": "95%+ Insane Cache",
+      "jeikcode_tag_codegraph": "Code Graph",
+      "jeikcode_tag_surpass": "Beats CC & Codex",
+      "jeikcode_tag_custom": "Customizable",
       "status": {
         "not_installed": "Not detected",
         "installed": "v{{version}}",

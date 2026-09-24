@@ -1676,7 +1676,7 @@ print(response.choices[0].message.content)`;
                                     }`}
                                 >
                                     <Terminal size={14} className={activeMenuTab === 'cli' ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'} />
-                                    {t('proxy.cli_sync.title', { defaultValue: 'CLI 一键配置' })}
+                                    {t('proxy.cli_sync.title', { defaultValue: 'Agent工具一键配置' })}
                                 </button>
                                 <button
                                     type="button"

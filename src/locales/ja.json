@@ -1303,8 +1303,8 @@
       "action": "操作"
     },
     "cli_sync": {
-      "title": "CLI 設定の一括同期",
-      "subtitle": "現在の API エンドポイントとキーをローカルの AI CLI ツールに素早く同期します。",
+      "title": "Agentツール一括設定",
+      "subtitle": "現在の API エンドポイントとキーをローカルの AI Agent ツールに素早く同期します。",
       "card_title": "{{name}} 設定",
       "status": {
         "not_installed": "未インストール",

@@ -1303,8 +1303,8 @@
       "action": "작업"
     },
     "cli_sync": {
-      "title": "원클릭 CLI 동기화",
-      "subtitle": "현재 API 엔드포인트와 키를 로컬 AI CLI 도구에 빠르게 동기화합니다.",
+      "title": "Agent 도구 원클릭 설정",
+      "subtitle": "현재 API 엔드포인트와 키를 로컬 AI Agent 도구에 빠르게 동기화합니다.",
       "card_title": "{{name}} 구성",
       "status": {
         "not_installed": "감지되지 않음",

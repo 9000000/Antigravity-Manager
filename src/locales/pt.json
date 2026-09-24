@@ -1316,8 +1316,8 @@
       "action": "Ação"
     },
     "cli_sync": {
-      "title": "Sincronização de Ferramentas CLI",
-      "subtitle": "Sincronize a URL e chave da API com suas ferramentas de CLI de IA",
+      "title": "Configuração Rápida de Ferramentas de Agent",
+      "subtitle": "Sincronize a URL e chave da API com suas ferramentas de AI Agent locais",
       "card_title": "Config {{name}}",
       "status": {
         "not_installed": "Não instalado",

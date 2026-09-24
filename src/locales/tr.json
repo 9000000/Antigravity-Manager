@@ -1292,8 +1292,8 @@
       "copy_base": "Base Kopyala"
     },
     "cli_sync": {
-      "title": "CLI Senkronizasyonu",
-      "subtitle": "Mevcut API URL'sini ve anahtarını AI CLI araçlarınızla senkronize edin",
+      "title": "Tek Tıkla Agent Araçları Yapılandırması",
+      "subtitle": "Mevcut API URL'sini ve anahtarını AI Agent araçlarınızla senkronize edin",
       "card_title": "{{name}} Yapılandırması",
       "status": {
         "not_installed": "Yüklü Değil",

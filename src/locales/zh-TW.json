@@ -1283,9 +1283,17 @@
       "copy_base": "複製 Base"
     },
     "cli_sync": {
-      "title": "CLI 配置一鍵同步",
-      "subtitle": "快速將當前 API 服務地址與 API 密鑰同步到本地 AI CLI 工具中",
+      "title": "Agent工具一鍵配置",
+      "subtitle": "快速將當前 API 服務地址與 API 密鑰同步到本地 AI Agent 工具中",
       "card_title": "{{name}} 配置",
+      "jeikcode_recommended": "推薦使用",
+      "jeikcode_badge": "Best Matched",
+      "jeikcode_author": "by Jeikl",
+      "jeikcode_tagline": "核心維護者深度打造 · 原生網關最佳兼容",
+      "jeikcode_tag_cache": "95%+ 恐怖快取",
+      "jeikcode_tag_codegraph": "代碼圖譜",
+      "jeikcode_tag_surpass": "超越 CC / Codex",
+      "jeikcode_tag_custom": "自由定製",
       "status": {
         "not_installed": "未檢測到安裝",
         "installed": "v{{version}}",
