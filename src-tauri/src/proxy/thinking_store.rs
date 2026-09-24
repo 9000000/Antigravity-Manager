@@ -453,11 +453,21 @@ impl ThinkingStore {
             let (visible, tool_ids, tool_names, existing_thought) =
                 inspect_parts_with_anchor(parts, &anchor);
             let existing_sig = parts.iter().find_map(|p| {
-                p.get("thoughtSignature")
+                let sig = p
+                    .get("thoughtSignature")
                     .or_else(|| p.get("thought_signature"))
                     .and_then(|s| s.as_str())
                     .filter(|s| is_real_signature(s))
-                    .map(str::to_string)
+                    .map(str::to_string);
+                sig.or_else(|| {
+                    p.get("functionCall")
+                        .and_then(|fc| fc.get("id"))
+                        .and_then(|id| id.as_str())
+                        .and_then(|id| {
+                            crate::proxy::SignatureCache::global().get_tool_signature(id)
+                        })
+                        .filter(|s| is_real_signature(s))
+                })
             });
             let already_complete = !turn_needs_restore(parts, &existing_thought);
             // Agent tool turns match by tool_id (Phase 1). Skip fingerprint /
@@ -1246,29 +1256,47 @@ impl TurnAccumulator {
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
-            let mut id = fc
+            let explicit_id = fc
                 .get("id")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.trim().is_empty())
                 .map(str::to_string);
 
-            if id.is_none() {
-                let synthetic = synthesize_tool_id(
-                    &name,
-                    fc.get("args"),
-                    &self.context_anchor,
-                    self.function_call_count,
-                );
-                id = Some(synthetic);
-            }
+            let synthetic = synthesize_tool_id(
+                &name,
+                fc.get("args"),
+                &self.context_anchor,
+                self.function_call_count,
+            );
             self.function_call_count += 1;
 
-            if let Some(id_str) = id {
-                if !self.tool_ids.iter().any(|x| x == &id_str) {
-                    self.tool_ids.push(id_str);
-                    self.tool_names.push(name);
+            if let Some(ref real_id) = explicit_id {
+                if !self.tool_ids.iter().any(|x| x == real_id) {
+                    self.tool_ids.push(real_id.clone());
                 }
-            } else if !self.tool_names.iter().any(|x| x == &name) {
+                if let Some(sig) = part
+                    .get("thoughtSignature")
+                    .or_else(|| part.get("thought_signature"))
+                    .and_then(|s| s.as_str())
+                {
+                    crate::proxy::SignatureCache::global()
+                        .cache_tool_signature(real_id, sig.to_string());
+                    crate::proxy::SignatureCache::global()
+                        .cache_tool_signature(&synthetic, sig.to_string());
+                }
+            } else if let Some(sig) = part
+                .get("thoughtSignature")
+                .or_else(|| part.get("thought_signature"))
+                .and_then(|s| s.as_str())
+            {
+                crate::proxy::SignatureCache::global()
+                    .cache_tool_signature(&synthetic, sig.to_string());
+            }
+
+            if !self.tool_ids.iter().any(|x| x == &synthetic) {
+                self.tool_ids.push(synthetic);
+            }
+            if !self.tool_names.iter().any(|x| x == &name) {
                 self.tool_names.push(name);
             }
         }
@@ -1449,7 +1477,16 @@ pub fn finalize_gemini_contents_thinking_with_model(
     is_thinking_enabled: bool,
     target_model: Option<&str>,
 ) {
-    for msg in contents.iter_mut() {
+    // 预先计算每一轮的前置因果锚点 (causal anchor)，以便无 ID 的 Gemini 原生工具调用也能合成确定性 ID
+    let anchors: Vec<String> = (0..contents.len())
+        .map(|i| {
+            let preceding = if i > 0 { contents.get(i - 1) } else { None };
+            compute_causal_anchor(preceding)
+        })
+        .collect();
+
+    for (msg_idx, msg) in contents.iter_mut().enumerate() {
+        let anchor = &anchors[msg_idx];
         let is_model = matches!(
             msg.get("role").and_then(|r| r.as_str()),
             Some("model") | Some("assistant")
@@ -1499,20 +1536,41 @@ pub fn finalize_gemini_contents_thinking_with_model(
                 .map(|m| m.to_lowercase().contains("claude"))
                 .unwrap_or(false);
 
-            // 1. 提取当前轮次已有合法的真实工具签名 (若有)
+            // 1. 提取当前轮次已有合法的真实工具签名 (若有，优先已有签名，其次查询全局 SignatureCache 兜底)
+            let mut fc_probe_counter = 0usize;
             let turn_real_sig: Option<String> = other_parts.iter().find_map(|p| {
-                if p.get("functionCall").is_some() {
-                    p.get("thoughtSignature")
+                if let Some(fc) = p.get("functionCall") {
+                    let sig_from_part = p
+                        .get("thoughtSignature")
                         .and_then(|s| s.as_str())
                         .filter(|s| is_real_signature(s))
-                        .filter(|s| {
-                            if is_claude_turn {
-                                is_claude_signature(s)
-                            } else {
-                                is_likely_gemini_signature(s)
-                            }
-                        })
-                        .map(|s| s.to_string())
+                        .map(str::to_string);
+                    let sig = sig_from_part.or_else(|| {
+                        let name = fc.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let synthetic =
+                            synthesize_tool_id(name, fc.get("args"), anchor, fc_probe_counter);
+                        fc_probe_counter += 1;
+
+                        crate::proxy::SignatureCache::global()
+                            .get_tool_signature(&synthetic)
+                            .or_else(|| {
+                                fc.get("id")
+                                    .and_then(|id| id.as_str())
+                                    .filter(|s| !s.trim().is_empty())
+                                    .and_then(|id| {
+                                        crate::proxy::SignatureCache::global()
+                                            .get_tool_signature(id)
+                                    })
+                            })
+                            .filter(|s| is_real_signature(s))
+                    });
+                    sig.filter(|s| {
+                        if is_claude_turn {
+                            is_claude_signature(s)
+                        } else {
+                            is_likely_gemini_signature(s)
+                        }
+                    })
                 } else {
                     None
                 }
@@ -1534,11 +1592,32 @@ pub fn finalize_gemini_contents_thinking_with_model(
                 // Gemini 原生模型：Google 引擎强制要求每一个 functionCall 必须挂载 thoughtSignature！
                 // 无论思考开还是关：首个 functionCall 承载真实大签名 (若有且合法) 或哨兵，后续并行工具打上 32 字节哨兵
                 let mut first_fc_seen = false;
+                let mut fc_assign_counter = 0usize;
                 for part in other_parts.iter_mut() {
-                    if part.get("functionCall").is_some() {
+                    if let Some(fc) = part.get("functionCall") {
+                        let name = fc.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let synthetic =
+                            synthesize_tool_id(name, fc.get("args"), anchor, fc_assign_counter);
+                        fc_assign_counter += 1;
+
+                        let cached_tool_sig = crate::proxy::SignatureCache::global()
+                            .get_tool_signature(&synthetic)
+                            .or_else(|| {
+                                fc.get("id")
+                                    .and_then(|id| id.as_str())
+                                    .filter(|s| !s.trim().is_empty())
+                                    .and_then(|id| {
+                                        crate::proxy::SignatureCache::global()
+                                            .get_tool_signature(id)
+                                    })
+                            })
+                            .filter(|s| is_likely_gemini_signature(s));
+
                         if !first_fc_seen {
                             first_fc_seen = true;
-                            if let Some(ref real_sig) = turn_real_sig {
+                            if let Some(sig) = cached_tool_sig {
+                                part["thoughtSignature"] = json!(sig);
+                            } else if let Some(ref real_sig) = turn_real_sig {
                                 if is_likely_gemini_signature(real_sig) {
                                     part["thoughtSignature"] = json!(real_sig);
                                 } else {
@@ -1554,7 +1633,11 @@ pub fn finalize_gemini_contents_thinking_with_model(
                                 }
                             }
                         } else {
-                            part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                            if let Some(sig) = cached_tool_sig {
+                                part["thoughtSignature"] = json!(sig);
+                            } else {
+                                part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                            }
                         }
                     }
                 }
@@ -2576,23 +2659,22 @@ fn inspect_parts_with_anchor(
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
-            let mut id = fc
+            let explicit_id = fc
                 .get("id")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.trim().is_empty())
                 .map(str::to_string);
 
-            if id.is_none() {
-                let synthetic =
-                    synthesize_tool_id(&name, fc.get("args"), anchor, function_call_count);
-                id = Some(synthetic);
-            }
+            let synthetic = synthesize_tool_id(&name, fc.get("args"), anchor, function_call_count);
             function_call_count += 1;
 
-            if let Some(id_str) = id {
-                if !tool_ids.iter().any(|x| x == &id_str) {
-                    tool_ids.push(id_str);
+            if let Some(real_id) = explicit_id {
+                if !tool_ids.iter().any(|x| x == &real_id) {
+                    tool_ids.push(real_id);
                 }
+            }
+            if !tool_ids.iter().any(|x| x == &synthetic) {
+                tool_ids.push(synthetic);
             }
             tool_names.push(name);
         }
@@ -3134,6 +3216,23 @@ mod tests {
         let scope_ord1 = SessionScope::from_headers(&headers_order1, "anchor-1");
         let scope_ord2 = SessionScope::from_headers(&headers_order2, "anchor-1");
         assert_eq!(scope_ord1.client_id, scope_ord2.client_id);
+
+        // 5. 跨协议相同显式会话头（如 Claude 切到 OpenAI）：相同会话锚点下 store_key 绝对一致共享，不同锚点下强隔离
+        let mut claude_headers = HeaderMap::new();
+        claude_headers.insert("x-session-id", "conv-uuid-999".parse().unwrap());
+        claude_headers.insert("x-api-key", "secret-token".parse().unwrap());
+
+        let mut openai_headers = HeaderMap::new();
+        openai_headers.insert("x-session-id", "conv-uuid-999".parse().unwrap());
+        openai_headers.insert("authorization", "Bearer secret-token".parse().unwrap());
+
+        let scope_claude = SessionScope::from_headers(&claude_headers, "shared-anchor");
+        let scope_openai = SessionScope::from_headers(&openai_headers, "shared-anchor");
+
+        assert_eq!(
+            scope_claude.store_key, scope_openai.store_key,
+            "Cross-protocol requests in the same session must share the identical store_key"
+        );
     }
 
     #[test]
@@ -4140,6 +4239,46 @@ mod tests {
     }
 
     #[test]
+    fn test_finalize_recovers_tool_signature_from_global_signature_cache() {
+        let tool_id = "call_finalize_cache_777";
+        let valid_gemini_sig = "EmIKYAFpFH0TDqviLY1vZ8EuHqBLLj5xxD+0hchYg2VaoyolUQRP+hSCsKRpSpj+yrQA2H27yVFnF7tlp5OHIUvTdZKKErAqILJzK5FG8RJg42jCaaI2/iwqoBuRd5BDVwBxaQ==";
+        crate::proxy::SignatureCache::global()
+            .cache_tool_signature(tool_id, valid_gemini_sig.to_string());
+
+        let mut contents = vec![json!({
+            "role": "model",
+            "parts": [
+                {
+                    "functionCall": {
+                        "name": "run_command",
+                        "id": tool_id,
+                        "args": { "cmd": "cargo test" }
+                    }
+                    // 注意：未带 thoughtSignature（模拟从任何未带签名的协议转入）
+                }
+            ]
+        })];
+
+        // 终审出站，发往 Gemini
+        finalize_gemini_contents_thinking_with_model(
+            &mut contents,
+            true,
+            Some("gemini-3.8-flash-tiered"),
+        );
+
+        let parts = contents[0]["parts"].as_array().unwrap();
+        // 验证：无论开思考还是关思考，只要 SignatureCache 中有该工具的真实签名，就必须恢复真实签名而非哨兵！
+        let fc = parts
+            .iter()
+            .find(|p| p.get("functionCall").is_some())
+            .unwrap();
+        assert_eq!(
+            fc["thoughtSignature"], valid_gemini_sig,
+            "Pipeline finalize must backfill real signature from SignatureCache for any protocol"
+        );
+    }
+
+    #[test]
     fn test_finalize_thinking_disabled_strips_tool_signature_for_claude() {
         let real_sig = "s".repeat(60);
         let mut contents = vec![json!({
@@ -4311,5 +4450,91 @@ mod tests {
 
         // No tags
         assert!(extract_think_tags("Just normal text").is_none());
+    }
+
+    #[test]
+    fn test_gemini_native_synthetic_id_bridges_cross_protocol_signature_recovery() {
+        let store = ThinkingStore::new();
+        let key = "t:cross-proto-synthetic-id-test";
+        let client_tool_id = "call_openai_native_456";
+        let real_sig = "EmIKYAFpFH0TDqviLY1vZ8EuHqBLLj5xxD+0hchYg2VaoyolUQRP+hSCsKRpSpj+yrQA2H27yVFnF7tlp5OHIUvTdZKKErAqILJzK5FG8RJg42jCaaI2/iwqoBuRd5BDVwBxaQ==";
+        let thought_text = "Analyzing directory and listing files.";
+        let visible_answer = "Running bash tool.";
+
+        // 1. 模拟 OpenAI 协议下生成的工具调用（带有 client_tool_id）
+        let mut acc = TurnAccumulator::with_anchor("user-root-anchor");
+        acc.ingest_part(&json!({
+            "thought": true,
+            "text": thought_text,
+            "thoughtSignature": real_sig
+        }));
+        acc.ingest_part(&json!({
+            "functionCall": {
+                "name": "bash",
+                "args": { "command": "ls -la" },
+                "id": client_tool_id
+            },
+            "thoughtSignature": real_sig
+        }));
+        acc.commit(key);
+
+        // 2. 模拟用户切换到了原生 Gemini 协议发起后续对话：
+        // 原生 Gemini 请求的 contents 中天生没有 id 字段（id: None）！
+        let mut gemini_contents = vec![
+            json!({
+                "role": "user",
+                "parts": [{ "text": "List the files" }]
+            }),
+            json!({
+                "role": "model",
+                "parts": [
+                    {
+                        "functionCall": {
+                            "name": "bash",
+                            "args": { "command": "ls -la" }
+                            // 注意：完全无 id 字段！
+                        }
+                    }
+                ]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "functionResponse": { "name": "bash", "response": { "res": "file.txt" } } }]
+            }),
+        ];
+
+        // 3. 原生 Gemini 协议执行流水线复活与终审出站
+        let restored = store.restore_gemini_contents_with_model(
+            key,
+            &mut gemini_contents,
+            Some("gemini-3.8-flash-tiered"),
+        );
+        assert_eq!(
+            restored, 1,
+            "Must match via synthetic context ID even though Gemini request had no tool id"
+        );
+
+        finalize_gemini_contents_thinking_with_model(
+            &mut gemini_contents,
+            true,
+            Some("gemini-3.8-flash-tiered"),
+        );
+
+        let model_parts = gemini_contents[1]["parts"].as_array().expect("parts");
+        // 验证思考块被成功提升复活：
+        assert_eq!(model_parts[0]["thought"], true);
+        assert_eq!(model_parts[0]["text"], thought_text);
+
+        // 验证工具调用依靠内部确定性伪 ID 成功找回真实签名：
+        let fc = &model_parts[1];
+        assert_eq!(fc["functionCall"]["name"], "bash");
+        assert_eq!(fc["thoughtSignature"], real_sig);
+        // 验证伪 ID 纯粹内部使用，绝不外泄给无 ID 协议：
+        assert!(
+            fc["functionCall"].get("id").is_none(),
+            "Synthetic ID must remain internal and not leak to client"
+        );
+
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(key);
     }
 }

@@ -90,8 +90,17 @@ impl InboundThinkingPipeline {
         let trusts_signature = protocol.trusts_client_signature();
         let is_claude = target_model.to_lowercase().contains("claude");
 
+        // 预先计算每一轮的前置因果锚点 (causal anchor)，以便无 ID 的 Gemini 原生工具调用也能无损合成确定性 ID
+        let anchors: Vec<String> = (0..contents.len())
+            .map(|i| {
+                let preceding = if i > 0 { contents.get(i - 1) } else { None };
+                crate::proxy::thinking_store::compute_causal_anchor(preceding)
+            })
+            .collect();
+
         // 1. 协议策略清洗与位置规范化
-        for content in contents.iter_mut() {
+        for (msg_idx, content) in contents.iter_mut().enumerate() {
+            let anchor = &anchors[msg_idx];
             let is_model = matches!(
                 content.get("role").and_then(|r| r.as_str()),
                 Some("model") | Some("assistant")
@@ -102,6 +111,7 @@ impl InboundThinkingPipeline {
                     let mut thinking_part = None;
                     let mut extra_thinking_parts = Vec::new();
                     let mut other_parts = Vec::new();
+                    let mut fc_counter = 0usize;
 
                     for mut part in parts.drain(..) {
                         let is_thought = part
@@ -204,6 +214,50 @@ impl InboundThinkingPipeline {
                             }
                         } else {
                             if target_model.to_lowercase().contains("gemini") {
+                                // 协议无关全局工具签名回填：若当前部件为 functionCall 且尚未携带签名，优先按显式 ID 或因果合成 ID 查询 SignatureCache
+                                if let Some(fc) = part.get("functionCall") {
+                                    let needs_real_sig = part
+                                        .get("thoughtSignature")
+                                        .and_then(|s| s.as_str())
+                                        .map_or(true, |s| {
+                                            s == crate::proxy::thinking_store::SENTINEL_SIGNATURE
+                                        });
+                                    if needs_real_sig {
+                                        let name = fc
+                                            .get("name")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("unknown");
+                                        let synthetic_id =
+                                            crate::proxy::thinking_store::synthesize_tool_id(
+                                                name,
+                                                fc.get("args"),
+                                                anchor,
+                                                fc_counter,
+                                            );
+                                        fc_counter += 1;
+
+                                        // 核心原则：统一根据上下文因果合成伪 ID 查库回填，不受客户端是否携带或使用何种 tool_id 限制
+                                        let found_sig = crate::proxy::SignatureCache::global()
+                                            .get_tool_signature(&synthetic_id)
+                                            .or_else(|| {
+                                                fc.get("id")
+                                                    .and_then(|id| id.as_str())
+                                                    .filter(|s| !s.trim().is_empty())
+                                                    .and_then(|id| {
+                                                        crate::proxy::SignatureCache::global()
+                                                            .get_tool_signature(id)
+                                                    })
+                                            });
+
+                                        if let Some(sig) = found_sig {
+                                            if crate::proxy::thinking_store::is_likely_gemini_signature(&sig)
+                                            {
+                                                part["thoughtSignature"] = json!(sig);
+                                            }
+                                        }
+                                    }
+                                }
+
                                 if let Some(fc_sig) =
                                     part.get("thoughtSignature").and_then(|s| s.as_str())
                                 {

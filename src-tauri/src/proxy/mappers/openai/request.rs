@@ -685,8 +685,27 @@ pub fn transform_openai_request_with_session(
                         }
                     });
 
-                    // 纯净线缆透传：客户端若自带签名则无损透传；缺失签名全权委托流水线统一对齐与回填
-                    if let Some(ref sig) = tc.signature {
+                    // 签名提取与对齐：优先客户端自带签名；若无则查询全局 SignatureCache (与 Claude / Gemini 适配器严格对齐)
+                    let final_sig = tc
+                        .signature
+                        .as_deref()
+                        .filter(|s| {
+                            (*s == crate::proxy::thinking_store::SENTINEL_SIGNATURE
+                                || s.len() >= 50)
+                                && (!mapped_model.to_lowercase().contains("gemini")
+                                    || crate::proxy::thinking_store::is_likely_gemini_signature(s))
+                        })
+                        .map(str::to_string)
+                        .or_else(|| {
+                            crate::proxy::SignatureCache::global()
+                                .get_tool_signature(&tc.id)
+                                .filter(|s| {
+                                    !mapped_model.to_lowercase().contains("gemini")
+                                        || crate::proxy::thinking_store::is_likely_gemini_signature(s)
+                                })
+                        });
+
+                    if let Some(sig) = final_sig {
                         func_call_part["thoughtSignature"] = json!(sig);
                     }
 
@@ -3378,5 +3397,66 @@ mod tests {
         // 验证 parameters 保证包含 OBJECT 和 properties: {}
         assert_eq!(decl["parameters"]["type"], "OBJECT");
         assert_eq!(decl["parameters"]["properties"], json!({}));
+    }
+
+    #[test]
+    fn test_openai_tool_call_retrieves_signature_from_signature_cache() {
+        let tool_id = "call_cached_test_999";
+        let valid_gemini_sig = "EmIKYAFpFH0TDqviLY1vZ8EuHqBLLj5xxD+0hchYg2VaoyolUQRP+hSCsKRpSpj+yrQA2H27yVFnF7tlp5OHIUvTdZKKErAqILJzK5FG8RJg42jCaaI2/iwqoBuRd5BDVwBxaQ==";
+        crate::proxy::SignatureCache::global()
+            .cache_tool_signature(tool_id, valid_gemini_sig.to_string());
+
+        let req = OpenAIRequest {
+            model: "gemini-3.8-flash".to_string(),
+            messages: vec![
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    content: Some(OpenAIContent::String("Run tool".to_string())),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "assistant".to_string(),
+                    tool_calls: Some(vec![ToolCall {
+                        id: tool_id.to_string(),
+                        r#type: "function".to_string(),
+                        function: Some(ToolFunction {
+                            name: "bash".to_string(),
+                            arguments: "{}".to_string(),
+                        }),
+                        signature: None, // 客户端未带签名 (标准 OpenAI 协议)
+                        ..Default::default()
+                    }]),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "tool".to_string(),
+                    tool_call_id: Some(tool_id.to_string()),
+                    content: Some(OpenAIContent::String("done".to_string())),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let (result, _, _, _) =
+            transform_openai_request(&req, "test-proj", "gemini-3.8-flash-tiered", None);
+        let contents = result["request"]["contents"].as_array().unwrap();
+
+        // 查找 model 轮次中的 functionCall 部件
+        let model_msg = contents
+            .iter()
+            .find(|c| c["role"] == "model")
+            .expect("must find model message");
+        let fc_part = model_msg["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p.get("functionCall").is_some())
+            .expect("must find functionCall part");
+
+        assert_eq!(
+            fc_part["thoughtSignature"], valid_gemini_sig,
+            "OpenAI adapter and pipeline must recover real tool signature from SignatureCache"
+        );
     }
 }
