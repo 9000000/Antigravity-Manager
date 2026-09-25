@@ -1331,6 +1331,37 @@
       },
       "sync_confirm_title": "Подтверждение синхронизации",
       "sync_confirm_message": "Готово к синхронизации конфигурации {{name}}. ⚠️ Внимание: это перезапишет ваши существующие локальные файлы конфигурации (например, токены входа, API ключи). Вы уверены, что хотите продолжить?"
+    },
+    "hermes_sync": {
+      "modal_title": "Настройка Antigravity Manager в Hermes",
+      "endpoint_title": "Адрес подключения",
+      "local_endpoint": "Локальный прокси",
+      "custom_endpoint": "Другой адрес",
+      "custom_endpoint_desc": "Docker, LAN или reverse proxy",
+      "url_required": "Укажите адрес подключения Hermes",
+      "models_title": "Модели, доступные в Hermes",
+      "discover_models": "Обнаруживать автоматически",
+      "discover_models_desc": "Hermes получает актуальный список моделей через /v1/models",
+      "selected_models": "Только выбранные модели",
+      "models_required": "Выберите хотя бы одну модель",
+      "activate_provider": "Сделать Antigravity Manager провайдером Hermes по умолчанию",
+      "activate_provider_desc": "По умолчанию выключено, чтобы не менять текущего провайдера Hermes.",
+      "default_model": "Модель по умолчанию",
+      "select_default_model": "Выберите модель",
+      "default_model_required": "Выберите модель по умолчанию",
+      "default_model_invalid": "Выберите модель, доступную через Antigravity Manager",
+      "currently_active": "Сейчас активен в Hermes",
+      "btn_confirm_sync": "Сохранить в Hermes",
+      "btn_view": "Просмотреть конфиг",
+      "btn_restore": "Восстановить",
+      "btn_clear": "Удалить",
+      "clear_confirm_title": "Удалить конфигурацию Hermes",
+      "clear_confirm_message": "Провайдер Antigravity Manager будет удалён из Hermes. Продолжить?",
+      "toast": {
+        "sync_success": "Конфигурация Hermes успешно сохранена",
+        "clear_success": "Конфигурация Hermes успешно удалена",
+        "clear_error": "Не удалось удалить конфигурацию Hermes: {{error}}"
+      }
     }
   },
   "monitor": {

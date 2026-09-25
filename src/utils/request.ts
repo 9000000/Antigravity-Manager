@@ -82,6 +82,13 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'get_opencode_config_content': { url: '/api/proxy/opencode/config', method: 'POST' },
   'get_canonical_families': { url: '/api/proxy/opencode/families', method: 'GET' },
 
+  // Hermes Agent provider and model configuration
+  'get_hermes_sync_status': { url: '/api/proxy/hermes/status', method: 'POST' },
+  'execute_hermes_sync': { url: '/api/proxy/hermes/sync', method: 'POST' },
+  'execute_hermes_restore': { url: '/api/proxy/hermes/restore', method: 'POST' },
+  'execute_hermes_clear': { url: '/api/proxy/hermes/clear', method: 'POST' },
+  'get_hermes_config_content': { url: '/api/proxy/hermes/config', method: 'POST' },
+
   // Stats
   'get_token_stats_hourly': { url: '/api/stats/token/hourly', method: 'GET' },
   'get_token_stats_daily': { url: '/api/stats/token/daily', method: 'GET' },

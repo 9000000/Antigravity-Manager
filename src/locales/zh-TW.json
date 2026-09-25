@@ -1321,6 +1321,37 @@
       },
       "model_select": "Select Model"
     },
+    "hermes_sync": {
+      "modal_title": "在 Hermes 中配置 Antigravity Manager",
+      "endpoint_title": "連線位址",
+      "local_endpoint": "本地代理",
+      "custom_endpoint": "自訂位址",
+      "custom_endpoint_desc": "Docker、區域網路或反向代理",
+      "url_required": "請輸入 Hermes 連線位址",
+      "models_title": "Hermes 中可用的模型",
+      "discover_models": "自動探索",
+      "discover_models_desc": "Hermes 透過 /v1/models 獲取即時模型清單",
+      "selected_models": "僅使用選取的模型",
+      "models_required": "請至少選取一個模型",
+      "activate_provider": "將 Antigravity Manager 設為 Hermes 預設提供商",
+      "activate_provider_desc": "預設關閉，以避免更改當前的 Hermes 提供商。",
+      "default_model": "預設模型",
+      "select_default_model": "選取模型",
+      "default_model_required": "請選取預設模型",
+      "default_model_invalid": "請選取 Antigravity Manager 提供的可用模型",
+      "currently_active": "當前已在 Hermes 中啟用",
+      "btn_confirm_sync": "儲存到 Hermes",
+      "btn_view": "檢視配置",
+      "btn_restore": "恢復",
+      "btn_clear": "清除",
+      "clear_confirm_title": "清除 Hermes 配置",
+      "clear_confirm_message": "此操作將從 Hermes 中移除 Antigravity Manager 提供商。確定要繼續嗎？",
+      "toast": {
+        "sync_success": "Hermes 配置同步成功",
+        "clear_success": "Hermes 配置已成功清除",
+        "clear_error": "清除 Hermes 配置失敗：{{error}}"
+      }
+    },
     "supported_models": {
       "title": "支援模型與整合 (Supported Models & Integration)",
       "model_name": "模型名稱",

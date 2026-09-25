@@ -1344,6 +1344,37 @@
       },
       "sync_confirm_title": "Sync Confirmation",
       "sync_confirm_message": "Ready to sync {{name}} configuration. ⚠️ Warning: This will overwrite your existing local configuration files (e.g. login tokens, API Keys). Are you sure you want to continue?"
+    },
+    "hermes_sync": {
+      "modal_title": "Configure Antigravity Manager in Hermes",
+      "endpoint_title": "Connection address",
+      "local_endpoint": "Local proxy",
+      "custom_endpoint": "Custom address",
+      "custom_endpoint_desc": "Docker, LAN or reverse proxy",
+      "url_required": "Enter the Hermes connection address",
+      "models_title": "Models available in Hermes",
+      "discover_models": "Discover automatically",
+      "discover_models_desc": "Hermes reads the live model list from /v1/models",
+      "selected_models": "Only selected models",
+      "models_required": "Select at least one model",
+      "activate_provider": "Make Antigravity Manager the default Hermes provider",
+      "activate_provider_desc": "Off by default so your current Hermes provider is not changed.",
+      "default_model": "Default model",
+      "select_default_model": "Select a model",
+      "default_model_required": "Select a default model",
+      "default_model_invalid": "Select a default model available through Antigravity Manager",
+      "currently_active": "Currently active in Hermes",
+      "btn_confirm_sync": "Save to Hermes",
+      "btn_view": "View Config",
+      "btn_restore": "Restore",
+      "btn_clear": "Clear",
+      "clear_confirm_title": "Clear Hermes Configuration",
+      "clear_confirm_message": "This will remove the Antigravity Manager provider from Hermes. Are you sure?",
+      "toast": {
+        "sync_success": "Hermes synced successfully",
+        "clear_success": "Hermes configuration cleared successfully",
+        "clear_error": "Failed to clear Hermes: {{error}}"
+      }
     }
   },
   "monitor": {
