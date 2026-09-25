@@ -435,12 +435,7 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
                     map.remove(&k);
                 }
 
-                // 5. 规范化 description (折叠换行与超长截断，防 Gemini 畸形调用)
-                if let Some(desc_val) = map.get_mut("description") {
-                    if let Some(desc_str) = desc_val.as_str() {
-                        *desc_val = Value::String(sanitize_description(desc_str));
-                    }
-                }
+                // 5. 保持客户端原始 description 文本，不折叠换行，不截断内容，保证完全保真透传
 
                 // 6. [SAFETY] 处理空 Object
                 // [FIX] 移除 reason 字段注入逻辑

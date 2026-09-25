@@ -765,58 +765,11 @@ pub fn transform_claude_request_in_timed(
         message_count
     );
 
-    // [CACHE] 重建 inner_request 字段顺序——稳定前缀在前，动态内容在后
-    // 遵循四大协议统一规范：systemInstruction -> tools -> toolConfig -> tool_config -> generationConfig -> safetySettings -> sessionId -> contents
-    let mut reordered_inner = json!({});
-    if let Some(si) = inner_request.get("systemInstruction") {
-        if let Some(si_obj) = si.as_object() {
-            let mut canonical_si = json!({});
-            if let Some(role) = si_obj.get("role") {
-                canonical_si["role"] = role.clone();
-            } else {
-                canonical_si["role"] = json!("user");
-            }
-            if let Some(parts) = si_obj.get("parts") {
-                canonical_si["parts"] = parts.clone();
-            }
-            for (k, v) in si_obj {
-                if k != "role" && k != "parts" {
-                    canonical_si[k] = v.clone();
-                }
-            }
-            reordered_inner["systemInstruction"] = canonical_si;
-        } else {
-            reordered_inner["systemInstruction"] = si.clone();
-        }
-    }
-    if let Some(tools) = inner_request.get("tools") {
-        reordered_inner["tools"] = tools.clone();
-    }
-    if let Some(tc) = inner_request.get("toolConfig") {
-        reordered_inner["toolConfig"] = tc.clone();
-    }
-    if let Some(tc_snake) = inner_request.get("tool_config") {
-        reordered_inner["tool_config"] = tc_snake.clone();
-    }
-    if let Some(gc) = inner_request.get("generationConfig") {
-        reordered_inner["generationConfig"] = gc.clone();
-    }
-    if let Some(ss) = inner_request.get("safetySettings") {
-        reordered_inner["safetySettings"] = ss.clone();
-    }
-    if let Some(sid) = inner_request.get("sessionId") {
-        reordered_inner["sessionId"] = sid.clone();
-    }
-    reordered_inner["contents"] = inner_request.get("contents").cloned().unwrap_or(json!([]));
-    for (k, v) in inner_request.as_object().iter().flat_map(|o| o.iter()) {
-        if !reordered_inner
-            .as_object()
-            .map(|o| o.contains_key(k))
-            .unwrap_or(false)
-        {
-            reordered_inner[k] = v.clone();
-        }
-    }
+    // [CACHE] 统一委托进站流水线进行前缀拓扑规范化与对齐（Pipeline First 核心归一）
+    crate::proxy::pipeline::InboundThinkingPipeline::align_google_request_prefix_topology(
+        &mut inner_request,
+    );
+    let reordered_inner = inner_request;
 
     // [NEW] 动态检测是否需要标记为 agent 请求
     let has_tools = reordered_inner
@@ -1886,34 +1839,24 @@ fn build_tools(
         let mut has_google_search = has_web_search;
 
         for tool in tools_list {
-            // 只有当没有客户端 input_schema 时，才判定为纯服务端内置搜索标记；
-            // 若带有参数 input_schema，则为客户端自定义本地工具，必须 100% 完整保留！
-            let is_server_search = tool.input_schema.is_none()
-                && (tool.is_web_search()
-                    || tool.type_.as_deref() == Some("web_search_20250305")
-                    || tool.name.as_deref() == Some("web_search")
-                    || tool.name.as_deref() == Some("google_search")
-                    || tool.name.as_deref() == Some("builtin_web_search"));
-            if is_server_search {
-                has_google_search = true;
-                continue;
-            }
+            let name = tool
+                .name
+                .as_deref()
+                .or(tool.type_.as_deref())
+                .unwrap_or("tool");
 
-            if let Some(name) = &tool.name {
-                // Client tools require input_schema
-                let mut input_schema = tool.input_schema.clone().unwrap_or(json!({
-                    "type": "object",
-                    "properties": {}
-                }));
-                crate::proxy::common::json_schema::clean_json_schema(&mut input_schema);
-                crate::proxy::mappers::openai::request::enforce_uppercase_types(&mut input_schema);
+            let mut input_schema = tool.input_schema.clone().unwrap_or(json!({
+                "type": "object",
+                "properties": {}
+            }));
+            crate::proxy::common::json_schema::clean_json_schema(&mut input_schema);
+            crate::proxy::mappers::openai::request::enforce_uppercase_types(&mut input_schema);
 
-                function_declarations.push(json!({
-                    "name": name,
-                    "description": tool.description,
-                    "parameters": input_schema
-                }));
-            }
+            function_declarations.push(json!({
+                "name": name,
+                "description": tool.description,
+                "parameters": input_schema
+            }));
         }
 
         let mut tool_list = Vec::new();

@@ -927,12 +927,14 @@ pub fn transform_openai_request_with_session(
     // 3. 构建请求体
 
     let mut gen_config = json!({
-        "temperature": request.temperature.unwrap_or(1.0),
         // [CHANGED v4.1.24] Default topP from 0.95 → 1.0 to match native behavior
         "topP": request.top_p.unwrap_or(1.0),
         // [ADDED v4.1.24] topK=40 aligns with official client generationConfig
         "topK": 40,
     });
+    if let Some(temp) = request.temperature {
+        gen_config["temperature"] = json!(temp);
+    }
 
     // [FIX] 移除旧的硬编码限额，改为动态查询 (v4.1.29)
     if let Some(max_tokens) = request.max_tokens {
@@ -1199,16 +1201,7 @@ pub fn transform_openai_request_with_session(
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
-                if let Some(name) = &name_opt {
-                    // 跳过内置联网工具名称，避免重复定义
-                    if name == "web_search"
-                        || name == "google_search"
-                        || name == "web_search_20250305"
-                        || name == "builtin_web_search"
-                    {
-                        continue;
-                    }
-                } else {
+                if name_opt.is_none() {
                     // [FIX] 如果工具没有名称，视为无效工具直接跳过 (防止 REQUIRED_FIELD_MISSING)
                     tracing::warn!(
                         "[OpenAI-Request] Skipping tool without name: {:?}",
@@ -1230,12 +1223,6 @@ pub fn transform_openai_request_with_session(
                         clean_obj.insert("parameters".to_string(), params.clone());
                     }
                     *obj = clean_obj;
-                }
-
-                // 规范化顶层函数描述
-                if let Some(desc) = gemini_func.get_mut("description").and_then(|d| d.as_str()) {
-                    let clean_desc = crate::proxy::common::json_schema::sanitize_description(desc);
-                    gemini_func["description"] = json!(clean_desc);
                 }
 
                 if let Some(params) = gemini_func.get_mut("parameters") {
@@ -1397,67 +1384,11 @@ pub fn transform_openai_request_with_session(
     }
 
     // [CACHE] 重建 inner_request 字段顺序——稳定前缀在前，动态内容在后
-    // 遵循 Google 官方建议："将较大且常见的内容放置在提示的开头"
-    // 前缀顺序: systemInstruction → tools → toolConfig → generationConfig → safetySettings → sessionId → contents
-    //                                                  ↑ 只有 contents 变化，其他全部稳定
-    let mut reordered_request = json!({});
-    // 1. systemInstruction (稳定，规范化统一键序: role -> parts)
-    if let Some(si) = inner_request.get("systemInstruction") {
-        if let Some(si_obj) = si.as_object() {
-            let mut canonical_si = json!({});
-            if let Some(role) = si_obj.get("role") {
-                canonical_si["role"] = role.clone();
-            } else {
-                canonical_si["role"] = json!("user");
-            }
-            if let Some(parts) = si_obj.get("parts") {
-                canonical_si["parts"] = parts.clone();
-            }
-            for (k, v) in si_obj {
-                if k != "role" && k != "parts" {
-                    canonical_si[k] = v.clone();
-                }
-            }
-            reordered_request["systemInstruction"] = canonical_si;
-        } else {
-            reordered_request["systemInstruction"] = si.clone();
-        }
-    }
-    // 2. tools (稳定，已排序)
-    if let Some(tools) = inner_request.get("tools") {
-        reordered_request["tools"] = tools.clone();
-    }
-    // 3. toolConfig & tool_config (稳定，与 tools 同生)
-    if let Some(tc) = inner_request.get("toolConfig") {
-        reordered_request["toolConfig"] = tc.clone();
-    }
-    if let Some(tc_snake) = inner_request.get("tool_config") {
-        reordered_request["tool_config"] = tc_snake.clone();
-    }
-    // 4. generationConfig (稳定，sanitize 后一致)
-    if let Some(gc) = inner_request.get("generationConfig") {
-        reordered_request["generationConfig"] = gc.clone();
-    }
-    // 5. safetySettings (恒定常量)
-    if let Some(ss) = inner_request.get("safetySettings") {
-        reordered_request["safetySettings"] = ss.clone();
-    }
-    // 6. sessionId (稳定，基于 account_id hash)
-    if let Some(sid) = inner_request.get("sessionId") {
-        reordered_request["sessionId"] = sid.clone();
-    }
-    // 7. contents (动态，~4.3MB — 所有图片和对话历史，每次追加，放在最后!)
-    reordered_request["contents"] = inner_request.get("contents").cloned().unwrap_or(json!([]));
-    // 8. 其他可能存在的字段 (metadata, cachedContent 等)
-    for (k, v) in inner_request.as_object().iter().flat_map(|o| o.iter()) {
-        if !reordered_request
-            .as_object()
-            .map(|o| o.contains_key(k))
-            .unwrap_or(false)
-        {
-            reordered_request[k] = v.clone();
-        }
-    }
+    // [CACHE] 统一委托进站流水线进行前缀拓扑规范化与对齐（Pipeline First 核心归一）
+    crate::proxy::pipeline::InboundThinkingPipeline::align_google_request_prefix_topology(
+        &mut inner_request,
+    );
+    let reordered_request = inner_request;
 
     // Match the Gemini entrypoint: every upstream attempt gets a unique request ID.
     // Reusing session/message-count IDs can pin later requests to an earlier 429 result.

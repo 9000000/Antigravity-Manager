@@ -1748,6 +1748,10 @@ fn responses_routing_session_id(
 }
 
 fn strip_codex_step_markers(content: &str) -> String {
+    if !content.contains("[codex-turn:") {
+        return content.to_string();
+    }
+    let had_trailing_newline = content.ends_with('\n');
     let mut cleaned = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim();
@@ -1760,7 +1764,11 @@ fn strip_codex_step_markers(content: &str) -> String {
         }
         cleaned.push(line);
     }
-    cleaned.join("\n").trim().to_string()
+    let mut res = cleaned.join("\n");
+    if had_trailing_newline && !res.ends_with('\n') {
+        res.push('\n');
+    }
+    res
 }
 
 fn prefix_with_step_marker(_marker: Option<String>, content: String) -> String {

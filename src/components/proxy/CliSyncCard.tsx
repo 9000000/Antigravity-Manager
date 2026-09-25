@@ -557,17 +557,37 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {renderCliItem('JeikCode', <JeikCodeIcon size="100%" className="w-full h-full" />, 'JeikCode')}
-                {renderCliItem('Claude', <Claude.Avatar size={40} shape="square" style={{ width: '100%', height: '100%', borderRadius: 0 }} />, 'Claude Code')}
-                {renderCliItem('Codex', <OpenAI.Avatar size={40} shape="square" style={{ width: '100%', height: '100%', borderRadius: 0 }} />, 'Codex AI')}
-                {renderCliItem('OpenCode', <OpenCode.Avatar size={40} shape="square" style={{ width: '100%', height: '100%', borderRadius: 0 }} />, 'OpenCode')}
-                {renderCliItem('GrokBuild', <Grok.Avatar size={40} shape="square" style={{ width: '100%', height: '100%', borderRadius: 0 }} />, 'Grok Build')}
+                {renderCliItem('Claude', (
+                    <div className="w-full h-full bg-[#D97757] flex items-center justify-center text-white">
+                        <Claude size={22} className="text-white" />
+                    </div>
+                ), 'Claude Code')}
+                {renderCliItem('Codex', (
+                    <div className="w-full h-full bg-[#000000] dark:bg-[#121214] flex items-center justify-center text-white">
+                        <OpenAI size={22} className="text-white" />
+                    </div>
+                ), 'Codex AI')}
+                {renderCliItem('OpenCode', (
+                    <div className="w-full h-full bg-[#000000] dark:bg-[#121214] flex items-center justify-center text-white">
+                        <OpenCode size={20} className="text-white" />
+                    </div>
+                ), 'OpenCode')}
+                {renderCliItem('GrokBuild', (
+                    <div className="w-full h-full bg-[#000000] dark:bg-[#121214] flex items-center justify-center text-white">
+                        <Grok size={22} className="text-white" />
+                    </div>
+                ), 'Grok Build')}
                 {renderCliItem('Hermes', <HermesAgent.Avatar size={40} shape="square" style={{ width: '100%', height: '100%', borderRadius: 0 }} />, 'Hermes Agent')}
                 {renderCliItem('OpenClaw', (
                     <div className="w-full h-full bg-[#18181b] dark:bg-[#121214] flex items-center justify-center text-white">
                         <OpenClaw.Color size={26} />
                     </div>
                 ), 'OpenClaw')}
-                {renderCliItem('Gemini', <Gemini.Avatar size={40} shape="square" style={{ width: '100%', height: '100%', borderRadius: 0 }} />, 'Gemini CLI')}
+                {renderCliItem('Gemini', (
+                    <div className="w-full h-full bg-[#18181b] dark:bg-[#121214] flex items-center justify-center">
+                        <Gemini.Color size={24} />
+                    </div>
+                ), 'Gemini CLI')}
                 {renderCliItem('Droid', (
                     <div className="w-full h-full bg-gradient-to-br from-orange-500 via-amber-500 to-orange-600 flex items-center justify-center text-white">
                         <Bot size={22} className="text-white drop-shadow-sm" />
