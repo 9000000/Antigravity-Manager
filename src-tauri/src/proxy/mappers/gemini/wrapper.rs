@@ -451,7 +451,12 @@ pub fn wrap_request_v2(
                             effective_sig = turn_signature.clone();
                         }
                         if effective_sig.is_none() {
-                            if let Some(s_id) = session_id {
+                            if !is_target_claude && can_use_sentinel {
+                                // [TEMP TEST] 测试：对于 Gemini 目标模型在适配器层统一使用哨兵占位
+                                effective_sig = Some(
+                                    crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string(),
+                                );
+                            } else if let Some(s_id) = session_id {
                                 effective_sig = crate::proxy::SignatureCache::global()
                                     .get_session_signature(s_id);
                             }
@@ -500,8 +505,13 @@ pub fn wrap_request_v2(
                                     .and_then(|s| s.as_str())
                                     .map(str::to_string);
 
-                                // 纯净线缆透传：客户端若自带签名则保持；缺失签名全权委托进站流水线统一对齐与回填
-                                if let Some(ref sig) = incoming_fc_sig {
+                                // 纯净线缆透传：[TEMP TEST] Gemini 目标模型统一使用哨兵占位
+                                if !is_target_claude {
+                                    obj.insert(
+                                        "thoughtSignature".to_string(),
+                                        json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE),
+                                    );
+                                } else if let Some(ref sig) = incoming_fc_sig {
                                     obj.insert("thoughtSignature".to_string(), json!(sig));
                                 }
                                 obj.remove("thought_signature");

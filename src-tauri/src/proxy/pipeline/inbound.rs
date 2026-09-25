@@ -223,7 +223,11 @@ impl InboundThinkingPipeline {
                                 "text": final_thought_text,
                                 "thought": true,
                             });
-                            if let Some(sig) = effective_sig {
+                            if target_model.to_lowercase().contains("gemini") {
+                                // [TEMP TEST] 测试：Gemini 目标模型的思考块不填充真实签名，统一使用哨兵占位
+                                thought_obj["thoughtSignature"] =
+                                    json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
+                            } else if let Some(sig) = effective_sig {
                                 thought_obj["thoughtSignature"] = json!(sig);
                             }
 
@@ -1016,8 +1020,11 @@ mod tests {
 
         let parts = contents[0]["parts"].as_array().expect("parts array");
         assert_eq!(parts.len(), 2);
-        // Gemini 原生签名在工具调用轮次绝不被二次编码，必须原样保留在 functionCall 部件上
-        assert_eq!(parts[1]["thoughtSignature"], gemini_sig);
+        // [TEMP TEST] 测试期间针对 Gemini 模型工具调用统一使用哨兵占位
+        assert_eq!(
+            parts[1]["thoughtSignature"],
+            crate::proxy::thinking_store::SENTINEL_SIGNATURE
+        );
     }
 
     #[test]

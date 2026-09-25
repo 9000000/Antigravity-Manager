@@ -1426,6 +1426,9 @@ fn build_contents(
                                 obj.remove("thought_signature");
                             }
                         } else {
+                            // Gemini 原生模型：[TEMP TEST] 测试：工具调用统一使用哨兵占位
+                            part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                            /*
                             // Gemini 原生模型：首个工具调用挂载真实签名 (若有)，后续并行工具调用统一打上 32 字节哨兵占位
                             let has_preceding_fc =
                                 parts.iter().any(|p| p.get("functionCall").is_some());
@@ -1438,6 +1441,7 @@ fn build_contents(
                             } else {
                                 part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
                             }
+                            */
                         }
                         parts.push(part);
                     }

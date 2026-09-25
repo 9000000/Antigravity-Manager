@@ -696,24 +696,22 @@ pub fn transform_openai_request_with_session(
                     });
 
                     // 签名提取与对齐：优先客户端自带签名；若无则查询全局 SignatureCache (与 Claude / Gemini 适配器严格对齐)
-                    let final_sig = tc
-                        .signature
-                        .as_deref()
-                        .filter(|s| {
-                            (*s == crate::proxy::thinking_store::SENTINEL_SIGNATURE
-                                || s.len() >= 50)
-                                && (!mapped_model.to_lowercase().contains("gemini")
-                                    || crate::proxy::thinking_store::is_likely_gemini_signature(s))
-                        })
-                        .map(str::to_string)
-                        .or_else(|| {
-                            crate::proxy::SignatureCache::global()
-                                .get_tool_signature(&tc.id)
-                                .filter(|s| {
-                                    !mapped_model.to_lowercase().contains("gemini")
-                                        || crate::proxy::thinking_store::is_likely_gemini_signature(s)
-                                })
-                        });
+                    // [TEMP TEST] 测试：对于 Gemini 目标模型在适配器层统一使用哨兵占位
+                    let final_sig = if mapped_model.to_lowercase().contains("gemini") {
+                        Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string())
+                    } else {
+                        tc.signature
+                            .as_deref()
+                            .filter(|s| {
+                                *s == crate::proxy::thinking_store::SENTINEL_SIGNATURE
+                                    || s.len() >= 50
+                            })
+                            .map(str::to_string)
+                            .or_else(|| {
+                                crate::proxy::SignatureCache::global()
+                                    .get_tool_signature(&tc.id)
+                            })
+                    };
 
                     if let Some(sig) = final_sig {
                         func_call_part["thoughtSignature"] = json!(sig);
