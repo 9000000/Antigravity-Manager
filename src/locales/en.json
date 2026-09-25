@@ -1375,6 +1375,43 @@
         "clear_success": "Hermes configuration cleared successfully",
         "clear_error": "Failed to clear Hermes: {{error}}"
       }
+    },
+    "openclaw_sync": {
+      "modal_title": "Configure Antigravity Manager in OpenClaw",
+      "version_title": "OpenClaw SDK Version Specification",
+      "detected_hint": "Detected environment: {{target}}",
+      "v2_label": "≥ 2026.8.1 (v2.0 Spec)",
+      "v2_desc": "Uses modelPolicy.allow allowlist spec and entries structure with native multimodal image & tool support",
+      "v1_label": "< 2026.8.1 (v1.0 Spec)",
+      "v1_desc": "Uses agents.defaults.models dictionary registration, fully compatible with 2026.7 and legacy SDKs",
+      "endpoint_title": "Connection Address (Base URL)",
+      "local_endpoint": "Local proxy",
+      "custom_endpoint": "Custom address",
+      "custom_endpoint_desc": "Docker, LAN, or reverse proxy",
+      "url_required": "Please enter the OpenClaw connection address",
+      "models_title": "Models available in OpenClaw",
+      "all_models": "Sync all models",
+      "all_models_desc": "Sync all {{count}} available models",
+      "selected_models": "Select models",
+      "models_required": "Select at least one model",
+      "activate_provider": "Set as OpenClaw primary model",
+      "activate_provider_desc": "Automatically updates agents.defaults.model.primary",
+      "default_model": "Default model",
+      "select_default_model": "Select a model",
+      "default_model_required": "Please select a default model",
+      "currently_active": "Currently active as primary model",
+      "btn_sync_v1": "Sync (< 2026.8.1 v1.0)",
+      "btn_sync_v2": "Sync (≥ 2026.8.1 v2.0)",
+      "btn_view": "View Config",
+      "btn_restore": "Restore",
+      "btn_clear": "Clear",
+      "clear_confirm_title": "Clear OpenClaw Configuration",
+      "clear_confirm_message": "This will remove the Antigravity Manager provider and model allowlists from OpenClaw. Are you sure?",
+      "toast": {
+        "sync_success": "OpenClaw ({{version}}) synced successfully",
+        "clear_success": "OpenClaw configuration cleared successfully",
+        "clear_error": "Failed to clear OpenClaw configuration: {{error}}"
+      }
     }
   },
   "monitor": {
@@ -1769,5 +1806,12 @@
     },
     "syncSuccess": "Successfully synced to {{app}}",
     "syncError": "Failed to sync: {{error}}"
+  },
+  "suggestion_delete_thinking": {
+    "title": "Update Recommendation",
+    "message": "A new version has been installed. The maintainer recommends clearing the thinking block cache to ensure compatibility. It will be rebuilt automatically. Would you like to clear it now?",
+    "confirm": "Clear Now",
+    "cancel": "Cancel",
+    "success": "Thinking block cache cleared successfully and will rebuild automatically."
   }
 }

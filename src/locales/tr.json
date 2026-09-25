@@ -1734,5 +1734,12 @@
       "stream_error": "Stream transmission error, please retry later",
       "unknown_error": "Unknown error occurred, please retry later"
     }
+  },
+  "suggestion_delete_thinking": {
+    "title": "Güncelleme Önerisi",
+    "message": "Yeni bir sürüm yüklendi. Geliştirici, uyumluluğu sağlamak için düşünme bloğu önbelleğini temizlemenizi önerir. Otomatik olarak yeniden oluşturulacaktır. Şimdi temizlensin mi?",
+    "confirm": "Şimdi Temizle",
+    "cancel": "İptal",
+    "success": "Düşünme bloğu önbelleği başarıyla temizlendi ve otomatik olarak yeniden oluşturulacak."
   }
 }

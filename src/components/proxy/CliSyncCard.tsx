@@ -23,9 +23,10 @@ import { cn } from '../../utils/cn';
 import { DroidSyncModal } from './DroidSyncModal';
 import { OpenCodeSyncModal } from './OpenCodeSyncModal';
 import { HermesSyncModal } from './HermesSyncModal';
+import { OpenClawSyncModal } from './OpenClawSyncModal';
 import { useProxyModels } from '../../hooks/useProxyModels';
 import GroupedSelect from '../common/GroupedSelect';
-import { Claude, OpenAI, Gemini, Grok, OpenCode, Github as LobeGithub, HermesAgent } from '@lobehub/icons';
+import { Claude, OpenAI, Gemini, Grok, OpenCode, Github as LobeGithub, HermesAgent, OpenClaw } from '@lobehub/icons';
 import { JeikCodeIcon } from '../common/JeikCodeIcon';
 
 interface CliSyncCardProps {
@@ -34,7 +35,7 @@ interface CliSyncCardProps {
     className?: string;
 }
 
-type CliAppType = 'Claude' | 'Codex' | 'JeikCode' | 'GrokBuild' | 'Gemini' | 'OpenCode' | 'Droid' | 'Hermes';
+type CliAppType = 'Claude' | 'Codex' | 'JeikCode' | 'GrokBuild' | 'Hermes' | 'OpenClaw' | 'Gemini' | 'OpenCode' | 'Droid';
 
 interface CliStatus {
     installed: boolean;
@@ -56,7 +57,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         Gemini: null,
         OpenCode: null,
         Droid: null,
-        Hermes: null
+        Hermes: null,
+        OpenClaw: null
     });
     const [loading, setLoading] = useState<Record<CliAppType, boolean>>({
         Claude: false,
@@ -66,7 +68,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         Gemini: false,
         OpenCode: false,
         Droid: false,
-        Hermes: false
+        Hermes: false,
+        OpenClaw: false
     });
     const [syncing, setSyncing] = useState<Record<CliAppType, boolean>>({
         Claude: false,
@@ -76,11 +79,13 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         Gemini: false,
         OpenCode: false,
         Droid: false,
-        Hermes: false
+        Hermes: false,
+        OpenClaw: false
     });
     const [syncAccounts, setSyncAccounts] = useState(false);
     const [droidSyncModal, setDroidSyncModal] = useState(false);
     const [hermesSyncModal, setHermesSyncModal] = useState(false);
+    const [openClawSyncModal, setOpenClawSyncModal] = useState(false);
     const [selectedModels, setSelectedModels] = useState<Record<CliAppType, string>>({
         Claude: 'claude-3-5-sonnet-latest',
         Codex: 'gpt-4o',
@@ -89,7 +94,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         Gemini: 'gemini-1.5-pro',
         OpenCode: '',
         Droid: '',
-        Hermes: ''
+        Hermes: '',
+        OpenClaw: ''
     });
     const [viewingConfig, setViewingConfig] = useState<{
         app: CliAppType,
@@ -114,8 +120,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
     const getFormattedProxyUrl = useCallback((app: CliAppType) => {
         if (!proxyUrl) return '';
         const base = proxyUrl.trimEnd().replace(/\/+$/, '');
-        // Codex & OpenCode & JeikCode & GrokBuild & Hermes (Anthropic / OpenAI / Responses 协议) 通常需要带 /v1
-        if (app === 'Codex' || app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'Hermes') {
+        // Codex & OpenCode & JeikCode & GrokBuild & Hermes & OpenClaw (Anthropic / OpenAI / Responses 协议) 通常需要带 /v1
+        if (app === 'Codex' || app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'Hermes' || app === 'OpenClaw') {
             return base.endsWith('/v1') ? base : `${base}/v1`;
         }
         // Claude 和 Gemini 的 SDK 通常会自动处理版本路径或不需要 /v1
@@ -136,6 +142,9 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                 params = { proxyUrl: formattedUrl };
             } else if (app === 'Hermes') {
                 command = 'get_hermes_sync_status';
+                params = { proxyUrl: formattedUrl };
+            } else if (app === 'OpenClaw') {
+                command = 'get_openclaw_sync_status';
                 params = { proxyUrl: formattedUrl };
             } else {
                 command = 'get_cli_sync_status';
@@ -162,6 +171,10 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         }
         if (app === 'Hermes') {
             setHermesSyncModal(true);
+            return;
+        }
+        if (app === 'OpenClaw') {
+            setOpenClawSyncModal(true);
             return;
         }
         setSyncConfirmApp(app);
@@ -205,8 +218,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
 
         setSyncing(prev => ({ ...prev, [app]: true }));
         try {
-            const command = app === 'Droid' ? 'execute_droid_restore' : app === 'OpenCode' ? 'execute_opencode_restore' : app === 'Hermes' ? 'execute_hermes_restore' : 'execute_cli_restore';
-            const params = (app === 'Droid' || app === 'OpenCode' || app === 'Hermes') ? {} : { appType: app };
+            const command = app === 'Droid' ? 'execute_droid_restore' : app === 'OpenCode' ? 'execute_opencode_restore' : app === 'Hermes' ? 'execute_hermes_restore' : app === 'OpenClaw' ? 'execute_openclaw_restore' : 'execute_cli_restore';
+            const params = (app === 'Droid' || app === 'OpenCode' || app === 'Hermes' || app === 'OpenClaw') ? {} : { appType: app };
             await invoke(command, params);
             showToast(t('common.success'), 'success');
             await checkStatus(app);
@@ -228,12 +241,25 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
 
         setSyncing(prev => ({ ...prev, [app]: true }));
         try {
-            const formattedUrl = getFormattedProxyUrl(app);
-            await invoke(app === 'Hermes' ? 'execute_hermes_clear' : 'execute_opencode_clear', app === 'Hermes' ? {} : { proxyUrl: formattedUrl, clearLegacy: true });
-            showToast(t(app === 'Hermes' ? 'proxy.hermes_sync.toast.clear_success' : 'proxy.opencode_sync.toast.clear_success', { defaultValue: `${app} cleared successfully` }), 'success');
+            if (app === 'Hermes') {
+                await invoke('execute_hermes_clear');
+                showToast(t('proxy.hermes_sync.toast.clear_success', { defaultValue: 'Hermes configuration cleared successfully' }), 'success');
+            } else if (app === 'OpenClaw') {
+                await invoke('execute_openclaw_clear');
+                showToast(t('proxy.openclaw_sync.toast.clear_success', { defaultValue: 'OpenClaw configuration cleared successfully' }), 'success');
+            } else {
+                const formattedUrl = getFormattedProxyUrl(app);
+                await invoke('execute_opencode_clear', { proxyUrl: formattedUrl, clearLegacy: true });
+                showToast(t('proxy.opencode_sync.toast.clear_success', { defaultValue: 'OpenCode cleared successfully' }), 'success');
+            }
             await checkStatus(app);
         } catch (error: any) {
-            showToast(t(app === 'Hermes' ? 'proxy.hermes_sync.toast.clear_error' : 'proxy.opencode_sync.toast.clear_error', { error: error.toString(), defaultValue: `Clear failed: ${error.toString()}` }), 'error');
+            const toastKey = app === 'Hermes'
+                ? 'proxy.hermes_sync.toast.clear_error'
+                : app === 'OpenClaw'
+                ? 'proxy.openclaw_sync.toast.clear_error'
+                : 'proxy.opencode_sync.toast.clear_error';
+            showToast(t(toastKey, { error: error.toString(), defaultValue: `Clear failed: ${error.toString()}` }), 'error');
         } finally {
             setSyncing(prev => ({ ...prev, [app]: false }));
         }
@@ -255,6 +281,9 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                 params = { request: { fileName: targetFile } };
             } else if (app === 'Hermes') {
                 command = 'get_hermes_config_content';
+                params = {};
+            } else if (app === 'OpenClaw') {
+                command = 'get_openclaw_config_content';
                 params = {};
             } else {
                 command = 'get_cli_config_content';
@@ -279,6 +308,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
         checkStatus('JeikCode');
         checkStatus('GrokBuild');
         checkStatus('Hermes');
+        checkStatus('OpenClaw');
         checkStatus('Gemini');
         checkStatus('OpenCode');
         checkStatus('Droid');
@@ -346,8 +376,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                         </div>
                     </div>
 
-                    {/* Show Sync Status if installed OR if it's OpenCode/JeikCode/GrokBuild/Hermes */}
-                    {!isAppLoading && (status?.installed || (app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'Hermes') && status?.current_base_url) && (
+                    {/* Show Sync Status if installed OR if it's OpenCode/JeikCode/GrokBuild/Hermes/OpenClaw */}
+                    {!isAppLoading && (status?.installed || (app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'Hermes' || app === 'OpenClaw') && status?.current_base_url) && (
                         <div
                             className={cn(
                                 "inline-flex items-center justify-center transition-all shrink-0 whitespace-nowrap shadow-sm",
@@ -457,14 +487,14 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     )}
 
                     <div className="flex items-center gap-2">
-                        {(status?.installed || app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'Hermes') && (
+                        {(status?.installed || app === 'OpenCode' || app === 'JeikCode' || app === 'GrokBuild' || app === 'Hermes' || app === 'OpenClaw') && (
                             <>
-                                {/* 对于 OpenCode 与 Hermes，如果未同步，则不显示查看按钮（因为文件尚未生成，后端会报错） */}
-                                {((app !== 'OpenCode' && app !== 'Hermes') || status?.is_synced) && (
+                                {/* 对于 OpenCode、Hermes 与 OpenClaw，如果未同步，则不显示查看按钮（因为文件尚未生成，后端会报错） */}
+                                {((app !== 'OpenCode' && app !== 'Hermes' && app !== 'OpenClaw') || status?.is_synced) && (
                                     <button
                                         onClick={() => handleViewConfig(app)}
                                         className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
-                                        title={t(app === 'OpenCode' ? 'proxy.opencode_sync.btn_view' : app === 'Hermes' ? 'proxy.hermes_sync.btn_view' : 'proxy.cli_sync.btn_view', { defaultValue: 'View Config' })}
+                                        title={t(app === 'OpenCode' ? 'proxy.opencode_sync.btn_view' : app === 'Hermes' ? 'proxy.hermes_sync.btn_view' : app === 'OpenClaw' ? 'proxy.openclaw_sync.btn_view' : 'proxy.cli_sync.btn_view', { defaultValue: 'View Config' })}
                                     >
                                         <Eye size={14} />
                                     </button>
@@ -472,16 +502,16 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                                 <button
                                     onClick={() => handleRestore(app)}
                                     className="p-1 text-gray-400 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded transition-colors"
-                                    title={t(app === 'OpenCode' ? 'proxy.opencode_sync.btn_restore' : app === 'Hermes' ? 'proxy.hermes_sync.btn_restore' : 'proxy.cli_sync.btn_restore', { defaultValue: 'Restore' })}
+                                    title={t(app === 'OpenCode' ? 'proxy.opencode_sync.btn_restore' : app === 'Hermes' ? 'proxy.hermes_sync.btn_restore' : app === 'OpenClaw' ? 'proxy.openclaw_sync.btn_restore' : 'proxy.cli_sync.btn_restore', { defaultValue: 'Restore' })}
                                 >
                                     <RotateCcw size={14} />
                                 </button>
-                                {/* OpenCode 与 Hermes 的 Clear 按钮 */}
-                                {(app === 'OpenCode' || app === 'Hermes') && (
+                                {/* OpenCode、Hermes 与 OpenClaw 的 Clear 按钮 */}
+                                {(app === 'OpenCode' || app === 'Hermes' || app === 'OpenClaw') && (
                                     <button
                                         onClick={() => handleClear(app)}
                                         className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                                        title={t(app === 'Hermes' ? 'proxy.hermes_sync.btn_clear' : 'proxy.opencode_sync.btn_clear', { defaultValue: 'Clear' })}
+                                        title={t(app === 'Hermes' ? 'proxy.hermes_sync.btn_clear' : app === 'OpenClaw' ? 'proxy.openclaw_sync.btn_clear' : 'proxy.opencode_sync.btn_clear', { defaultValue: 'Clear' })}
                                     >
                                         <Trash2 size={14} />
                                     </button>
@@ -490,7 +520,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                         )}
                         <button
                             onClick={() => handleSync(app)}
-                            disabled={(app !== 'OpenCode' && app !== 'JeikCode' && app !== 'GrokBuild' && app !== 'Hermes' && !status?.installed) || isAppSyncing || isAppLoading}
+                            disabled={(app !== 'OpenCode' && app !== 'JeikCode' && app !== 'GrokBuild' && app !== 'Hermes' && app !== 'OpenClaw' && !status?.installed) || isAppSyncing || isAppLoading}
                             className={cn(
                                 "btn btn-sm flex-1 gap-2 rounded-xl transition-all font-bold shadow-sm",
                                 status?.is_synced
@@ -532,6 +562,11 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                 {renderCliItem('OpenCode', <OpenCode.Avatar size={40} shape="square" style={{ width: '100%', height: '100%', borderRadius: 0 }} />, 'OpenCode')}
                 {renderCliItem('GrokBuild', <Grok.Avatar size={40} shape="square" style={{ width: '100%', height: '100%', borderRadius: 0 }} />, 'Grok Build')}
                 {renderCliItem('Hermes', <HermesAgent.Avatar size={40} shape="square" style={{ width: '100%', height: '100%', borderRadius: 0 }} />, 'Hermes Agent')}
+                {renderCliItem('OpenClaw', (
+                    <div className="w-full h-full bg-[#18181b] dark:bg-[#121214] flex items-center justify-center text-white">
+                        <OpenClaw.Color size={26} />
+                    </div>
+                ), 'OpenClaw')}
                 {renderCliItem('Gemini', <Gemini.Avatar size={40} shape="square" style={{ width: '100%', height: '100%', borderRadius: 0 }} />, 'Gemini CLI')}
                 {renderCliItem('Droid', (
                     <div className="w-full h-full bg-gradient-to-br from-orange-500 via-amber-500 to-orange-600 flex items-center justify-center text-white">
@@ -623,19 +658,33 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                 isDestructive={true}
             />
 
-            {/* Clear 确认弹窗 - OpenCode / Hermes */}
+            {/* Clear 确认弹窗 - OpenCode / Hermes / OpenClaw */}
             <ModalDialog
                 isOpen={!!clearConfirmApp}
                 title={clearConfirmApp === 'Hermes'
                     ? t('proxy.hermes_sync.clear_confirm_title', { defaultValue: 'Clear Hermes Configuration' })
+                    : clearConfirmApp === 'OpenClaw'
+                    ? t('proxy.openclaw_sync.clear_confirm_title', { defaultValue: 'Clear OpenClaw Configuration' })
                     : t('proxy.opencode_sync.clear_confirm_title', { defaultValue: 'Clear OpenCode Configuration' })}
                 message={clearConfirmApp === 'Hermes'
                     ? t('proxy.hermes_sync.clear_confirm_message', { defaultValue: 'This will remove the Antigravity Manager provider from Hermes. Are you sure?' })
+                    : clearConfirmApp === 'OpenClaw'
+                    ? t('proxy.openclaw_sync.clear_confirm_message', { defaultValue: 'This will remove the Antigravity Manager provider from OpenClaw. Are you sure?' })
                     : t('proxy.opencode_sync.clear_confirm_message', { defaultValue: 'This will clear all OpenCode configurations including legacy settings. Are you sure?' })}
                 onConfirm={executeClear}
                 onCancel={() => setClearConfirmApp(null)}
                 isDestructive={true}
             />
+
+            {/* OpenClaw 配置与双版本同步弹窗 */}
+            {openClawSyncModal && (
+                <OpenClawSyncModal
+                    apiKey={apiKey}
+                    getFormattedProxyUrl={getFormattedProxyUrl}
+                    onClose={() => setOpenClawSyncModal(false)}
+                    onSyncDone={() => checkStatus('OpenClaw')}
+                />
+            )}
 
             {/* Hermes 配置与模型选择弹窗 */}
             {hermesSyncModal && (

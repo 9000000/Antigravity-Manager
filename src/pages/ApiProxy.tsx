@@ -220,11 +220,11 @@ export default function ApiProxy() {
     }, [appConfig?.proxy.zai?.model_mapping]);
 
 
-    // 生成自定义映射表单的选项 (从 models 动态生成)
+    // 生成自定义映射表单的选项 (从 models 动态生成，统一纯正 Model ID 风格)
     const customMappingOptions: SelectOption[] = useMemo(() => {
         return models.map(model => ({
             value: model.id,
-            label: `${model.id} (${model.name})`,
+            label: model.id,
             group: model.group || 'Other'
         }));
     }, [models]);

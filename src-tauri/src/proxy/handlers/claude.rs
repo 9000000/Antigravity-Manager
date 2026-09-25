@@ -961,9 +961,18 @@ pub async fn handle_messages(
         );
 
         // 0. 尝试提取 session_id 用于粘性调度 (Phase 2/3)
-        // 使用 SessionManager 生成稳定的会话指纹
-        let fallback_sid =
-            crate::proxy::session_manager::SessionManager::extract_session_id(&request_for_body);
+        // 使用 SessionManager 生成稳定的会话指纹，优先以显式会话头对齐跨协议 store_key
+        let explicit_sid = headers
+            .get("x-session-id")
+            .or_else(|| headers.get("x-jeikcode-session-id"))
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty());
+        let fallback_sid = if let Some(sid) = explicit_sid {
+            sid.to_string()
+        } else {
+            crate::proxy::session_manager::SessionManager::extract_session_id(&request_for_body)
+        };
         let session_scope = crate::proxy::thinking_store::SessionScope::from_headers_and_body(
             &headers,
             Some(&original_body),

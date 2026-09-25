@@ -2121,7 +2121,17 @@ pub async fn handle_chat_completions(
         &openai_req.model,
         &*state.custom_mapping.read().await,
     );
-    let fallback_sid = SessionManager::extract_openai_session_id(&openai_req);
+    let explicit_sid = headers
+        .get("x-session-id")
+        .or_else(|| headers.get("x-jeikcode-session-id"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    let fallback_sid = if let Some(sid) = explicit_sid {
+        sid.to_string()
+    } else {
+        SessionManager::extract_openai_session_id(&openai_req)
+    };
     let session_scope = crate::proxy::thinking_store::SessionScope::from_headers_and_body(
         &headers,
         original_body.as_ref(),
@@ -2313,12 +2323,22 @@ pub async fn handle_chat_completions(
             );
         }
 
+        let preceding_turn_anchor = gemini_body
+            .get("request")
+            .and_then(|r| r.get("contents"))
+            .or_else(|| gemini_body.get("contents"))
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.last())
+            .cloned();
+        let causal_anchor =
+            crate::proxy::thinking_store::compute_causal_anchor(preceding_turn_anchor.as_ref());
+
         let upstream_req_start = std::time::Instant::now();
         let call_result = match upstream
             .call_v1_internal_with_headers(
                 method,
                 &access_token,
-                gemini_body,
+                gemini_body.clone(),
                 query_string,
                 extra_headers.clone(),
                 Some(account_id.as_str()),
@@ -2403,19 +2423,20 @@ pub async fn handle_chat_completions(
 
                 // [P1 FIX] Enhanced Peek logic to handle heartbeats and slow start
                 // Pre-read until we find meaningful content, skip heartbeats
-                use crate::proxy::mappers::openai::streaming::create_openai_sse_stream;
+                use crate::proxy::mappers::openai::streaming::create_openai_sse_stream_with_anchor;
                 let include_usage = openai_req
                     .stream_options
                     .as_ref()
                     .map(|o| o.include_usage)
                     .unwrap_or(false);
-                let mut openai_stream = create_openai_sse_stream(
+                let mut openai_stream = create_openai_sse_stream_with_anchor(
                     gemini_stream,
                     openai_req.model.clone(),
                     session_id,
                     message_count,
                     Some(client_tool_names.clone()),
                     include_usage,
+                    Some(causal_anchor),
                 );
 
                 let mut first_data_chunk = None;
@@ -3745,7 +3766,15 @@ pub async fn handle_completions(
     }
 
     // [NEW v4.2.0] Context Management & Reasoning Replay
-    let fallback_sid = if is_responses_api {
+    let explicit_sid = headers
+        .get("x-session-id")
+        .or_else(|| headers.get("x-jeikcode-session-id"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    let fallback_sid = if let Some(sid) = explicit_sid {
+        sid.to_string()
+    } else if is_responses_api {
         if explicit_session_id.is_some() || previous_response_id.is_some() {
             routing_session_id.clone()
         } else {
@@ -4187,12 +4216,22 @@ pub async fn handle_completions(
         let mut extra_headers = std::collections::HashMap::new();
         extra_headers.insert("x-session-id".to_string(), client_session_id.clone());
 
+        let preceding_turn_anchor = gemini_body
+            .get("request")
+            .and_then(|r| r.get("contents"))
+            .or_else(|| gemini_body.get("contents"))
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.last())
+            .cloned();
+        let causal_anchor =
+            crate::proxy::thinking_store::compute_causal_anchor(preceding_turn_anchor.as_ref());
+
         let upstream_req_start = std::time::Instant::now();
         let call_result = match upstream
             .call_v1_internal_with_headers(
                 method,
                 &access_token,
-                gemini_body,
+                gemini_body.clone(),
                 query_string,
                 extra_headers,
                 Some(account_id.as_str()),
@@ -4404,10 +4443,10 @@ pub async fn handle_completions(
                 } else {
                     // Forced Stream Internal -> Convert to Legacy JSON
                     // Use CHAT SSE Stream (so Collector can parse it)
-                    use crate::proxy::mappers::openai::streaming::create_openai_sse_stream;
+                    use crate::proxy::mappers::openai::streaming::create_openai_sse_stream_with_anchor;
                     // Note: We use create_openai_sse_stream regardless of is_codex_style here,
                     // because we just want the content aggregation which chat stream does well.
-                    let mut openai_stream = create_openai_sse_stream(
+                    let mut openai_stream = create_openai_sse_stream_with_anchor(
                         gemini_stream,
                         openai_req.model.clone(),
                         if is_responses_api {
@@ -4418,6 +4457,7 @@ pub async fn handle_completions(
                         message_count,
                         Some(client_tool_names.clone()),
                         true,
+                        Some(causal_anchor),
                     );
 
                     // Peek Logic (Repeated for safety/correctness on this stream type)

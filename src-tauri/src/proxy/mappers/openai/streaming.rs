@@ -48,12 +48,36 @@ fn extract_usage_metadata(u: &Value) -> Option<super::models::OpenAIUsage> {
 }
 
 pub fn create_openai_sse_stream<S, E>(
+    gemini_stream: Pin<Box<S>>,
+    model: String,
+    session_id: String,
+    message_count: usize,
+    client_tool_names: Option<std::collections::HashSet<String>>,
+    include_usage: bool,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    create_openai_sse_stream_with_anchor(
+        gemini_stream,
+        model,
+        session_id,
+        message_count,
+        client_tool_names,
+        include_usage,
+        None,
+    )
+}
+
+pub fn create_openai_sse_stream_with_anchor<S, E>(
     mut gemini_stream: Pin<Box<S>>,
     model: String,
     session_id: String,
     message_count: usize,
     client_tool_names: Option<std::collections::HashSet<String>>,
     include_usage: bool,
+    causal_anchor: Option<String>,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
@@ -71,7 +95,11 @@ where
         let mut final_usage: Option<super::models::OpenAIUsage> = None;
         let mut error_occurred = false;
         let mut tool_call_index = 0;
-        let mut thinking_acc = crate::proxy::thinking_store::TurnAccumulator::new();
+        let mut thinking_acc = if let Some(ref a) = causal_anchor {
+            crate::proxy::thinking_store::TurnAccumulator::with_anchor(a)
+        } else {
+            crate::proxy::thinking_store::TurnAccumulator::new()
+        };
 
         let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(15));
         heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

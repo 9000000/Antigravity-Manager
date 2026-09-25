@@ -90,6 +90,30 @@ impl InboundThinkingPipeline {
         let trusts_signature = protocol.trusts_client_signature();
         let is_claude = target_model.to_lowercase().contains("claude");
 
+        // 0. 统一上下文结构对齐（Pipeline First 统一治理）：
+        // 将连续的 user 消息直到下一个 model，统一合并为一个 user 轮次的多个 block (parts)，保持严格顺序。
+        // 这彻底消除了 Adapter 层各自为政导致的轮次错位，使得四大协议进入流水线后结构 100% 同构！
+        let mut normalized_contents = Vec::with_capacity(contents.len());
+        for msg in contents.drain(..) {
+            let is_user = msg.get("role").and_then(|r| r.as_str()) == Some("user");
+            let prev_is_user = normalized_contents
+                .last()
+                .and_then(|last: &Value| last.get("role").and_then(|r| r.as_str()))
+                == Some("user");
+            if is_user && prev_is_user {
+                let last = normalized_contents.last_mut().unwrap();
+                if let (Some(last_parts), Some(msg_parts)) = (
+                    last.get_mut("parts").and_then(|p| p.as_array_mut()),
+                    msg.get("parts").and_then(|p| p.as_array()),
+                ) {
+                    last_parts.extend(msg_parts.iter().cloned());
+                    continue;
+                }
+            }
+            normalized_contents.push(msg);
+        }
+        *contents = normalized_contents;
+
         // 预先计算每一轮的前置因果锚点 (causal anchor)，以便无 ID 的 Gemini 原生工具调用也能无损合成确定性 ID
         let anchors: Vec<String> = (0..contents.len())
             .map(|i| {

@@ -765,32 +765,88 @@ pub fn transform_claude_request_in_timed(
         message_count
     );
 
+    // [CACHE] 重建 inner_request 字段顺序——稳定前缀在前，动态内容在后
+    // 遵循四大协议统一规范：systemInstruction -> tools -> toolConfig -> tool_config -> generationConfig -> safetySettings -> sessionId -> contents
+    let mut reordered_inner = json!({});
+    if let Some(si) = inner_request.get("systemInstruction") {
+        if let Some(si_obj) = si.as_object() {
+            let mut canonical_si = json!({});
+            if let Some(role) = si_obj.get("role") {
+                canonical_si["role"] = role.clone();
+            } else {
+                canonical_si["role"] = json!("user");
+            }
+            if let Some(parts) = si_obj.get("parts") {
+                canonical_si["parts"] = parts.clone();
+            }
+            for (k, v) in si_obj {
+                if k != "role" && k != "parts" {
+                    canonical_si[k] = v.clone();
+                }
+            }
+            reordered_inner["systemInstruction"] = canonical_si;
+        } else {
+            reordered_inner["systemInstruction"] = si.clone();
+        }
+    }
+    if let Some(tools) = inner_request.get("tools") {
+        reordered_inner["tools"] = tools.clone();
+    }
+    if let Some(tc) = inner_request.get("toolConfig") {
+        reordered_inner["toolConfig"] = tc.clone();
+    }
+    if let Some(tc_snake) = inner_request.get("tool_config") {
+        reordered_inner["tool_config"] = tc_snake.clone();
+    }
+    if let Some(gc) = inner_request.get("generationConfig") {
+        reordered_inner["generationConfig"] = gc.clone();
+    }
+    if let Some(ss) = inner_request.get("safetySettings") {
+        reordered_inner["safetySettings"] = ss.clone();
+    }
+    if let Some(sid) = inner_request.get("sessionId") {
+        reordered_inner["sessionId"] = sid.clone();
+    }
+    reordered_inner["contents"] = inner_request.get("contents").cloned().unwrap_or(json!([]));
+    for (k, v) in inner_request.as_object().iter().flat_map(|o| o.iter()) {
+        if !reordered_inner
+            .as_object()
+            .map(|o| o.contains_key(k))
+            .unwrap_or(false)
+        {
+            reordered_inner[k] = v.clone();
+        }
+    }
+
     // [NEW] 动态检测是否需要标记为 agent 请求
-    let has_tools = inner_request
+    let has_tools = reordered_inner
         .get("tools")
         .and_then(|t| t.as_array())
         .map(|arr| !arr.is_empty())
         .unwrap_or(false);
-    let has_tool_interactions = inner_request
+    let has_tool_interactions = reordered_inner
         .get("contents")
         .map(super::super::common_utils::contents_has_tool_interactions)
         .unwrap_or(false);
     let is_agent_request =
         config.request_type != "image_gen" && (has_tools || has_tool_interactions);
 
-    // 构建最终请求体
+    // 构建最终请求体 (顶层键序稳定: project -> request -> model -> userAgent -> requestId)
     let mut body = json!({
         "project": project_id,
-        "requestId": request_id,
-        "request": inner_request,
+        "request": reordered_inner,
         "model": config.final_model,
         "userAgent": "antigravity",
+        "requestId": request_id,
     });
 
     if config.request_type == "image_gen" {
         body["requestType"] = json!("image_gen");
     } else if is_agent_request {
         body["requestType"] = json!("agent");
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("enabledCreditTypes".to_string(), json!(["GOOGLE_ONE_AI"]));
+        }
     }
 
     // [FIX #593] 最后一道防线: 递归深度清理所有 cache_control 字段
@@ -1766,17 +1822,13 @@ fn build_google_contents(
     // Corrupted signature issues proved we cannot fake thinking blocks.
     // Instead we rely on should_disable_thinking_due_to_history to prevent this state.
 
-    // [FIX P3-3] Strict Role Alternation (Message Merging)
-    // Merge adjacent messages with the same role to satisfy Gemini's strict alternation rule
-    let mut merged_contents = merge_adjacent_roles(contents);
-
     // 思考回填：仅在开启思考且非 Gemini < 3 模型时恢复思维块与签名
     let should_finalize_thinking =
         is_thinking_enabled && !crate::proxy::model_specs::is_gemini_under_v3(mapped_model);
 
     let think_start = std::time::Instant::now();
     crate::proxy::pipeline::InboundThinkingPipeline::process_contents(
-        &mut merged_contents,
+        &mut contents,
         crate::proxy::pipeline::ProxyProtocol::AnthropicClaude,
         mapped_model,
         should_finalize_thinking,
@@ -1785,7 +1837,7 @@ fn build_google_contents(
     );
     timing.think_fill_micros = think_start.elapsed().as_micros() as u64;
 
-    Ok(json!(merged_contents))
+    Ok(json!(contents))
 }
 
 /// Merge adjacent messages with the same role
@@ -1834,32 +1886,27 @@ fn build_tools(
         let mut has_google_search = has_web_search;
 
         for tool in tools_list {
-            // 1. Detect server tools / built-in tools like web_search
-            if tool.is_web_search() {
+            // 只有当没有客户端 input_schema 时，才判定为纯服务端内置搜索标记；
+            // 若带有参数 input_schema，则为客户端自定义本地工具，必须 100% 完整保留！
+            let is_server_search = tool.input_schema.is_none()
+                && (tool.is_web_search()
+                    || tool.type_.as_deref() == Some("web_search_20250305")
+                    || tool.name.as_deref() == Some("web_search")
+                    || tool.name.as_deref() == Some("google_search")
+                    || tool.name.as_deref() == Some("builtin_web_search"));
+            if is_server_search {
                 has_google_search = true;
                 continue;
             }
 
-            if let Some(t_type) = &tool.type_ {
-                if t_type == "web_search_20250305" {
-                    has_google_search = true;
-                    continue;
-                }
-            }
-
-            // 2. Detect by name
             if let Some(name) = &tool.name {
-                if name == "web_search" || name == "google_search" || name == "builtin_web_search" {
-                    has_google_search = true;
-                    continue;
-                }
-
-                // 3. Client tools require input_schema
+                // Client tools require input_schema
                 let mut input_schema = tool.input_schema.clone().unwrap_or(json!({
                     "type": "object",
                     "properties": {}
                 }));
                 crate::proxy::common::json_schema::clean_json_schema(&mut input_schema);
+                crate::proxy::mappers::openai::request::enforce_uppercase_types(&mut input_schema);
 
                 function_declarations.push(json!({
                     "name": name,
@@ -1877,6 +1924,12 @@ fn build_tools(
         let supports_mixed_tools = false;
 
         if !function_declarations.is_empty() {
+            // [CACHE] 按 function name 稳定字典序排序，确保全协议 tool schema 字节完全一致
+            function_declarations.sort_by(|a, b| {
+                let name_a = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let name_b = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                name_a.cmp(name_b)
+            });
             let mut func_obj = serde_json::Map::new();
             func_obj.insert(
                 "functionDeclarations".to_string(),

@@ -1352,6 +1352,43 @@
         "clear_error": "清除 Hermes 配置失敗：{{error}}"
       }
     },
+    "openclaw_sync": {
+      "modal_title": "在 OpenClaw 中配置 Antigravity Manager",
+      "version_title": "OpenClaw SDK 版本規範",
+      "detected_hint": "環境已檢測: {{target}}",
+      "v2_label": "≥ 2026.8.1 (v2.0 規範)",
+      "v2_desc": "採用 modelPolicy.allow 白名單規範與 entries 架構，原生支援圖像/工具多模態",
+      "v1_label": "< 2026.8.1 (v1.0 規範)",
+      "v1_desc": "採用 agents.defaults.models 顯式模型字典註冊，全面相容 2026.7 及更早 SDK",
+      "endpoint_title": "連線位址 (Base URL)",
+      "local_endpoint": "本地代理",
+      "custom_endpoint": "自訂位址",
+      "custom_endpoint_desc": "Docker、區域網路或反向代理",
+      "url_required": "請輸入 OpenClaw 連線位址",
+      "models_title": "同步到 OpenClaw 的模型",
+      "all_models": "全部同步",
+      "all_models_desc": "同步當前全部 {{count}} 個可用模型",
+      "selected_models": "部分挑選",
+      "models_required": "請至少選取一個模型",
+      "activate_provider": "設為 OpenClaw 預設主要模型 (Primary)",
+      "activate_provider_desc": "勾選後將自動更新 agents.defaults.model.primary",
+      "default_model": "預設模型",
+      "select_default_model": "選取模型",
+      "default_model_required": "請選取預设模型",
+      "currently_active": "當前已激活為主模型",
+      "btn_sync_v1": "同步 (< 2026.8.1 v1.0)",
+      "btn_sync_v2": "同步 (≥ 2026.8.1 v2.0)",
+      "btn_view": "檢視配置",
+      "btn_restore": "恢復",
+      "btn_clear": "清除",
+      "clear_confirm_title": "清除 OpenClaw 配置",
+      "clear_confirm_message": "此操作將從 OpenClaw 中移除 Antigravity Manager 提供商及模型白名單。確定要繼續嗎？",
+      "toast": {
+        "sync_success": "OpenClaw ({{version}}) 配置同步成功",
+        "clear_success": "OpenClaw 配置已成功清除",
+        "clear_error": "清除 OpenClaw 配置失敗：{{error}}"
+      }
+    },
     "supported_models": {
       "title": "支援模型與整合 (Supported Models & Integration)",
       "model_name": "模型名稱",
@@ -1778,5 +1815,12 @@
       "stream_error": "Stream transmission error, please retry later",
       "unknown_error": "Unknown error occurred, please retry later"
     }
+  },
+  "suggestion_delete_thinking": {
+    "title": "版本更新提示",
+    "message": "新版本已更新，維護者建議您刪除思考塊快取，下次會自動重建，是否刪除？",
+    "confirm": "立即刪除",
+    "cancel": "暫不刪除",
+    "success": "已成功刪除思考塊快取，將在後續對話中自動重建。"
   }
 }

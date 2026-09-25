@@ -267,7 +267,7 @@ export function HermesSyncModal({ apiKey, getFormattedProxyUrl, onClose, onSyncD
                                                                         : "bg-gray-50 dark:bg-base-200 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-base-300 hover:border-purple-300"
                                                                 )}
                                                             >
-                                                                {model.name}
+                                                                {model.id}
                                                             </button>
                                                         );
                                                     })}
@@ -295,7 +295,7 @@ export function HermesSyncModal({ apiKey, getFormattedProxyUrl, onClose, onSyncD
                                             className="select select-bordered select-sm w-full text-xs"
                                         >
                                             <option value="" disabled>{t('proxy.hermes_sync.select_default_model', { defaultValue: 'Select a model' })}</option>
-                                            {availableDefaultModels.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
+                                            {availableDefaultModels.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}
                                         </select>
                                     </div>
                                 )}

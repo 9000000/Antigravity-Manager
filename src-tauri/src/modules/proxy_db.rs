@@ -1143,6 +1143,16 @@ pub fn clear_all_thinking_data() -> Result<usize, String> {
     Ok(total_deleted)
 }
 
+pub fn get_thinking_records_count() -> Result<usize, String> {
+    let conn = thinking_db()?;
+    let count: usize = conn
+        .query_row("SELECT COUNT(*) FROM thinking_records", [], |row| {
+            row.get(0)
+        })
+        .unwrap_or(0);
+    Ok(count)
+}
+
 pub fn cleanup_old_thinking_records(days: i64) -> Result<usize, String> {
     let cutoff = chrono::Utc::now().timestamp_millis() - (days * 24 * 3600 * 1000);
     let deleted_tools = connect_db()

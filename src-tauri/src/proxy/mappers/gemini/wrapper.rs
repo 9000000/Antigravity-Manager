@@ -836,7 +836,7 @@ pub fn wrap_request_v2(
                 if let Some(decls) = tool.get_mut("functionDeclarations") {
                     if let Some(decls_arr) = decls.as_array_mut() {
                         // 清洗 Schema: 如果存在 parametersJsonSchema，将其标准化为 parameters
-                        for decl in decls_arr {
+                        for decl in decls_arr.iter_mut() {
                             // 检测并转换字段名
                             if let Some(decl_obj) = decl.as_object_mut() {
                                 // 如果存在 parametersJsonSchema，将其重命名为 parameters
@@ -847,13 +847,25 @@ pub fn wrap_request_v2(
                                     crate::proxy::common::json_schema::clean_json_schema(
                                         &mut params,
                                     );
+                                    crate::proxy::mappers::openai::request::enforce_uppercase_types(
+                                        &mut params,
+                                    );
                                     decl_obj.insert("parameters".to_string(), params);
                                 } else if let Some(params) = decl_obj.get_mut("parameters") {
                                     // 标准 parameters 字段
                                     crate::proxy::common::json_schema::clean_json_schema(params);
+                                    crate::proxy::mappers::openai::request::enforce_uppercase_types(
+                                        params,
+                                    );
                                 }
                             }
                         }
+                        // [CACHE] 按 function name 稳定字典序排序，确保全协议 tool schema 字节完全一致
+                        decls_arr.sort_by(|a, b| {
+                            let name_a = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            let name_b = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            name_a.cmp(name_b)
+                        });
                     }
                 }
             }
@@ -1106,9 +1118,27 @@ pub fn wrap_request_v2(
     // 遵循 Google 官方建议："将较大且常见的内容放置在提示的开头"
     // systemInstruction (~稳定的系统提示词) → tools → toolConfig → generationConfig → contents (动态)
     let mut reordered_inner = json!({});
-    // 1. systemInstruction (稳定)
+    // 1. systemInstruction (稳定，规范化统一键序: role -> parts)
     if let Some(si) = inner_request.get("systemInstruction") {
-        reordered_inner["systemInstruction"] = si.clone();
+        if let Some(si_obj) = si.as_object() {
+            let mut canonical_si = json!({});
+            if let Some(role) = si_obj.get("role") {
+                canonical_si["role"] = role.clone();
+            } else {
+                canonical_si["role"] = json!("user");
+            }
+            if let Some(parts) = si_obj.get("parts") {
+                canonical_si["parts"] = parts.clone();
+            }
+            for (k, v) in si_obj {
+                if k != "role" && k != "parts" {
+                    canonical_si[k] = v.clone();
+                }
+            }
+            reordered_inner["systemInstruction"] = canonical_si;
+        } else {
+            reordered_inner["systemInstruction"] = si.clone();
+        }
     }
     // 2. tools (稳定)
     if let Some(tools) = inner_request.get("tools") {

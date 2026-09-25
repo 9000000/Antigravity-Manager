@@ -1401,9 +1401,27 @@ pub fn transform_openai_request_with_session(
     // 前缀顺序: systemInstruction → tools → toolConfig → generationConfig → safetySettings → sessionId → contents
     //                                                  ↑ 只有 contents 变化，其他全部稳定
     let mut reordered_request = json!({});
-    // 1. systemInstruction (稳定，~17,500 tokens — 最大的静态块)
+    // 1. systemInstruction (稳定，规范化统一键序: role -> parts)
     if let Some(si) = inner_request.get("systemInstruction") {
-        reordered_request["systemInstruction"] = si.clone();
+        if let Some(si_obj) = si.as_object() {
+            let mut canonical_si = json!({});
+            if let Some(role) = si_obj.get("role") {
+                canonical_si["role"] = role.clone();
+            } else {
+                canonical_si["role"] = json!("user");
+            }
+            if let Some(parts) = si_obj.get("parts") {
+                canonical_si["parts"] = parts.clone();
+            }
+            for (k, v) in si_obj {
+                if k != "role" && k != "parts" {
+                    canonical_si[k] = v.clone();
+                }
+            }
+            reordered_request["systemInstruction"] = canonical_si;
+        } else {
+            reordered_request["systemInstruction"] = si.clone();
+        }
     }
     // 2. tools (稳定，已排序)
     if let Some(tools) = inner_request.get("tools") {
@@ -1475,6 +1493,9 @@ pub fn transform_openai_request_with_session(
         final_body["requestType"] = json!("image_gen");
     } else if is_agent_request {
         final_body["requestType"] = json!("agent");
+        if let Some(obj) = final_body.as_object_mut() {
+            obj.insert("enabledCreditTypes".to_string(), json!(["GOOGLE_ONE_AI"]));
+        }
     }
 
     // [CACHE:L3] 使用多层级缓存的 compute_prefix_hash 计算组合哈希
@@ -1523,7 +1544,7 @@ pub fn transform_openai_request_with_session(
     (final_body, session_id, message_count, prefix_hash)
 }
 
-fn enforce_uppercase_types(value: &mut Value) {
+pub fn enforce_uppercase_types(value: &mut Value) {
     if let Value::Object(map) = value {
         if let Some(type_val) = map.get_mut("type") {
             if let Value::String(ref mut s) = type_val {
