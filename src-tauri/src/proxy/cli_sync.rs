@@ -922,6 +922,15 @@ pub fn sync_config(
                     } else {
                         if let Some(m) = model {
                             doc.insert("model", value(m));
+                            let cw = if m.contains("gemini") {
+                                1_024_000
+                            } else if m.contains("claude") {
+                                256_000
+                            } else {
+                                128_000
+                            };
+                            doc.insert("model_context_window", value(cw));
+                            doc.insert("model_auto_compact_token_limit", value(cw));
                         }
                     }
 
@@ -1090,6 +1099,7 @@ pub fn sync_config(
                                 t.insert("name", value(m.id));
                                 t.insert("api_backend", value("responses"));
                                 t.insert("context_window", value(m.context_window));
+                                t.insert("image_input", value(true));
                                 if !api_key.is_empty() {
                                     t.insert("api_key", value(api_key));
                                 }
