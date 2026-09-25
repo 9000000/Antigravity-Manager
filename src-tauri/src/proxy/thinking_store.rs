@@ -908,6 +908,13 @@ impl ThinkingStore {
                 }
             } else if has_function_call {
                 // Gemini 原生模型：Google 官方强制要求签名挂在 functionCall 上！
+                // [TEMP TEST] 测试：在 function call 签名回填上不填真实签名，全部用哨兵占位
+                for part in parts.iter_mut() {
+                    if part.get("functionCall").is_some() {
+                        part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                    }
+                }
+                /*
                 // 1. 首位思考块保持纯净思考文本，不重复挂载签名，消除双倍膨胀
                 // 2. 首个 functionCall 承载真实大签名 (若有且合法) 或哨兵
                 // 3. 后续并行 functionCall 统一打上 32 字节哨兵占位，满足 Google 对每个 functionCall 的 AST 校验
@@ -932,6 +939,7 @@ impl ThinkingStore {
                         }
                     }
                 }
+                */
             } else {
                 // Gemini 原生模型纯文本轮次：无 functionCall，纯文本思考块直接保持纯净文本，无需注入签名
             }
@@ -1592,6 +1600,13 @@ pub fn finalize_gemini_contents_thinking_with_model(
                 }
             } else if has_function_call {
                 // Gemini 原生模型：Google 引擎强制要求每一个 functionCall 必须挂载 thoughtSignature！
+                // [TEMP TEST] 测试：在 function call 签名回填上不填真实签名，全部用哨兵占位
+                for part in other_parts.iter_mut() {
+                    if part.get("functionCall").is_some() {
+                        part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                    }
+                }
+                /*
                 // 无论思考开还是关：首个 functionCall 承载真实大签名 (若有且合法) 或哨兵，后续并行工具打上 32 字节哨兵
                 let mut first_fc_seen = false;
                 let mut fc_assign_counter = 0usize;
@@ -1643,6 +1658,7 @@ pub fn finalize_gemini_contents_thinking_with_model(
                         }
                     }
                 }
+                */
             }
 
             // 3. 治理思考块 (thinking_parts)

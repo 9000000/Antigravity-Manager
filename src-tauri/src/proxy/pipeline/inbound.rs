@@ -239,7 +239,12 @@ impl InboundThinkingPipeline {
                         } else {
                             if target_model.to_lowercase().contains("gemini") {
                                 // 协议无关全局工具签名回填：若当前部件为 functionCall 且尚未携带签名，优先按显式 ID 或因果合成 ID 查询 SignatureCache
-                                if let Some(fc) = part.get("functionCall") {
+                                // [TEMP TEST] 测试：在 function call 签名回填上不填真实签名，检索已注释，全部用哨兵占位
+                                if let Some(_fc) = part.get("functionCall") {
+                                    part["thoughtSignature"] =
+                                        json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
+                                    let _ = &mut fc_counter;
+                                    /*
                                     let needs_real_sig = part
                                         .get("thoughtSignature")
                                         .and_then(|s| s.as_str())
@@ -280,6 +285,7 @@ impl InboundThinkingPipeline {
                                             }
                                         }
                                     }
+                                    */
                                 }
 
                                 if let Some(fc_sig) =
