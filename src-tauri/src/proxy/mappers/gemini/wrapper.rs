@@ -333,40 +333,6 @@ pub fn wrap_request_v2(
                                         break;
                                     }
                                 }
-                            } else if let Some(fc) = obj.get("functionCall") {
-                                if let Some(s) = obj
-                                    .get("thoughtSignature")
-                                    .or(obj.get("thought_signature"))
-                                    .and_then(|s| s.as_str())
-                                {
-                                    if s == crate::proxy::thinking_store::SENTINEL_SIGNATURE
-                                        || s.len() >= 50
-                                    {
-                                        turn_signature = Some(s.to_string());
-                                        break;
-                                    }
-                                }
-                                if let Some(call_id) = fc.get("id").and_then(|v| v.as_str()) {
-                                    if let Some(s) = crate::proxy::SignatureCache::global()
-                                        .get_tool_signature(call_id)
-                                    {
-                                        turn_signature = Some(s);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if turn_signature.is_none() {
-                        if let Some(s_id) = session_id {
-                            if let Some(s) = crate::proxy::SignatureCache::global()
-                                .get_session_signature_at(s_id, i)
-                            {
-                                turn_signature = Some(s);
-                            } else if let Some(s) =
-                                crate::proxy::SignatureCache::global().get_session_signature(s_id)
-                            {
-                                turn_signature = Some(s);
                             }
                         }
                     }
@@ -450,17 +416,6 @@ pub fn wrap_request_v2(
                         if effective_sig.is_none() {
                             effective_sig = turn_signature.clone();
                         }
-                        if effective_sig.is_none() {
-                            if !is_target_claude && can_use_sentinel {
-                                // [TEMP TEST] 测试：对于 Gemini 目标模型在适配器层统一使用哨兵占位
-                                effective_sig = Some(
-                                    crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string(),
-                                );
-                            } else if let Some(s_id) = session_id {
-                                effective_sig = crate::proxy::SignatureCache::global()
-                                    .get_session_signature(s_id);
-                            }
-                        }
                         if effective_sig.is_none() && can_use_sentinel {
                             effective_sig =
                                 Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string());
@@ -505,13 +460,8 @@ pub fn wrap_request_v2(
                                     .and_then(|s| s.as_str())
                                     .map(str::to_string);
 
-                                // 纯净线缆透传：[TEMP TEST] Gemini 目标模型统一使用哨兵占位
-                                if !is_target_claude {
-                                    obj.insert(
-                                        "thoughtSignature".to_string(),
-                                        json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE),
-                                    );
-                                } else if let Some(ref sig) = incoming_fc_sig {
+                                // 纯净线缆透传：客户端若自带签名则保持原样，缺失签名全权委托进站流水线统一对齐与回填
+                                if let Some(ref sig) = incoming_fc_sig {
                                     obj.insert("thoughtSignature".to_string(), json!(sig));
                                 }
                                 obj.remove("thought_signature");

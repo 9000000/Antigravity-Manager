@@ -625,17 +625,10 @@ pub fn transform_claude_request_in_timed(
             }
         });
 
-        if has_function_calls
-            && !has_valid_signature_for_function_calls(
-                &claude_req.messages,
-                &global_sig,
-                &session_id,
-            )
-        {
+        if has_function_calls {
             // [FIX #2167] Rely on ThinkingStore / sentinel injection rather than disabling thinking
             tracing::info!(
-                "[Thinking-Mode] Function calls present without explicit client signature. \
-                 Relying on ThinkingStore restoration and sentinel injection."
+                "[Thinking-Mode] Function calls present. Relying on InboundThinkingPipeline restoration and sentinel injection."
             );
         }
     }
@@ -903,69 +896,6 @@ const MIN_SIGNATURE_LENGTH: usize = 50;
 /// Sentinel signature for models that support skipping signature validation
 const SENTINEL_SIGNATURE: &str = "skip_thought_signature_validator";
 
-/// [FIX #295] Check if we have any valid signature available for function calls
-/// This prevents Gemini 3 Pro from rejecting requests due to missing thought_signature
-///
-/// [NEW FIX] Now also checks Session Cache to support retry scenarios
-fn has_valid_signature_for_function_calls(
-    messages: &[Message],
-    global_sig: &Option<String>,
-    session_id: &str, // NEW: Add session_id parameter
-) -> bool {
-    // 1. Check global store (deprecated but kept for compatibility)
-    if let Some(sig) = global_sig {
-        if sig.len() >= MIN_SIGNATURE_LENGTH {
-            tracing::debug!(
-                "[Signature-Check] Found valid signature in global store (len: {})",
-                sig.len()
-            );
-            return true;
-        }
-    }
-
-    // 2. [NEW] Check Session Cache - this is critical for retry scenarios
-    // When retrying, the signature may not be in messages but exists in Session Cache
-    if let Some(sig) = crate::proxy::SignatureCache::global().get_session_signature(session_id) {
-        if sig.len() >= MIN_SIGNATURE_LENGTH {
-            tracing::info!(
-                "[Signature-Check] Found valid signature in SESSION cache (session: {}, len: {})",
-                session_id,
-                sig.len()
-            );
-            return true;
-        }
-    }
-
-    // 3. Check if any message has a thinking block with valid signature
-    for msg in messages.iter().rev() {
-        if msg.role == "assistant" {
-            if let MessageContent::Array(blocks) = &msg.content {
-                for block in blocks {
-                    if let ContentBlock::Thinking {
-                        signature: Some(sig),
-                        ..
-                    } = block
-                    {
-                        if sig.len() >= MIN_SIGNATURE_LENGTH {
-                            tracing::debug!(
-                                "[Signature-Check] Found valid signature in message history (len: {})",
-                                sig.len()
-                            );
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    tracing::warn!(
-        "[Signature-Check] No valid signature found (session: {}, checked: global store, session cache, message history)",
-        session_id
-    );
-    false
-}
-
 fn clean_system_prompt_text(text: &str) -> String {
     crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::strip_pipeline_markers(text)
 }
@@ -1086,7 +1016,7 @@ fn build_contents(
                             break;
                         }
                     }
-                    ContentBlock::ToolUse { id, signature, .. } => {
+                    ContentBlock::ToolUse { signature, .. } => {
                         if let Some(s) = signature {
                             if (s == SENTINEL_SIGNATURE || s.len() >= MIN_SIGNATURE_LENGTH)
                                 && (!mapped_model.to_lowercase().contains("gemini")
@@ -1096,31 +1026,8 @@ fn build_contents(
                                 break;
                             }
                         }
-                        if let Some(s) =
-                            crate::proxy::SignatureCache::global().get_tool_signature(id)
-                        {
-                            if !mapped_model.to_lowercase().contains("gemini")
-                                || crate::proxy::thinking_store::is_likely_gemini_signature(&s)
-                            {
-                                turn_signature = Some(s);
-                                break;
-                            }
-                        }
                     }
                     _ => {}
-                }
-            }
-        }
-
-        // If not found from blocks or tool cache, try session cache at msg_index
-        if turn_signature.is_none() {
-            if let Some(s) = crate::proxy::SignatureCache::global()
-                .get_session_signature_at(session_id, msg_index)
-            {
-                if !mapped_model.to_lowercase().contains("gemini")
-                    || crate::proxy::thinking_store::is_likely_gemini_signature(&s)
-                {
-                    turn_signature = Some(s);
                 }
             }
         }
@@ -1388,31 +1295,14 @@ fn build_contents(
                         let final_sig = signature
                             .as_ref()
                             .filter(|s| {
-                                (s.as_str() == SENTINEL_SIGNATURE || s.len() >= MIN_SIGNATURE_LENGTH)
+                                (s.as_str() == SENTINEL_SIGNATURE
+                                    || s.len() >= MIN_SIGNATURE_LENGTH)
                                     && (!mapped_model.to_lowercase().contains("gemini")
-                                        || crate::proxy::thinking_store::is_likely_gemini_signature(s))
+                                        || crate::proxy::thinking_store::is_likely_gemini_signature(
+                                            s,
+                                        ))
                             })
-                            .cloned()
-                            .or_else(|| {
-                                crate::proxy::SignatureCache::global()
-                                    .get_tool_signature(id)
-                                    .filter(|s| {
-                                        !mapped_model.to_lowercase().contains("gemini")
-                                            || crate::proxy::thinking_store::is_likely_gemini_signature(s)
-                                    })
-                            })
-                            .or_else(|| {
-                                last_thought_signature.as_ref().filter(|s| {
-                                    !mapped_model.to_lowercase().contains("gemini")
-                                        || crate::proxy::thinking_store::is_likely_gemini_signature(s)
-                                }).cloned()
-                            })
-                            .or_else(|| {
-                                turn_signature.as_ref().filter(|s| {
-                                    !mapped_model.to_lowercase().contains("gemini")
-                                        || crate::proxy::thinking_store::is_likely_gemini_signature(s)
-                                }).cloned()
-                            });
+                            .cloned();
 
                         if let Some(ref s) = final_sig {
                             *last_thought_signature = Some(s.clone());
@@ -1426,22 +1316,10 @@ fn build_contents(
                                 obj.remove("thought_signature");
                             }
                         } else {
-                            // Gemini 原生模型：[TEMP TEST] 测试：工具调用统一使用哨兵占位
-                            part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
-                            /*
-                            // Gemini 原生模型：首个工具调用挂载真实签名 (若有)，后续并行工具调用统一打上 32 字节哨兵占位
-                            let has_preceding_fc =
-                                parts.iter().any(|p| p.get("functionCall").is_some());
-                            if !has_preceding_fc {
-                                if let Some(sig) = final_sig {
-                                    part["thoughtSignature"] = json!(sig);
-                                } else {
-                                    part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
-                                }
-                            } else {
-                                part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                            // 纯净线缆透传：客户端若自带签名则保持，未带则留空，全权委托进站流水线统一对齐与回填
+                            if let Some(ref sig) = final_sig {
+                                part["thoughtSignature"] = json!(sig);
                             }
-                            */
                         }
                         parts.push(part);
                     }

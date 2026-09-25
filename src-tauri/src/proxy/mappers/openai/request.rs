@@ -323,19 +323,6 @@ pub fn transform_openai_request_with_session(
         !is_under_v3 && (is_thinking_model || force_server_thinking || is_client_control)
     };
 
-    // [REFACTORED] 使用 SignatureCache 获取 Session 级别的签名
-    // Responses may pass previous_response_id as signature_read_key; always fall back to
-    // the stable ThinkingStore key so chat/responses share the same signature namespace.
-    let session_thought_sig = signature_read_key
-        .and_then(|key| crate::proxy::SignatureCache::global().get_session_signature(key))
-        .or_else(|| {
-            if signature_read_key == Some(thinking_store_key.as_str()) {
-                None
-            } else {
-                crate::proxy::SignatureCache::global().get_session_signature(&thinking_store_key)
-            }
-        });
-
     if _user_enabled_thinking || _user_thinking_budget.is_some() {
         tracing::debug!(
             "[OpenAI-Thinking] Ignoring client thinking enable/budget (enabled={}, budget={:?}); server model heuristics decide fill",
@@ -387,16 +374,6 @@ pub fn transform_openai_request_with_session(
                 tool_id_to_name.insert(call.id.clone(), final_name.to_string());
             }
         }
-    }
-
-    // 从缓存获取当前会话的思维签名
-    let thought_sig = session_thought_sig;
-    if thought_sig.is_some() {
-        tracing::debug!(
-            "[OpenAI-Request] Using session signature (sid: {}, len: {})",
-            session_id,
-            thought_sig.as_ref().unwrap().len()
-        );
     }
 
     // [New] 预先构建工具名称到原始 Schema 的映射，用于后续参数类型修正
@@ -695,25 +672,8 @@ pub fn transform_openai_request_with_session(
                         }
                     });
 
-                    // 签名提取与对齐：优先客户端自带签名；若无则查询全局 SignatureCache (与 Claude / Gemini 适配器严格对齐)
-                    // [TEMP TEST] 测试：对于 Gemini 目标模型在适配器层统一使用哨兵占位
-                    let final_sig = if mapped_model.to_lowercase().contains("gemini") {
-                        Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string())
-                    } else {
-                        tc.signature
-                            .as_deref()
-                            .filter(|s| {
-                                *s == crate::proxy::thinking_store::SENTINEL_SIGNATURE
-                                    || s.len() >= 50
-                            })
-                            .map(str::to_string)
-                            .or_else(|| {
-                                crate::proxy::SignatureCache::global()
-                                    .get_tool_signature(&tc.id)
-                            })
-                    };
-
-                    if let Some(sig) = final_sig {
+                    // 纯净线缆透传：客户端若自带签名则原样透传，未带则留空，全权委托进站流水线统一对齐与回填
+                    if let Some(ref sig) = tc.signature {
                         func_call_part["thoughtSignature"] = json!(sig);
                     }
 

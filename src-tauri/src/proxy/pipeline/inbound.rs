@@ -223,11 +223,7 @@ impl InboundThinkingPipeline {
                                 "text": final_thought_text,
                                 "thought": true,
                             });
-                            if target_model.to_lowercase().contains("gemini") {
-                                // [TEMP TEST] 测试：Gemini 目标模型的思考块不填充真实签名，统一使用哨兵占位
-                                thought_obj["thoughtSignature"] =
-                                    json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
-                            } else if let Some(sig) = effective_sig {
+                            if let Some(sig) = effective_sig {
                                 thought_obj["thoughtSignature"] = json!(sig);
                             }
 
@@ -242,13 +238,9 @@ impl InboundThinkingPipeline {
                             }
                         } else {
                             if target_model.to_lowercase().contains("gemini") {
-                                // 协议无关全局工具签名回填：若当前部件为 functionCall 且尚未携带签名，优先按显式 ID 或因果合成 ID 查询 SignatureCache
-                                // [TEMP TEST] 测试：在 function call 签名回填上不填真实签名，检索已注释，全部用哨兵占位
-                                if let Some(_fc) = part.get("functionCall") {
-                                    part["thoughtSignature"] =
-                                        json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
-                                    let _ = &mut fc_counter;
-                                    /*
+                                // 协议无关全局工具签名回填：作为系统唯一工具签名回填中心！
+                                // 统一根据上下文因果合成伪 ID 查库回填，不受客户端是否携带或使用何种 tool_id 限制
+                                if let Some(fc) = part.get("functionCall") {
                                     let needs_real_sig = part
                                         .get("thoughtSignature")
                                         .and_then(|s| s.as_str())
@@ -269,7 +261,6 @@ impl InboundThinkingPipeline {
                                             );
                                         fc_counter += 1;
 
-                                        // 核心原则：统一根据上下文因果合成伪 ID 查库回填，不受客户端是否携带或使用何种 tool_id 限制
                                         let found_sig = crate::proxy::SignatureCache::global()
                                             .get_tool_signature(&synthetic_id)
                                             .or_else(|| {
@@ -289,7 +280,6 @@ impl InboundThinkingPipeline {
                                             }
                                         }
                                     }
-                                    */
                                 }
 
                                 if let Some(fc_sig) =
@@ -1020,11 +1010,8 @@ mod tests {
 
         let parts = contents[0]["parts"].as_array().expect("parts array");
         assert_eq!(parts.len(), 2);
-        // [TEMP TEST] 测试期间针对 Gemini 模型工具调用统一使用哨兵占位
-        assert_eq!(
-            parts[1]["thoughtSignature"],
-            crate::proxy::thinking_store::SENTINEL_SIGNATURE
-        );
+        // Gemini 原生签名在工具调用轮次绝不被二次编码，必须原样保留在 functionCall 部件上
+        assert_eq!(parts[1]["thoughtSignature"], gemini_sig);
     }
 
     #[test]
