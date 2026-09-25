@@ -667,6 +667,9 @@ fn deactivate(doc: &mut YamlDoc, backup: Option<&YamlDoc>) -> Result<(), String>
         remove(doc, "/model/provider")?;
         remove(doc, "/model/default")?;
     }
+    if mapping_len_at(doc, "/model") == Some(0) {
+        remove(doc, "/model")?;
+    }
     Ok(())
 }
 
@@ -743,18 +746,26 @@ fn apply_sync_losslessly(
     Ok(render_doc(&doc, source))
 }
 
-fn apply_clear_losslessly(source: &str) -> Result<(String, bool), String> {
+fn apply_clear_losslessly(source: &str, backup: Option<&str>) -> Result<(String, bool), String> {
     let mut doc = parse_doc(source)?;
+    let backup_doc = backup.map(parse_doc).transpose()?;
+    let mut changed = false;
+
+    if scalar_at(&doc, "/model/provider").is_some_and(|provider| is_managed_provider(&provider)) {
+        deactivate(&mut doc, backup_doc.as_ref())?;
+        changed = true;
+    }
+
     let provider = format!("/providers/{PROVIDER_ID}");
-    if resolve_optional(&doc, &provider).is_none() {
-        return Ok((render_doc(&doc, source), false));
+    if resolve_optional(&doc, &provider).is_some() {
+        if mapping_len_at(&doc, "/providers") == Some(1) {
+            remove(&mut doc, "/providers")?;
+        } else {
+            remove(&mut doc, &provider)?;
+        }
+        changed = true;
     }
-    if mapping_len_at(&doc, "/providers") == Some(1) {
-        remove(&mut doc, "/providers")?;
-    } else {
-        remove(&mut doc, &provider)?;
-    }
-    Ok((render_doc(&doc, source), true))
+    Ok((render_doc(&doc, source), changed))
 }
 
 fn apply_restore_losslessly(current: &str, backup: &str) -> Result<String, String> {
@@ -1003,14 +1014,11 @@ pub fn clear_hermes_config() -> Result<(), String> {
         return Ok(());
     }
     let source = read_hermes_source(&path)?;
-    let doc = parse_doc(&source)?;
-    if scalar_at(&doc, "/model/provider").is_some_and(|provider| is_managed_provider(&provider)) {
-        return Err(
-            "Antigravity Manager is the active Hermes provider. Select another provider in Hermes before removing it."
-                .to_string(),
-        );
-    }
-    let (updated, changed) = apply_clear_losslessly(&source)?;
+    let backup = get_backup_path()
+        .filter(|path| path.exists())
+        .map(|path| read_hermes_source(&path))
+        .transpose()?;
+    let (updated, changed) = apply_clear_losslessly(&source, backup.as_deref())?;
     if !changed {
         return Ok(());
     }
@@ -1387,12 +1395,56 @@ mod tests {
     #[test]
     fn clear_preserves_unrelated_bytes() {
         let source = "# top\nproviders:\n  antigravity-manager:\n    api: http://local/v1\n  other: {api: https://example.test/v1} # keep\ndisplay:\n  theme: custom # keep comment\n";
-        let (updated, changed) = apply_clear_losslessly(source).unwrap();
+        let (updated, changed) = apply_clear_losslessly(source, None).unwrap();
         assert!(changed);
         assert_eq!(
             updated,
             "# top\nproviders:\n  other: {api: https://example.test/v1} # keep\ndisplay:\n  theme: custom # keep comment\n"
         );
+    }
+
+    #[test]
+    fn clear_automatically_deactivates_managed_provider_with_backup() {
+        let backup = "model:\n  provider: openrouter\n  default: anthropic/claude-3.5-sonnet\nproviders:\n  openrouter:\n    api_key: test\n";
+        let source = "model:\n  provider: custom:antigravity-manager\n  default: gemini-2.5-flash\nproviders:\n  antigravity-manager:\n    name: Antigravity Manager\n  openrouter:\n    api_key: test\n";
+        let (updated, changed) = apply_clear_losslessly(source, Some(backup)).unwrap();
+        assert!(changed);
+        let parsed = doc(&updated);
+        assert_eq!(
+            scalar_at(&parsed, "/model/provider").as_deref(),
+            Some("openrouter")
+        );
+        assert_eq!(
+            scalar_at(&parsed, "/model/default").as_deref(),
+            Some("anthropic/claude-3.5-sonnet")
+        );
+        assert!(resolve_optional(&parsed, "/providers/antigravity-manager").is_none());
+        assert!(resolve_optional(&parsed, "/providers/openrouter").is_some());
+    }
+
+    #[test]
+    fn clear_automatically_deactivates_managed_provider_without_backup() {
+        let source = "model:\n  provider: custom:antigravity-manager\n  default: gemini-2.5-flash\nproviders:\n  antigravity-manager:\n    name: Antigravity Manager\n";
+        let (updated, changed) = apply_clear_losslessly(source, None).unwrap();
+        assert!(changed);
+        let parsed = doc(&updated);
+        assert!(resolve_optional(&parsed, "/model").is_none());
+        assert!(resolve_optional(&parsed, "/providers").is_none());
+    }
+
+    #[test]
+    fn clear_deactivates_managed_provider_retaining_other_model_fields_when_no_backup() {
+        let source = "model:\n  provider: custom:antigravity-manager\n  default: gemini-2.5-flash\n  temperature: 0.7\nproviders:\n  antigravity-manager:\n    name: Antigravity Manager\n";
+        let (updated, changed) = apply_clear_losslessly(source, None).unwrap();
+        assert!(changed);
+        let parsed = doc(&updated);
+        assert!(resolve_optional(&parsed, "/model/provider").is_none());
+        assert!(resolve_optional(&parsed, "/model/default").is_none());
+        assert_eq!(
+            scalar_at(&parsed, "/model/temperature").as_deref(),
+            Some("0.7")
+        );
+        assert!(resolve_optional(&parsed, "/providers").is_none());
     }
 
     #[test]
