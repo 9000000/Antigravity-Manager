@@ -19,7 +19,7 @@ export const SUGGESTION_DELETE_THINKING_STORE = true;
 //    - 建议清理的目标版本号 / 批次号（例如 "4.8.2"）。
 //    - 只要你将此版本号更新为当前发布的新版本，老用户升级后就会获得一次弹窗建议。
 //    - 用户无论点击【立即删除】还是【暂不删除】，本地均会记录已确认此版本，绝不重复弹窗。
-export const SUGGESTION_TARGET_VERSION = '4.8.2';
+export const SUGGESTION_TARGET_VERSION = '4.8.1';
 
 export const SuggestionDeleteThinkingModal: React.FC = () => {
   const { t } = useTranslation();
