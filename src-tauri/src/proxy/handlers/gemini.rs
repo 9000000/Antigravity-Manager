@@ -624,10 +624,7 @@ pub async fn handle_generate(
                                                                 if let Some(sig) = part.get("thoughtSignature").and_then(|s| s.as_str()) {
                                                                     crate::proxy::SignatureCache::global()
                                                                         .cache_session_signature(&s_id_for_stream, sig.to_string(), 1);
-                                                                    if let Some(call_id) = part.get("functionCall").and_then(|f| f.get("id")).and_then(|id| id.as_str()) {
-                                                                        crate::proxy::SignatureCache::global().cache_tool_signature(call_id, sig.to_string());
-                                                                    }
-                                                                    debug!("[Gemini-SSE] Cached signature (len: {}) for session: {}", sig.len(), s_id_for_stream);
+                                                                    debug!("[Gemini-SSE] Cached session signature (len: {}) for session: {}", sig.len(), s_id_for_stream);
                                                                 }
                                                             }
                                                         }
@@ -772,15 +769,7 @@ pub async fn handle_generate(
                                         sig.to_string(),
                                         1,
                                     );
-                                    if let Some(call_id) = part
-                                        .get("functionCall")
-                                        .and_then(|f| f.get("id"))
-                                        .and_then(|id| id.as_str())
-                                    {
-                                        crate::proxy::SignatureCache::global()
-                                            .cache_tool_signature(call_id, sig.to_string());
-                                    }
-                                    debug!("[Gemini-Response] Cached signature (len: {}) for session: {}", sig.len(), session_id);
+                                    debug!("[Gemini-Response] Cached session signature (len: {}) for session: {}", sig.len(), session_id);
                                 }
                             }
                         }

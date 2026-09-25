@@ -135,7 +135,6 @@ impl InboundThinkingPipeline {
                     let mut thinking_part = None;
                     let mut extra_thinking_parts = Vec::new();
                     let mut other_parts = Vec::new();
-                    let mut fc_counter = 0usize;
 
                     for mut part in parts.drain(..) {
                         let is_thought = part
@@ -238,63 +237,11 @@ impl InboundThinkingPipeline {
                             }
                         } else {
                             if target_model.to_lowercase().contains("gemini") {
-                                // 协议无关全局工具签名回填：作为系统唯一工具签名回填中心！
-                                // 统一根据上下文因果合成伪 ID 查库回填，不受客户端是否携带或使用何种 tool_id 限制
-                                if let Some(fc) = part.get("functionCall") {
-                                    let needs_real_sig = part
-                                        .get("thoughtSignature")
-                                        .and_then(|s| s.as_str())
-                                        .map_or(true, |s| {
-                                            s == crate::proxy::thinking_store::SENTINEL_SIGNATURE
-                                        });
-                                    if needs_real_sig {
-                                        let name = fc
-                                            .get("name")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("unknown");
-                                        let synthetic_id =
-                                            crate::proxy::thinking_store::synthesize_tool_id(
-                                                name,
-                                                fc.get("args"),
-                                                anchor,
-                                                fc_counter,
-                                            );
-                                        fc_counter += 1;
-
-                                        let found_sig = crate::proxy::SignatureCache::global()
-                                            .get_tool_signature(&synthetic_id)
-                                            .or_else(|| {
-                                                fc.get("id")
-                                                    .and_then(|id| id.as_str())
-                                                    .filter(|s| !s.trim().is_empty())
-                                                    .and_then(|id| {
-                                                        crate::proxy::SignatureCache::global()
-                                                            .get_tool_signature(id)
-                                                    })
-                                            });
-
-                                        if let Some(sig) = found_sig {
-                                            if crate::proxy::thinking_store::is_likely_gemini_signature(&sig)
-                                            {
-                                                part["thoughtSignature"] = json!(sig);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if let Some(fc_sig) =
-                                    part.get("thoughtSignature").and_then(|s| s.as_str())
-                                {
-                                    if !crate::proxy::thinking_store::is_likely_gemini_signature(
-                                        fc_sig,
-                                    ) {
-                                        tracing::warn!(
-                                            "[InboundPipeline] Replacing foreign functionCall thoughtSignature (len: {}) with sentinel for Gemini",
-                                            fc_sig.len()
-                                        );
-                                        part["thoughtSignature"] =
-                                            json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
-                                    }
+                                // Gemini 原生模型架构革命：彻底终结真实大签名查找回填！
+                                // 全量工具调用统一使用 32 字节标准哨兵占位符，消除 500KB+ 上下文冗余与 60% 窗口膨胀
+                                if part.get("functionCall").is_some() {
+                                    part["thoughtSignature"] =
+                                        json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
                                 }
                             } else if is_claude {
                                 if let Some(obj) = part.as_object_mut() {

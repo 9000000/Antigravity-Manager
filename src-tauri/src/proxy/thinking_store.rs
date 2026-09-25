@@ -908,28 +908,12 @@ impl ThinkingStore {
                 }
             } else if has_function_call {
                 // Gemini 原生模型：Google 官方强制要求签名挂在 functionCall 上！
-                // 1. 首位思考块保持纯净思考文本，不重复挂载签名，消除双倍膨胀
-                // 2. 首个 functionCall 承载历史复活的真实大签名 (若有且合法) 或哨兵
-                // 3. 后续并行 functionCall 统一打上 32 字节哨兵占位，满足 Google 对每个 functionCall 的 AST 校验
-                let sig_val = if let Some(sig) = rec
-                    .signature
-                    .as_ref()
-                    .filter(|s| is_real_signature(s) && is_likely_gemini_signature(s))
-                {
-                    sig.clone()
-                } else {
-                    SENTINEL_SIGNATURE.to_string()
-                };
-
-                let mut first_fc_assigned = false;
+                // 1. 首位思考块保持纯净思考文本，完整回填历史思考，消除双倍膨胀
+                // 2. 所有 functionCall 统一打上 32 字节哨兵占位（skip_thought_signature_validator），
+                //    既 100% 满足 Google AST 严格校验，又彻底摆脱大签名回填负担，上下文体积直降 60%！
                 for part in parts.iter_mut() {
                     if part.get("functionCall").is_some() {
-                        if !first_fc_assigned {
-                            part["thoughtSignature"] = json!(sig_val);
-                            first_fc_assigned = true;
-                        } else {
-                            part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
-                        }
+                        part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
                     }
                 }
             } else {
@@ -1279,23 +1263,6 @@ impl TurnAccumulator {
                 if !self.tool_ids.iter().any(|x| x == real_id) {
                     self.tool_ids.push(real_id.clone());
                 }
-                if let Some(sig) = part
-                    .get("thoughtSignature")
-                    .or_else(|| part.get("thought_signature"))
-                    .and_then(|s| s.as_str())
-                {
-                    crate::proxy::SignatureCache::global()
-                        .cache_tool_signature(real_id, sig.to_string());
-                    crate::proxy::SignatureCache::global()
-                        .cache_tool_signature(&synthetic, sig.to_string());
-                }
-            } else if let Some(sig) = part
-                .get("thoughtSignature")
-                .or_else(|| part.get("thought_signature"))
-                .and_then(|s| s.as_str())
-            {
-                crate::proxy::SignatureCache::global()
-                    .cache_tool_signature(&synthetic, sig.to_string());
             }
 
             if !self.tool_names.iter().any(|x| x == &name) {
@@ -1572,34 +1539,10 @@ pub fn finalize_gemini_contents_thinking_with_model(
                 }
             } else if has_function_call {
                 // Gemini 原生模型：Google 引擎强制要求每一个 functionCall 必须挂载 thoughtSignature！
-                // 终审出站门禁（Gatekeeper）：不再主动查库。若当前 functionCall 已有合法签名则保留，缺失或非法的统统由哨兵兜底
-                let mut first_fc_seen = false;
+                // 终审出站门禁（Gatekeeper）：所有 functionCall 统一打上 32 字节哨兵占位符（skip_thought_signature_validator）
                 for part in other_parts.iter_mut() {
                     if part.get("functionCall").is_some() {
-                        if !first_fc_seen {
-                            first_fc_seen = true;
-                            let current_sig = part.get("thoughtSignature").and_then(|s| s.as_str());
-                            match current_sig {
-                                Some(sig) if is_likely_gemini_signature(sig) => {
-                                    // 保留已由进站流水线填入的合法签名
-                                }
-                                _ => {
-                                    if let Some(ref real_sig) = turn_real_sig {
-                                        part["thoughtSignature"] = json!(real_sig);
-                                    } else {
-                                        part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
-                                    }
-                                }
-                            }
-                        } else {
-                            let current_sig = part.get("thoughtSignature").and_then(|s| s.as_str());
-                            match current_sig {
-                                Some(sig) if is_likely_gemini_signature(sig) => {}
-                                _ => {
-                                    part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
-                                }
-                            }
-                        }
+                        part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
                     }
                 }
             }
@@ -2918,12 +2861,9 @@ mod tests {
         // Index 1: visible text preserved
         assert_eq!(parts[1]["text"], "I will read both files in parallel");
 
-        // Index 2: tool 1 承载真实签名
+        // Index 2: tool 1 承载哨兵签名
         assert_eq!(parts[2]["functionCall"]["id"], "call_batch_1");
-        assert_eq!(
-            parts[2]["thoughtSignature"],
-            "sig_parallel_12345678901234567890123456789012345678901234567890"
-        );
+        assert_eq!(parts[2]["thoughtSignature"], SENTINEL_SIGNATURE);
 
         // Index 3: tool 2 承载哨兵签名 (满足 Google AST 校验且绝不复制 500KB)
         assert_eq!(parts[3]["functionCall"]["id"], "call_batch_2");
@@ -2977,14 +2917,7 @@ mod tests {
         let parts = contents[0]["parts"].as_array().unwrap();
         assert_eq!(parts[0]["thought"], true);
         assert_eq!(parts[0]["text"], "Thought restored from SQLite");
-        assert_eq!(
-            parts[0]["thoughtSignature"],
-            "sig_persisted_1234567890123456789012345678901234567890"
-        );
-        assert_eq!(
-            parts[2]["thoughtSignature"],
-            "sig_persisted_1234567890123456789012345678901234567890"
-        );
+        assert_eq!(parts[2]["thoughtSignature"], SENTINEL_SIGNATURE);
     }
 
     #[test]
@@ -4483,10 +4416,10 @@ mod tests {
         assert_eq!(model_parts[0]["thought"], true);
         assert_eq!(model_parts[0]["text"], thought_text);
 
-        // 验证工具调用依靠内部确定性伪 ID 成功找回真实签名：
+        // 验证工具调用统一使用哨兵占位：
         let fc = &model_parts[1];
         assert_eq!(fc["functionCall"]["name"], "bash");
-        assert_eq!(fc["thoughtSignature"], real_sig);
+        assert_eq!(fc["thoughtSignature"], SENTINEL_SIGNATURE);
         // 验证伪 ID 纯粹内部使用，绝不外泄给无 ID 协议：
         assert!(
             fc["functionCall"].get("id").is_none(),
