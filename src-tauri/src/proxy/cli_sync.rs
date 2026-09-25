@@ -111,6 +111,31 @@ fn parse_where_output(output: &[u8]) -> Option<PathBuf> {
     None
 }
 
+/// 检测备用 CLI 别名命令是否存在并返回其路径
+fn detect_fallback_binary(name: &str) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut c = Command::new("where");
+        c.arg(name);
+        c.creation_flags(CREATE_NO_WINDOW);
+        if let Ok(out) = c.output() {
+            if out.status.success() {
+                return parse_where_output(&out.stdout);
+            }
+        }
+        None
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(out) = Command::new("which").arg(name).output() {
+            if out.status.success() {
+                return Some(PathBuf::from(name));
+            }
+        }
+        None
+    }
+}
+
 /// 检查路径是否是 .cmd/.bat 文件
 #[cfg(target_os = "windows")]
 fn is_cmd_file(path: &PathBuf) -> bool {
@@ -405,39 +430,8 @@ pub fn check_cli_installed(app: &CliApp) -> (bool, Option<String>) {
 
     // 如果是 JeikCode 且常规检测未命中，尝试检测 atomcode 别名或配置文件是否存在
     if !installed && app == &CliApp::JeikCode {
-        let atom_installed = if cfg!(target_os = "windows") {
-            let mut c = Command::new("where");
-            c.arg("atomcode");
-            #[cfg(target_os = "windows")]
-            c.creation_flags(CREATE_NO_WINDOW);
-            if let Ok(out) = c.output() {
-                if out.status.success() {
-                    if let Some(p) = parse_where_output(&out.stdout) {
-                        executable_path = p;
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            if let Ok(out) = Command::new("which").arg("atomcode").output() {
-                if out.status.success() {
-                    executable_path = PathBuf::from("atomcode");
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        };
-
-        if atom_installed {
+        if let Some(p) = detect_fallback_binary("atomcode") {
+            executable_path = p;
             installed = true;
         } else if let Some(home) = dirs::home_dir() {
             let jeikcode_dir = if let Ok(custom_home) = std::env::var("JEIKCODE_HOME") {
@@ -453,39 +447,8 @@ pub fn check_cli_installed(app: &CliApp) -> (bool, Option<String>) {
 
     // 如果是 GrokBuild 且常规检测未命中，尝试检测 grokbuild 别名或配置文件是否存在
     if !installed && app == &CliApp::GrokBuild {
-        let grokbuild_installed = if cfg!(target_os = "windows") {
-            let mut c = Command::new("where");
-            c.arg("grokbuild");
-            #[cfg(target_os = "windows")]
-            c.creation_flags(CREATE_NO_WINDOW);
-            if let Ok(out) = c.output() {
-                if out.status.success() {
-                    if let Some(p) = parse_where_output(&out.stdout) {
-                        executable_path = p;
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            if let Ok(out) = Command::new("which").arg("grokbuild").output() {
-                if out.status.success() {
-                    executable_path = PathBuf::from("grokbuild");
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        };
-
-        if grokbuild_installed {
+        if let Some(p) = detect_fallback_binary("grokbuild") {
+            executable_path = p;
             installed = true;
         } else if let Some(home) = dirs::home_dir() {
             let grok_dir = home.join(".grok");
