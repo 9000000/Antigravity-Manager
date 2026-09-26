@@ -7,6 +7,7 @@
         -   **[Gemini 真实签名保真透传与全协议回传对齐] 根除 Google 服务端封杀哨兵引发的 403 封控与工具调用死循环 (Fixes #3523)**:
             -   **废除暴力覆写哨兵，优先 100% 原始透传真实 Base64 签名**: 逆向 Antigravity IDE 真实双向流量（flows 3/4/5），彻底查明 Google 近期已收紧签名防伪校验，全面拦截静态哨兵占位符并返回 403 导致客户端死循环重试。进站流水线（`InboundThinkingPipeline`）重构 FC 签名逻辑，优先识别并保留客户端或多轮历史自带的合法高熵 Protobuf 真实签名（`thoughtSignature`），仅在完全缺失时作为保底 fallback，阻断 403 风控枪口。
             -   **思考状态机出站门禁与历史复活（Hydration / Finalize）全面保真**: 在 `hydrate` 历史复活与 `finalize` 终审门禁阶段，摒弃旧有直接赋死哨兵逻辑，优先从会话存储提取真实历史签名绑定至各 `functionCall` 部件，保证多轮长上下文调用中思考防伪指纹的端到端严密闭环。
+            -   **端点降级顺序对齐官方 IDE，优先直连原生唯一主力 Daily 端点**: 逆向深入分析双向流量（flows 6），确认官方 IDE 100% 流量均调度至 `daily-cloudcode-pa.googleapis.com`。将上游端点优先级重构为 Daily → Sandbox → Prod，第一跳直达官方主力服务，彻底消除 Sandbox 区域受限（400 地区不支持）与生产域过度频控（429）风险，显著压缩出站首字延迟（TTFT）。
             -   **支持原生 Gemini 格式 `role: "model"` 的工具回包（functionResponse）**: 上下文轮次管理器（`ContextManager`）放宽工具回包识别条件至 `(role == "user" || role == "model") && has_function_response`，无缝兼容原生 Gemini 报文规范中归属于 `model` 角色的工具返回，杜绝多轮对话中工具链截断与轮次管理错位。
 
     *   **v4.8.1-beta.2 (2026-09-26)**:
