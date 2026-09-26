@@ -3,6 +3,12 @@
 > 完整版本历史记录。返回项目主页请查看 [README.md](README.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v4.8.1-beta.2 (2026-09-26)**:
+        -   **[对齐官方原生防死循环门禁与工具保真] 根除 Agent 派发任务后休眠盯盘死循环，解除描述截断与断网降智保护 (Fixes #3523)**:
+            -   **对齐官方原生 CRITICAL INSTRUCTION 协同门禁**: 逆向对齐原生 IDE 编译级协同纪律，在进站流水线（`InboundThinkingPipeline`）自动感知异步任务派发工具（如 `send_mcp_msg`、`dispatch_task`），向模型注入硬性协同准则，强制模型在派发后立即汇报并交卷（`finish_reason: stop`），严禁自写 PowerShell/Bash `Start-Sleep` 空转轮询。
+            -   **工具描述 100% 原始排版与语义保真**: 解除对工具及参数 `description` 强制折叠换行缩进的破坏性逻辑，将描述安全预算从 2048 字符扩展至 8192 字符，完全保真透传工具的使用约束与禁止事项，杜绝模型因描述被腰斩引发的推理降智。
+            -   **思维链原子提交与网络断流保护**: 重构流式传输与 Thinking 提交逻辑，仅在流式完全正常终结时提交思维链；凡是中途遭遇 `connection reset by peer` / `unexpected EOF` 等网络重置异常，立即丢弃残缺的临时思维块，彻底切断“残废思维链污染历史记忆导致不可逆降智”的恶性链条。
+
     *   **v4.8.1-beta.1 (2026-09-25)**:
         -   **[OpenAI Responses 协议适配增强] 完善 max_output_tokens 别名支持与思考预算/等级精准映射**:
             -   **支持 max_output_tokens 反序列化别名**: `OpenAIRequest` 顶层增加 `max_output_tokens` 与 `maxOutputTokens` 字段别名映射，保证客户端发送该标准字段时网关能够精准解析并映射为 upstream 的 `maxOutputTokens`。

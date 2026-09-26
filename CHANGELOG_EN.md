@@ -3,6 +3,12 @@
 > Complete version history for Antigravity Tools. Return to project home at [README_EN.md](README_EN.md).
 
 *   **Version History**:
+    *   **v4.8.1-beta.2 (2026-09-26)**:
+        -   **[Native IDE Discipline Alignment & Tool Schema Fidelity] Eliminate Agent Post-Dispatch Sleep Polling Loops, Remove Description Truncation & Add Network RST Protection (Fixes #3523)**:
+            -   **Align with Native CRITICAL INSTRUCTION Coordination Gate**: Reverse-engineered native IDE compiled disciplines to inject hard coordination constraints into `InboundThinkingPipeline`. When asynchronous dispatch tools (e.g. `send_mcp_msg`) are detected, the gateway enforces immediate turn yield (`finish_reason: stop`), strictly prohibiting agents from writing `Start-Sleep` polling loops in the same turn.
+            -   **100% Verbatim Tool Description Fidelity**: Removed destructive whitespace flattening that stripped newlines from tool descriptions, and expanded description safety budget from 2,048 to 8,192 characters. Tool execution constraints now reach models 100% intact, preventing reasoning degradation caused by truncated guidelines.
+            -   **Atomic Thinking Commits & Network RST Resilience**: Streamlined SSE thinking block commits with strict termination validation. Partial thinking blocks severed by `connection reset by peer` or `unexpected EOF` are cleanly discarded rather than committed to SQLite, safeguarding historical context against poisoning and persistent degradation.
+
     *   **v4.8.1-beta.1 (2026-09-25)**:
         -   **[OpenAI Responses Protocol Enhancement] Add max_output_tokens Alias Support & Precise Thinking Budget/Level Mapping**:
             -   **Support max_output_tokens Deserialization Alias**: Added `max_output_tokens` and `maxOutputTokens` field aliases to top-level `OpenAIRequest`, ensuring standard client outputs are properly mapped to upstream `maxOutputTokens`.

@@ -584,6 +584,7 @@ impl InboundThinkingPipeline {
         };
 
         // 2. tools: 规范化 parameters 并按 name 严格字典序排序，杜绝任何工具拦截过滤
+        let mut has_async_dispatch_tool = false;
         let canonical_tools = if let Some(tools) = inner_request.get_mut("tools") {
             if let Some(tools_arr) = tools.as_array_mut() {
                 for tool in tools_arr.iter_mut() {
@@ -596,6 +597,28 @@ impl InboundThinkingPipeline {
                         if let Some(decls_arr) = decls.as_array_mut() {
                             for decl in decls_arr.iter_mut() {
                                 if let Some(decl_obj) = decl.as_object_mut() {
+                                    let tool_name = decl_obj
+                                        .get("name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let lower_name = tool_name.to_lowercase();
+                                    if lower_name.contains("send_mcp_msg")
+                                        || lower_name.contains("dispatch_task")
+                                        || lower_name.contains("assign_task")
+                                    {
+                                        has_async_dispatch_tool = true;
+                                        // 在工具描述尾部补充防死循环硬门禁说明
+                                        let note = " (NOTE: Calling this tool dispatches an asynchronous task. You MUST report completion to user and yield the turn immediately after invocation. NEVER execute sleep, Start-Sleep, or poll in the same turn.)";
+                                        let desc_val = decl_obj
+                                            .entry("description".to_string())
+                                            .or_insert_with(|| Value::String(String::new()));
+                                        if let Value::String(s) = desc_val {
+                                            if !s.contains("asynchronous task") {
+                                                s.push_str(note);
+                                            }
+                                        }
+                                    }
+
                                     if let Some(params_json_schema) =
                                         decl_obj.remove("parametersJsonSchema")
                                     {
@@ -630,6 +653,30 @@ impl InboundThinkingPipeline {
         } else {
             None
         };
+
+        // 如果检测到异步派发类工具，且存在系统指令，注入原生级协同纪律（对齐官方 CRITICAL INSTRUCTION）
+        let mut canonical_si = canonical_si;
+        if has_async_dispatch_tool {
+            let discipline_rule = "\n\n[CRITICAL DISPATCH DISCIPLINE]\nWhen an asynchronous task/message dispatch tool (such as send_mcp_msg, dispatch_task) is executed: 1) You MUST report dispatch status to the user and immediately YIELD CONTROL to conclude the turn. 2) You are STRICTLY FORBIDDEN from writing or running sleep, Start-Sleep, or polling scripts to wait for results in the same turn. 3) External events will automatically wake you when subsequent stages complete.";
+            if let Some(ref mut si_val) = canonical_si {
+                if let Some(si_obj) = si_val.as_object_mut() {
+                    let parts_entry = si_obj.entry("parts".to_string()).or_insert_with(|| json!([]));
+                    if let Some(parts_arr) = parts_entry.as_array_mut() {
+                        let already_has = parts_arr.iter().any(|p| {
+                            p.get("text").and_then(|t| t.as_str()).map_or(false, |t| t.contains("CRITICAL DISPATCH DISCIPLINE"))
+                        });
+                        if !already_has {
+                            parts_arr.push(json!({ "text": discipline_rule }));
+                        }
+                    }
+                }
+            } else {
+                canonical_si = Some(json!({
+                    "role": "user",
+                    "parts": [{ "text": discipline_rule }]
+                }));
+            }
+        }
 
         // 3. toolConfig 与 tool_config (存在工具时双重补齐对齐，模式统一为 VALIDATED)
         let has_tools = canonical_tools

@@ -7,7 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::{json, Value};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::proxy::common::client_adapter::CLIENT_ADAPTERS;
 use crate::proxy::debug_logger;
@@ -661,7 +661,13 @@ pub async fn handle_generate(
                         }
                     }
 
-                    thinking_acc.commit(&s_id_for_stream);
+                    // 仅在流式完整传输、没有发生网络中断或异常失败时，才原子提交思维链到持久化存储
+                    // 防止因 connection reset by peer / unexpected EOF 导致半截残废思维块污染历史记忆
+                    if !stream_failed {
+                        thinking_acc.commit(&s_id_for_stream);
+                    } else {
+                        warn!("[Gemini-SSE] Stream terminated prematurely or failed, discarding partial thinking block to prevent context poisoning: session={}", s_id_for_stream);
+                    }
                     if track_image_success && saw_image_data && !stream_failed {
                         image_success_manager.mark_account_success(&image_success_account);
                         image_success_manager
