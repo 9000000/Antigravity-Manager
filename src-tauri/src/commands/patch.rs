@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 #[tauri::command]
 pub async fn patch_agy_binary(file_path: String) -> Result<String, String> {

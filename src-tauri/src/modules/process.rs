@@ -674,7 +674,7 @@ pub fn wait_for_language_server_respawn(target_ide: Option<&str>, timeout_secs: 
 }
 
 /// Close Antigravity processes
-pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<(), String> {
+pub fn close_antigravity(_timeout_secs: u64, target_ide: Option<&str>) -> Result<(), String> {
     crate::modules::logger::log_info(&format!("Closing Antigravity ({:?})...", target_ide));
 
     #[cfg(target_os = "windows")]

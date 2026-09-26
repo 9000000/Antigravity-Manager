@@ -15,7 +15,7 @@ use crate::proxy::handlers::common::{
     apply_retry_strategy, build_token_error_headers, next_rotation_attempt, should_rotate_account,
     FailureStatusTracker, RequestRetryState, RetryStrategy,
 };
-use crate::proxy::mappers::gemini::{unwrap_response, wrap_request, wrap_request_v2};
+use crate::proxy::mappers::gemini::{unwrap_response, wrap_request_v2};
 use crate::proxy::server::AppState;
 use crate::proxy::session_manager::SessionManager;
 use crate::proxy::upstream::client::mask_email;
@@ -304,6 +304,7 @@ pub async fn handle_generate(
             Some(&session_id),
             token_obj.as_ref(),
             Some(&token_manager),
+            Some(&state.upstream),
         );
         let tf_micros = tf_start.elapsed().as_micros() as u64;
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
@@ -898,7 +899,7 @@ pub async fn handle_generate(
         }
 
         let scheduling_mode = token_manager.get_scheduling_mode().await;
-        let allow_grace = match scheduling_mode {
+        let _allow_grace = match scheduling_mode {
             crate::proxy::sticky_config::SchedulingMode::Balance => {
                 token_manager.tokens_count() <= 1
             }
