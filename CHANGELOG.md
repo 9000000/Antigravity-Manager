@@ -3,6 +3,12 @@
 > 完整版本历史记录。返回项目主页请查看 [README.md](README.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v4.8.1-beta.3 (2026-09-26)**:
+        -   **[Gemini 真实签名保真透传与全协议回传对齐] 根除 Google 服务端封杀哨兵引发的 403 封控与工具调用死循环 (Fixes #3523)**:
+            -   **废除暴力覆写哨兵，优先 100% 原始透传真实 Base64 签名**: 逆向 Antigravity IDE 真实双向流量（flows 3/4/5），彻底查明 Google 近期已收紧签名防伪校验，全面拦截静态哨兵占位符并返回 403 导致客户端死循环重试。进站流水线（`InboundThinkingPipeline`）重构 FC 签名逻辑，优先识别并保留客户端或多轮历史自带的合法高熵 Protobuf 真实签名（`thoughtSignature`），仅在完全缺失时作为保底 fallback，阻断 403 风控枪口。
+            -   **思考状态机出站门禁与历史复活（Hydration / Finalize）全面保真**: 在 `hydrate` 历史复活与 `finalize` 终审门禁阶段，摒弃旧有直接赋死哨兵逻辑，优先从会话存储提取真实历史签名绑定至各 `functionCall` 部件，保证多轮长上下文调用中思考防伪指纹的端到端严密闭环。
+            -   **支持原生 Gemini 格式 `role: "model"` 的工具回包（functionResponse）**: 上下文轮次管理器（`ContextManager`）放宽工具回包识别条件至 `(role == "user" || role == "model") && has_function_response`，无缝兼容原生 Gemini 报文规范中归属于 `model` 角色的工具返回，杜绝多轮对话中工具链截断与轮次管理错位。
+
     *   **v4.8.1-beta.2 (2026-09-26)**:
         -   **[对齐官方原生防死循环门禁与工具保真] 根除 Agent 派发任务后休眠盯盘死循环，解除描述截断与断网降智保护 (Fixes #3523)**:
             -   **对齐官方原生 CRITICAL INSTRUCTION 协同门禁**: 逆向对齐原生 IDE 编译级协同纪律，在进站流水线（`InboundThinkingPipeline`）自动感知异步任务派发工具（如 `send_mcp_msg`、`dispatch_task`），向模型注入硬性协同准则，强制模型在派发后立即汇报并交卷（`finish_reason: stop`），严禁自写 PowerShell/Bash `Start-Sleep` 空转轮询。

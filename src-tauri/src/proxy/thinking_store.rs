@@ -909,11 +909,27 @@ impl ThinkingStore {
             } else if has_function_call {
                 // Gemini 原生模型：Google 官方强制要求签名挂在 functionCall 上！
                 // 1. 首位思考块保持纯净思考文本，完整回填历史思考，消除双倍膨胀
-                // 2. 所有 functionCall 统一打上 32 字节哨兵占位（skip_thought_signature_validator），
-                //    既 100% 满足 Google AST 严格校验，又彻底摆脱大签名回填负担，上下文体积直降 60%！
+                // 2. 优先保留 FC 原有真实签名或会话存储的真实签名，仅当完全缺失时才使用哨兵
                 for part in parts.iter_mut() {
                     if part.get("functionCall").is_some() {
-                        part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                        let has_valid_sig = part
+                            .get("thoughtSignature")
+                            .or_else(|| part.get("thought_signature"))
+                            .and_then(|s| s.as_str())
+                            .map_or(false, |s| {
+                                is_real_signature(s) && is_likely_gemini_signature(s)
+                            });
+                        if !has_valid_sig {
+                            if let Some(real_sig) = rec
+                                .signature
+                                .as_ref()
+                                .filter(|s| is_real_signature(s) && is_likely_gemini_signature(s))
+                            {
+                                part["thoughtSignature"] = json!(real_sig);
+                            } else if part.get("thoughtSignature").is_none() {
+                                part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                            }
+                        }
                     }
                 }
             } else {
@@ -1539,10 +1555,23 @@ pub fn finalize_gemini_contents_thinking_with_model(
                 }
             } else if has_function_call {
                 // Gemini 原生模型：Google 引擎强制要求每一个 functionCall 必须挂载 thoughtSignature！
-                // 终审出站门禁（Gatekeeper）：所有 functionCall 统一打上 32 字节哨兵占位符（skip_thought_signature_validator）
+                // 终审出站门禁（Gatekeeper）：优先保留原有真实签名或当前轮提取的真实签名，仅当缺失时才回填哨兵占位符
                 for part in other_parts.iter_mut() {
                     if part.get("functionCall").is_some() {
-                        part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                        let has_valid_sig = part
+                            .get("thoughtSignature")
+                            .or_else(|| part.get("thought_signature"))
+                            .and_then(|s| s.as_str())
+                            .map_or(false, |s| {
+                                is_real_signature(s) && is_likely_gemini_signature(s)
+                            });
+                        if !has_valid_sig {
+                            if let Some(ref real_sig) = turn_real_sig {
+                                part["thoughtSignature"] = json!(real_sig);
+                            } else if part.get("thoughtSignature").is_none() {
+                                part["thoughtSignature"] = json!(SENTINEL_SIGNATURE);
+                            }
+                        }
                     }
                 }
             }

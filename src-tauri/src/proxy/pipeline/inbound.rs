@@ -237,11 +237,18 @@ impl InboundThinkingPipeline {
                             }
                         } else {
                             if target_model.to_lowercase().contains("gemini") {
-                                // Gemini 原生模型架构革命：彻底终结真实大签名查找回填！
-                                // 全量工具调用统一使用 32 字节标准哨兵占位符，消除 500KB+ 上下文冗余与 60% 窗口膨胀
                                 if part.get("functionCall").is_some() {
-                                    part["thoughtSignature"] =
-                                        json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
+                                    let existing_valid_sig = part
+                                        .get("thoughtSignature")
+                                        .or_else(|| part.get("thought_signature"))
+                                        .and_then(|s| s.as_str())
+                                        .filter(|s| crate::proxy::thinking_store::is_real_signature(s) && crate::proxy::thinking_store::is_likely_gemini_signature(s));
+                                    if let Some(valid_sig) = existing_valid_sig {
+                                        part["thoughtSignature"] = json!(valid_sig);
+                                    } else if part.get("thoughtSignature").is_none() {
+                                        part["thoughtSignature"] =
+                                            json!(crate::proxy::thinking_store::SENTINEL_SIGNATURE);
+                                    }
                                 }
                             } else if is_claude {
                                 if let Some(obj) = part.as_object_mut() {

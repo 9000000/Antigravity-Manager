@@ -3,6 +3,12 @@
 > Complete version history for Antigravity Tools. Return to project home at [README_EN.md](README_EN.md).
 
 *   **Version History**:
+    *   **v4.8.1-beta.3 (2026-09-26)**:
+        -   **[Gemini Verbatim Signature Passthrough & Protocol Alignment] Eliminate 403 Forbidden & Tool Loop Outages Caused by Google Sentinel Deprecation (Fixes #3523)**:
+            -   **Prioritize Verbatim Protobuf Base64 Signature Passthrough**: Reverse-engineered authentic bidirectional Antigravity IDE traffic (flows 3/4/5), uncovering that Google cloud endpoints have tightened cryptographic verification and now reject static sentinel strings with 403 Forbidden errors, which triggered client-side infinite retries. Refactored `InboundThinkingPipeline` to recognize and preserve authentic, high-entropy Protobuf Base64 signatures (`thoughtSignature`) from client requests and multi-turn context, retaining sentinels strictly as an unverified fallback.
+            -   **End-to-End Signature Fidelity Across Thinking State Machine (Hydration / Finalize)**: Overhauled `ThinkingStore` state transitions (`hydrate` and `finalize`) to eliminate unconditional sentinel overwriting. Valid historical signatures cached in session records are restored directly onto `functionCall` parts, ensuring tamper-proof cryptographic fingerprint continuity across deep multi-turn sessions.
+            -   **Support Native Gemini `role: "model"` Function Responses**: Relaxed tool response classification in `ContextManager` to `(role == "user" || role == "model") && has_function_response`, establishing seamless compatibility with native Gemini payloads where tool results are associated with `model` roles.
+
     *   **v4.8.1-beta.2 (2026-09-26)**:
         -   **[Native IDE Discipline Alignment & Tool Schema Fidelity] Eliminate Agent Post-Dispatch Sleep Polling Loops, Remove Description Truncation & Add Network RST Protection (Fixes #3523)**:
             -   **Align with Native CRITICAL INSTRUCTION Coordination Gate**: Reverse-engineered native IDE compiled disciplines to inject hard coordination constraints into `InboundThinkingPipeline`. When asynchronous dispatch tools (e.g. `send_mcp_msg`) are detected, the gateway enforces immediate turn yield (`finish_reason: stop`), strictly prohibiting agents from writing `Start-Sleep` polling loops in the same turn.
