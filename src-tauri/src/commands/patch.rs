@@ -1,5 +1,8 @@
 use std::fs;
 use std::path::Path;
+// codesign 仅 macOS 分支使用（patch_agy_binary 重签名）
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
 #[tauri::command]
 pub async fn patch_agy_binary(file_path: String) -> Result<String, String> {
