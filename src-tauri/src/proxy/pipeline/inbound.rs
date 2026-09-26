@@ -597,10 +597,8 @@ impl InboundThinkingPipeline {
                         if let Some(decls_arr) = decls.as_array_mut() {
                             for decl in decls_arr.iter_mut() {
                                 if let Some(decl_obj) = decl.as_object_mut() {
-                                    let tool_name = decl_obj
-                                        .get("name")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("");
+                                    let tool_name =
+                                        decl_obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
                                     let lower_name = tool_name.to_lowercase();
                                     if lower_name.contains("send_mcp_msg")
                                         || lower_name.contains("dispatch_task")
@@ -660,10 +658,14 @@ impl InboundThinkingPipeline {
             let discipline_rule = "\n\n[CRITICAL DISPATCH DISCIPLINE]\nWhen an asynchronous task/message dispatch tool (such as send_mcp_msg, dispatch_task) is executed: 1) You MUST report dispatch status to the user and immediately YIELD CONTROL to conclude the turn. 2) You are STRICTLY FORBIDDEN from writing or running sleep, Start-Sleep, or polling scripts to wait for results in the same turn. 3) External events will automatically wake you when subsequent stages complete.";
             if let Some(ref mut si_val) = canonical_si {
                 if let Some(si_obj) = si_val.as_object_mut() {
-                    let parts_entry = si_obj.entry("parts".to_string()).or_insert_with(|| json!([]));
+                    let parts_entry = si_obj
+                        .entry("parts".to_string())
+                        .or_insert_with(|| json!([]));
                     if let Some(parts_arr) = parts_entry.as_array_mut() {
                         let already_has = parts_arr.iter().any(|p| {
-                            p.get("text").and_then(|t| t.as_str()).map_or(false, |t| t.contains("CRITICAL DISPATCH DISCIPLINE"))
+                            p.get("text")
+                                .and_then(|t| t.as_str())
+                                .map_or(false, |t| t.contains("CRITICAL DISPATCH DISCIPLINE"))
                         });
                         if !already_has {
                             parts_arr.push(json!({ "text": discipline_rule }));

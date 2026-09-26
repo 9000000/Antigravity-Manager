@@ -13,6 +13,10 @@
             -   **Full-Stack & Headless Parity**: Implemented desktop and Web parity via `update_account_priority` IPC and `POST /api/accounts/:accountId/priority`. Changes take effect immediately via live token manager reload without requiring proxy restarts.
         -   **[Official Reset Cycle Alignment for Weekly Stats] Accurate 7-Day Window Without False Truncation (PR #3520, Thanks to @buluw)**:
             -   **Eliminate Fraction-Increase Heuristic**: Removed inferred `cycle_start` heuristics in favor of strict official reset interval `[reset_time - 7 days, reset_time)`, ensuring account quota replenishments never falsely reset or truncate historical weekly token totals.
+        -   **[Dual-Channel In-App Independent Updates] Seamless In-App Upgrades & Channel Switching for Beta Users**:
+            -   **Segmented Channel Switcher & Smart Defaults**: Introduced an elegant pill toggle on the About page allowing users to switch between `Stable` and `Preview (Beta)` channels; installations running pre-release versions default automatically to the Beta channel.
+            -   **SemVer-Compliant Pre-Release Comparison Engine**: Upgraded version comparison to fully support semantic pre-release qualifiers (`4.8.1-beta.2` vs `4.8.1-beta.1`, `4.8.1` vs `4.8.1-beta.2`), preventing false positives or accidental downgrades.
+            -   **Deterministic CDN Endpoints & CI Mirroring**: Automated release workflows now mirror pre-release assets to a dedicated, fixed `preview` Tag Release, providing a rate-limit-free endpoint for native updater downloads and background installs.
 
     *   **v4.8.1-beta.1 (2026-09-25)**:
         -   **[OpenAI Responses Protocol Enhancement] Add max_output_tokens Alias Support & Precise Thinking Budget/Level Mapping**:
